@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/zf4ke/coding/projects/sophia/model/model.tflearn"
+all_model_checkpoint_paths: "/home/zf4ke/coding/projects/sophia/model/model.tflearn"

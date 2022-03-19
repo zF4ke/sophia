@@ -1,0 +1,54 @@
+{
+    "intents": [
+        {
+            "tag": "greeting",
+            "patterns": [
+                "Olá", "Oi", "Hey", "Ei", "Alo", "Yo", "Sup", "Olá, tudo bem?", "Oi, tudo bem?", "Bom dia", "Eae", "E aí"
+            ],
+            "responses": [
+                "Olá!", "Oi", "Hey!", "Alo", "Yo", "Sup", "Olá, tudo bem?", "Oi, tudo bem?", "Bom dia", "Hey, como estás?", "Oi, como vais?"
+            ],
+            "context_set": ""
+        },
+        {
+            "tag": "smalltalk",
+            "patterns": [
+                "Estou bem.", "Estou ótimo", "Sim.", "Estou bem, obrigado."
+            ],
+            "responses": [
+                "Que bom.", "Legal!", "Ainda bem :)"
+            ],
+            "context_set": ""
+        },
+        {
+            "tag": "smalltalk2",
+            "patterns": [
+                "Tudo bem?", "Como estás?", "Como você está?", "Como vc está?", "Td bem?", "Como vai="
+            ],
+            "responses": [
+                "Estou bem.", "Estou ótima, obrigado.", "Estou bem, obrigado."
+            ],
+            "context_set": ""
+        },
+        {
+            "tag": "goodbye",
+            "patterns": [
+                "Adeus", "Bye", "Goodbye", "Flw", "Boa noite", "Good night"
+            ],
+            "responses": [
+                "Adeus.", "Bye.", "Goodbye.", "Boa noite.", "Good night.", "Dorme bem.", "Tem uma boa noite.", "Sweet dreams."
+            ],
+            "context_set": ""
+        },
+        {
+            "tag": "oregano",
+            "patterns": [
+                "Você gosta do oregano?", "O que você acha do oregano?", "oregano", "vc gosta do oregano?", "oq vc acha do oregano?"
+            ],
+            "responses": [
+                "Odeio ele.", "Não gosto dele.", "Nunca será meu namorado."
+            ],
+            "context_set": ""
+        }
+    ]
+}
