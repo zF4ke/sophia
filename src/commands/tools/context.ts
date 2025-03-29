@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, PermissionFlagsBits } from "discord.js";
+import { SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, PermissionFlagsBits, MessageFlags } from "discord.js";
 import { MessageService } from "../../services/MessageService";
 import { ConversationService } from "../../services/ConversationService";
 import { AIService } from "../../services/AIService";
@@ -37,12 +37,12 @@ module.exports = {
             if (!ADMIN_IDS.includes(interaction.user.id)) {
                 return await interaction.reply({
                     content: `${EMOJIS.error} Este comando está disponível apenas para administradores.`,
-                    ephemeral: true
+                    flags: MessageFlags.Ephemeral
                 });
             }
 
             const ephemeral = interaction.options.getBoolean("ephemeral") ?? false;
-            await interaction.deferReply({ ephemeral });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
             const channel = interaction.options.getChannel("channel");
             const prompt = interaction.options.getString("prompt");

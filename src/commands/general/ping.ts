@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, PermissionFlagsBits, ChatInputCommandInteraction } from "discord.js";
+import { SlashCommandBuilder, PermissionFlagsBits, ChatInputCommandInteraction, MessageFlags } from "discord.js";
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -20,7 +20,7 @@ module.exports = {
                     color: 0x7289da,
                 },
             ],
-            ephemeral: false,
+            flags: interaction.options.getBoolean("ephemeral") ? MessageFlags.Ephemeral : undefined,
         });
     },
 };

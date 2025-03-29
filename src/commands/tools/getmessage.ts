@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, PermissionFlagsBits } from "discord.js";
+import { SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, PermissionFlagsBits, MessageFlags } from "discord.js";
 import { MessageService } from "../../services/MessageService";
 import { EMOJIS } from "../../utils/constants";
 
@@ -26,7 +26,7 @@ module.exports = {
             const ephemeral = interaction.options.getBoolean("ephemeral") ?? false;
             
             try {
-                await interaction.deferReply({ ephemeral });
+                await interaction.deferReply({ flags: ephemeral ? MessageFlags.Ephemeral : undefined });
             } catch (error) {
                 console.error('Failed to defer reply:', error);
                 return;

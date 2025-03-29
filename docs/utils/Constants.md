@@ -88,7 +88,7 @@ await interaction.editReply(`${EMOJIS.search} Searching... (${progress}%)`);
 if (!ADMIN_IDS.includes(interaction.user.id)) {
     return await interaction.reply({
         content: `${EMOJIS.error} This command is available only to administrators.`,
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
     });
 }
 ```

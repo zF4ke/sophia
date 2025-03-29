@@ -1,5 +1,5 @@
 import { TDiscordClient } from "@/index";
-import { Interaction } from "discord.js";
+import { Interaction, MessageFlags } from "discord.js";
 
 module.exports = {
     name: "interactionCreate",
@@ -8,7 +8,7 @@ module.exports = {
             const command = client.commands.get(interaction.commandName);
             if (!command) {
                 return interaction.reply({
-                    ephemeral: true,
+                    flags: MessageFlags.Ephemeral,
                     content: "Outdated command",
                 });
             }

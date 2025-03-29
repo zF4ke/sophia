@@ -5,7 +5,8 @@ import {
     ButtonBuilder,
     ButtonStyle,
     ComponentType,
-    Message
+    Message,
+    MessageFlags
 } from "discord.js";
 import { MessageGroup } from "../types/conversation";
 import { EMOJIS, ADMIN_IDS } from "../utils/constants";
@@ -151,7 +152,7 @@ export class UIService {
             if (i.user.id !== interaction.user.id && !ADMIN_IDS.includes(i.user.id)) {
                 await i.reply({ 
                     content: `${EMOJIS.error} Apenas o autor do comando e administradores podem interagir com esses botões.`, 
-                    ephemeral: true 
+                    flags: MessageFlags.Ephemeral
                 });
                 return;
             }
