@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
 import { Message, ChatInputCommandInteraction } from "discord.js";
 import { ConversationWithContext, AIAnalysisResult } from "../types/conversation";
 import { EMOJIS } from "../utils/constants";
@@ -6,6 +6,16 @@ import { EMOJIS } from "../utils/constants";
 export class AIService {
     private static genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
     private static model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    
+    private static contextModel = this.genAI.getGenerativeModel({ 
+        model: "gemini-2.0-flash",
+        generationConfig: {
+            temperature: 0.4,
+            topP: 0.8,
+            topK: 40,
+            maxOutputTokens: 2048,
+        }
+    });
 
     private static calculateBatchSize(totalConversations: number): number {
         if (totalConversations <= 10) return 10;
@@ -154,11 +164,14 @@ export class AIService {
         }
     }
 
-    private static extractKeywords(topic: string): string[] {
-        const commonWords = new Set(['e', 'ou', 'de', 'da', 'do', 'das', 'dos', 'em', 'no', 'na', 'nos', 'nas', 
-            'um', 'uma', 'uns', 'umas', 'o', 'a', 'os', 'as', 'para', 'por', 'com', 'sem']);
+    private static extractKeywords(text: string): string[] {
+        const commonWords = new Set([
+            'e', 'ou', 'de', 'da', 'do', 'das', 'dos', 'em', 'no', 'na', 'nos', 'nas', 
+            'um', 'uma', 'uns', 'umas', 'o', 'a', 'os', 'as', 'para', 'por', 'com', 'sem',
+            'the', 'and', 'of', 'to', 'in', 'for', 'with', 'on', 'at', 'from', 'by', 'about'
+        ]);
         
-        return topic
+        return text
             .toLowerCase()
             .split(/[\s,.-]+/)
             .filter(word => word.length > 2 && !commonWords.has(word));
@@ -220,5 +233,91 @@ export class AIService {
                 return conv.relevanceScore >= 3 && hasEnoughContent;
             })
             .sort((a, b) => b.relevanceScore - a.relevanceScore);
+    }
+
+    public static selectConversationsForContext(
+        conversations: Message[][], 
+        prompt: string, 
+        maxChars: number = 50000
+    ): Message[][] {
+        const promptKeywords = this.extractKeywords(prompt);
+        
+        const scoredConversations = conversations.map(conversation => {
+            const combinedText = conversation.map(msg => msg.content).join(' ').toLowerCase();
+            
+            const keywordScore = promptKeywords.reduce((score, keyword) => {
+                return score + (combinedText.includes(keyword.toLowerCase()) ? 1 : 0);
+            }, 0);
+            
+            const lengthScore = Math.min(5, conversation.length / 2);
+            
+            const charLength = conversation.reduce((sum, msg) => 
+                sum + msg.author.username.length + 2 + msg.content.length, 0);
+            
+            return {
+                conversation,
+                score: keywordScore * 2 + lengthScore,
+                charLength
+            };
+        });
+        
+        scoredConversations.sort((a, b) => b.score - a.score);
+        
+        const selected: Message[][] = [];
+        let totalChars = 0;
+        
+        for (const item of scoredConversations) {
+            if (totalChars + item.charLength <= maxChars) {
+                selected.push(item.conversation);
+                totalChars += item.charLength;
+            } else {
+                if (selected.length === 0) {
+                    selected.push(item.conversation);
+                }
+                break;
+            }
+        }
+        
+        return selected;
+    }
+
+    public static formatConversationsAsContext(conversations: Message[][]): string {
+        return conversations.map((conversation, index) => {
+            const formattedConversation = conversation.map(msg => 
+                `${msg.author.username}: ${msg.content.trim()}`
+            ).join('\n');
+            
+            return `[Conversa ${index + 1}]\n${formattedConversation}`;
+        }).join('\n\n');
+    }
+
+    public static async generateContextualResponse(prompt: string, context: string): Promise<string> {
+        try {
+            const aiPrompt = `
+            Você tem acesso a conversas de um canal do Discord. Use essas conversas como contexto para responder à pergunta ou executar a instrução do usuário.
+            
+            Contexto das conversas:
+            ${context}
+            
+            Pergunta/instrução do usuário:
+            ${prompt}
+            
+            Diretrizes:
+            - Base sua resposta no contexto fornecido
+            - Se o contexto não contiver informações relevantes, diga isso claramente
+            - Cite partes específicas do contexto para justificar sua resposta quando relevante
+            - Seja conciso mas completo
+            - Formate sua resposta de forma clara e organizada
+            - Não inclua prefixos como "Baseado no contexto" ou "Resposta:"
+            `;
+            
+            const result = await this.contextModel.generateContent(aiPrompt);
+            const response = result.response.text();
+            
+            return response;
+        } catch (error) {
+            console.error('Error generating AI response:', error);
+            return "Desculpe, não foi possível gerar uma resposta com base no contexto fornecido. Ocorreu um erro ao processar a solicitação.";
+        }
     }
 }

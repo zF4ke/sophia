@@ -81,6 +81,10 @@ export class MessageService {
         interaction: ChatInputCommandInteraction
     ): Message[] {
         return messages.filter(msg => {
+            // Filter out bot's own messages
+            if (msg.author.id === interaction.client.user?.id) return false;
+
+            // Filter out recent command messages from the command author
             if (msg.author.id === interaction.user.id) {
                 const timeDiff = interaction.createdTimestamp - msg.createdTimestamp;
                 if (Math.abs(timeDiff) < 10000) return false;
