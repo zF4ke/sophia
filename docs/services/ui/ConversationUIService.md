@@ -1,3 +1,5 @@
+[Back to Index](../../API.md)
+
 # ConversationUIService Documentation
 
 The `ConversationUIService` extends the base `UIService` to provide specialized UI functionality for displaying Discord conversations with rich formatting and interactive navigation.

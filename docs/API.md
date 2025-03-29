@@ -2,44 +2,44 @@
 
 ## Overview
 
-Sophia3 is a Discord bot that provides advanced conversation analysis and AI-powered search capabilities using Google's Generative AI (Gemini). This documentation covers the core services and APIs available for developers.
+Sophia3 is a Discord bot that uses the Gemini API to help find and organize relevant messages from a channel's history. It provides tools for message searching, conversation grouping, and interactive result display.
 
 ## Table of Contents
 
 - **Core Services**
-  - [MessageService](./services/MessageService.md) - Handles Discord message fetching and filtering
-  - [ConversationService](./services/ConversationService.md) - Groups messages into meaningful conversations
-  - [UIService](./services/UIService.md) - Manages Discord UI elements and pagination
-    - [ConversationUIService](./services/ui/ConversationUIService.md) - Conversation display and navigation
+  - [MessageService](./services/MessageService.md) - Message fetching and filtering
+  - [ConversationService](./services/ConversationService.md) - Message grouping logic
+  - [UIService](./services/UIService.md) - Discord message display components
+    - [ConversationUIService](./services/ui/ConversationUIService.md) - Conversation display controls
 
-- **AI System**
-  - [AIService](./services/AIService.md) - Main AI service entry point
-  - [AIBaseService](./services/AIBaseService.md) - Base service for AI functionality
-  - [ContextManagementService](./services/ContextManagementService.md) - Manages conversation contexts
-  - [ConversationAnalysisService](./services/ConversationAnalysisService.md) - Analyzes conversations for relevance
-  - [ResponseGenerationService](./services/ResponseGenerationService.md) - Generates AI responses
-  - [TextProcessingService](./services/TextProcessingService.md) - Processes text for AI operations
+- **AI Integration**
+  - [AIService](./services/AIService.md) - Main Gemini API interface
+  - [AIBaseService](./services/AIBaseService.md) - Common AI functionality
+  - [ContextManagementService](./services/ContextManagementService.md) - Message context handling
+  - [ConversationAnalysisService](./services/ConversationAnalysisService.md) - Relevance evaluation
+  - [ResponseGenerationService](./services/ResponseGenerationService.md) - AI response handling
+  - [TextProcessingService](./services/TextProcessingService.md) - Text preparation utilities
 
 - **Types & Constants**
-  - [Types](./types/Types.md) - Core type definitions
-  - [Constants](./utils/Constants.md) - Constants and utilities
+  - [Types](./types/Types.md) - TypeScript type definitions
+  - [Constants](./utils/Constants.md) - Configuration constants
 
 - **Guides**
-  - [Getting Started](./guides/GettingStarted.md) - How to get started with Sophia3
-  - [Integration Examples](./guides/Examples.md) - Example usage scenarios
+  - [Getting Started](./guides/GettingStarted.md) - Basic setup and usage
+  - [Integration Examples](./guides/Examples.md) - Code examples
 
-## Architecture
+## Project Structure
 
-Sophia3 employs a layered architecture:
+The code is organized in three layers:
 
-1. **Command Layer** - User-facing Discord commands
-2. **Service Layer** - Core business logic for message handling and AI interaction
-3. **AI Layer** - Specialized AI services for different aspects of AI functionality
+1. **Commands**: Discord slash command handlers
+2. **Services**: Core business logic
+3. **AI Integration**: Gemini API interaction
 
-## Quick Start
+## Basic Usage
 
 ```typescript
-// Example of basic conversation search with AI analysis
+// Example: Search for messages about a topic
 const messages = await MessageService.fetchMessages(channel, limit, interaction);
 const filteredMessages = MessageService.filterCommandMessages(messages, interaction);
 const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
@@ -48,4 +48,4 @@ const relevantConversations = await AIService.analyzeConversations(validConversa
 await ConversationUIService.displayConversations(interaction, relevantConversations, topic, channel.name, ephemeral);
 ```
 
-For more examples and detailed documentation for each service, please refer to the specific service documentation.
+For implementation details and more examples, see the individual service documentation.
