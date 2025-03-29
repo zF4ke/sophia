@@ -1,9 +1,13 @@
 import { TDiscordClient } from "..";
+import { SecurityService } from "../services/SecurityService";
 
 const ascii = require("ascii-table");
 import fs from "fs";
 const table = new ascii().setHeading("Commands", "Status");
 
+/**
+ * Load all commands from the commands directory
+ */
 function loadCommands(client: TDiscordClient) {
     let commandsArray: any[] = [];
 
@@ -18,12 +22,14 @@ function loadCommands(client: TDiscordClient) {
 
             const properties = { folder, ...commandFile };
 
-            client.commands.set(commandFile.data.name, properties);
-
-            commandsArray.push(commandFile.data.toJSON());
-
-            table.addRow(file, "loaded");
-            continue;
+            // Check command visibility and rate limit using SecurityService
+            if (SecurityService.isCommandVisible(commandFile.data.name) && SecurityService.isRateLimitAllowed(commandFile.data.name)) {
+                client.commands.set(commandFile.data.name, properties);
+                commandsArray.push(commandFile.data.toJSON());
+                table.addRow(file, "loaded");
+            } else {
+                table.addRow(file, "skipped");
+            }
         }
     }
 

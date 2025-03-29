@@ -44,7 +44,7 @@ module.exports = {
 
             const ephemeral = interaction.options.getBoolean("ephemeral") ?? false;
             await interaction.deferReply({ 
-                flags: ephemeral ? MessageFlags.Ephemeral : MessageFlags.Ephemeral
+                flags: ephemeral ? MessageFlags.Ephemeral : undefined
             });
 
             const channel = interaction.options.getChannel("channel");
