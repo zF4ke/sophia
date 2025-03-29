@@ -15,3 +15,17 @@ export interface AIAnalysisResult {
     isRelevant: boolean;
     relevanceScore: number;
 }
+
+export interface DisplayableItem {
+    getFieldName(): string;
+    getFieldContent(): string[];
+    getMetadata?(): Record<string, string | number>;
+    getLink?(): string | undefined;
+}
+
+export interface PaginationOptions {
+    itemsPerPage?: number;
+    collectorTimeout?: number;
+    ephemeral?: boolean;
+    color?: number;
+}

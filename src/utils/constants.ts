@@ -7,7 +7,9 @@ export const EMOJIS = {
     time: "⏱️",
     error: "❌",
     success: "✅",
-    warning: "⚠️"
+    warning: "⚠️",
+    wave: "👋",
+    info: "ℹ️"
 } as const;
 
 // Remove the 'as const' to allow string comparison

@@ -2,80 +2,48 @@ import {
     ChatInputCommandInteraction, 
     EmbedBuilder, 
     ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle, 
+    ButtonBuilder,
+    ButtonStyle,
     ComponentType,
     Message
 } from "discord.js";
-import { ConversationWithContext, MessageGroup } from "../types/conversation";
+import { MessageGroup } from "../types/conversation";
 import { EMOJIS, ADMIN_IDS } from "../utils/constants";
 
+export interface NavigationButton {
+    customId: string;
+    label: string;
+    style: 'Primary' | 'Secondary' | 'Success' | 'Danger';
+    disabled: boolean;
+}
+
+export interface NavigationState {
+    currentConvIndex: number;
+    currentMsgIndex: number;
+}
+
 export class UIService {
-    private static readonly MAX_MESSAGES_PER_PAGE = 5;
-    private static readonly COLLECTOR_TIMEOUT = 300000; // 5 minutes
-    private static readonly MAX_FIELD_VALUE_LENGTH = 1024;
-    private static readonly MAX_FIELD_NAME_LENGTH = 256;
+    protected static readonly MAX_ITEMS_PER_PAGE = 5;
+    protected static readonly COLLECTOR_TIMEOUT = 300000; // 5 minutes
+    protected static readonly MAX_FIELD_VALUE_LENGTH = 1024;
+    protected static readonly MAX_FIELD_NAME_LENGTH = 256;
+    protected static readonly DEFAULT_COLOR = 0x7289da;
 
-    public static async displaySearchResults(
-        interaction: ChatInputCommandInteraction,
-        conversations: ConversationWithContext[],
-        topic: string,
-        channelName: string,
-        ephemeral: boolean = false
-    ): Promise<void> {
-        const currentState = {
-            currentConvIndex: 0,
-            currentMsgIndex: 0
-        };
-
-        const embed = this.createEmbed(conversations[0], currentState.currentMsgIndex, topic, channelName, conversations.length, currentState.currentConvIndex);
-        const row = this.createButtonRow(currentState.currentConvIndex, currentState.currentMsgIndex, conversations);
-
-        const message = await interaction.editReply({
-            content: `${EMOJIS.success} Busca completada! Encontrei ${conversations.length} conversas sobre **"${topic}"**.`,
-            embeds: [embed],
-            components: [row]
-        });
-
-        const collector = message.createMessageComponentCollector({
-            componentType: ComponentType.Button,
-            time: this.COLLECTOR_TIMEOUT
-        });
-
-        this.handleCollector(collector, interaction, conversations, topic, channelName, currentState, ephemeral);
+    protected static createNavigationRow(buttons: NavigationButton[]): ActionRowBuilder<ButtonBuilder> {
+        return new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(
+                ...buttons.map(btn => 
+                    new ButtonBuilder()
+                        .setCustomId(btn.customId)
+                        .setLabel(btn.label)
+                        .setStyle(ButtonStyle[btn.style])
+                        .setDisabled(btn.disabled)
+                )
+            );
     }
 
-    private static createEmbed(
-        conversation: ConversationWithContext,
-        startIndex: number,
-        topic: string,
-        channelName: string,
-        totalConversations: number,
-        currentConvIndex: number
-    ): EmbedBuilder {
-        const messages = conversation.messages;
-        const totalMessages = messages.length;
-        const firstMsg = messages[0];
-        const msgLink = firstMsg ? 
-            `https://discord.com/channels/${firstMsg.guild?.id}/${firstMsg.channel.id}/${firstMsg.id}` : '';
-
-        const embed = new EmbedBuilder()
-            .setTitle(`${EMOJIS.search} Resultados para "${topic}"`)
-            .setDescription(
-                `${EMOJIS.conversation} **Conversa ${currentConvIndex + 1} de ${totalConversations}**\n` +
-                `${EMOJIS.relevance} Relevância: ${conversation.relevanceScore}/10\n` +
-                `${EMOJIS.channel} Canal: ${channelName}\n` +
-                (msgLink ? `[➡️ Ir para a conversa](${msgLink})` : '')
-            )
-            .setColor(0x7289da)
-            .setFooter({
-                text: `${EMOJIS.page} Página ${Math.floor(startIndex / this.MAX_MESSAGES_PER_PAGE) + 1} de ${Math.ceil(totalMessages / this.MAX_MESSAGES_PER_PAGE)}`
-            })
-            .setTimestamp();
-
-        const messageGroups = this.groupMessagesByAuthor(
-            messages.slice(startIndex, startIndex + this.MAX_MESSAGES_PER_PAGE)
-        );
+    protected static addMessageGroupFields(embed: EmbedBuilder, messages: Message[]): void {
+        const messageGroups = this.groupMessagesByAuthor(messages);
 
         for (const group of messageGroups) {
             const date = new Date(group.timestamp).toLocaleDateString('pt-BR', {
@@ -88,8 +56,6 @@ export class UIService {
 
             for (const content of group.content) {
                 if (!content.trim()) continue;
-
-                // Split long messages into smaller parts if needed
                 const contentParts = this.splitContentIntoChunks(content);
                 
                 for (const part of contentParts) {
@@ -102,17 +68,13 @@ export class UIService {
                 }
             }
 
-            if (currentChunk) {
-                chunks.push(currentChunk);
-            }
+            if (currentChunk) chunks.push(currentChunk);
 
-            // Add fields with proper length validation
             chunks.forEach((chunk, index) => {
                 const fieldName = chunks.length > 1 
                     ? `${baseFieldName} (${index + 1}/${chunks.length})`
                     : baseFieldName;
 
-                // Ensure field name isn't too long
                 const truncatedName = fieldName.length > this.MAX_FIELD_NAME_LENGTH
                     ? fieldName.substring(0, this.MAX_FIELD_NAME_LENGTH - 3) + '...'
                     : fieldName;
@@ -123,11 +85,9 @@ export class UIService {
                 });
             });
         }
-
-        return embed;
     }
 
-    private static splitContentIntoChunks(content: string): string[] {
+    protected static splitContentIntoChunks(content: string): string[] {
         if (content.length <= this.MAX_FIELD_VALUE_LENGTH) {
             return [content];
         }
@@ -136,7 +96,6 @@ export class UIService {
         let currentIndex = 0;
 
         while (currentIndex < content.length) {
-            // Try to split at the last space within the limit
             let endIndex = currentIndex + this.MAX_FIELD_VALUE_LENGTH;
             if (endIndex < content.length) {
                 const lastSpace = content.lastIndexOf(' ', endIndex);
@@ -152,37 +111,7 @@ export class UIService {
         return chunks;
     }
 
-    private static createButtonRow(
-        currentConvIndex: number,
-        currentMsgIndex: number,
-        conversations: ConversationWithContext[]
-    ): ActionRowBuilder<ButtonBuilder> {
-        return new ActionRowBuilder<ButtonBuilder>()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('prev_conv')
-                    .setLabel('◀️ Conversa Anterior')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(currentConvIndex === 0),
-                new ButtonBuilder()
-                    .setCustomId('prev_page')
-                    .setLabel('◀️ Página Anterior')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(currentMsgIndex === 0),
-                new ButtonBuilder()
-                    .setCustomId('next_page')
-                    .setLabel('Próxima Página ▶️')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(currentMsgIndex + this.MAX_MESSAGES_PER_PAGE >= conversations[currentConvIndex].messages.length),
-                new ButtonBuilder()
-                    .setCustomId('next_conv')
-                    .setLabel('Próxima Conversa ▶️')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(currentConvIndex === conversations.length - 1)
-            );
-    }
-
-    private static groupMessagesByAuthor(messages: Message[]): MessageGroup[] {
+    protected static groupMessagesByAuthor(messages: Message[]): MessageGroup[] {
         const groups = new Map<string, MessageGroup>();
 
         for (const msg of messages) {
@@ -204,15 +133,20 @@ export class UIService {
             .sort((a, b) => a.timestamp - b.timestamp);
     }
 
-    private static handleCollector(
-        collector: any,
+    protected static async setupInteractionCollector<T>(
+        message: Message,
         interaction: ChatInputCommandInteraction,
-        conversations: ConversationWithContext[],
-        topic: string,
-        channelName: string,
-        state: { currentConvIndex: number; currentMsgIndex: number },
+        items: T[],
+        state: NavigationState,
+        createEmbed: (state: NavigationState) => EmbedBuilder,
+        createRow: (state: NavigationState) => ActionRowBuilder<ButtonBuilder>,
         ephemeral: boolean = false
-    ): void {
+    ): Promise<void> {
+        const collector = message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: this.COLLECTOR_TIMEOUT
+        });
+
         collector.on('collect', async (i: any) => {
             if (i.user.id !== interaction.user.id && !ADMIN_IDS.includes(i.user.id)) {
                 await i.reply({ 
@@ -222,57 +156,71 @@ export class UIService {
                 return;
             }
 
+            let updated = false;
             switch (i.customId) {
                 case 'prev_conv':
-                    state.currentConvIndex = Math.max(0, state.currentConvIndex - 1);
-                    state.currentMsgIndex = 0;
+                    if (state.currentConvIndex > 0) {
+                        state.currentConvIndex--;
+                        state.currentMsgIndex = 0;
+                        updated = true;
+                    }
                     break;
                 case 'next_conv':
-                    state.currentConvIndex = Math.min(conversations.length - 1, state.currentConvIndex + 1);
-                    state.currentMsgIndex = 0;
+                    if (state.currentConvIndex < items.length - 1) {
+                        state.currentConvIndex++;
+                        state.currentMsgIndex = 0;
+                        updated = true;
+                    }
                     break;
                 case 'prev_page':
-                    state.currentMsgIndex = Math.max(0, state.currentMsgIndex - this.MAX_MESSAGES_PER_PAGE);
+                    if (state.currentMsgIndex > 0) {
+                        state.currentMsgIndex = Math.max(0, state.currentMsgIndex - this.MAX_ITEMS_PER_PAGE);
+                        updated = true;
+                    }
                     break;
                 case 'next_page':
-                    state.currentMsgIndex = Math.min(
-                        conversations[state.currentConvIndex].messages.length - 1, 
-                        state.currentMsgIndex + this.MAX_MESSAGES_PER_PAGE
-                    );
+                    const maxIndex = (items[state.currentConvIndex] as any).messages?.length ?? items.length;
+                    if (state.currentMsgIndex + this.MAX_ITEMS_PER_PAGE < maxIndex) {
+                        state.currentMsgIndex += this.MAX_ITEMS_PER_PAGE;
+                        updated = true;
+                    }
                     break;
             }
 
-            const embed = this.createEmbed(
-                conversations[state.currentConvIndex],
-                state.currentMsgIndex,
-                topic,
-                channelName,
-                conversations.length,
-                state.currentConvIndex
-            );
-
-            const row = this.createButtonRow(state.currentConvIndex, state.currentMsgIndex, conversations);
-
-            await i.update({ embeds: [embed], components: [row] });
+            if (updated) {
+                try {
+                    const embed = createEmbed(state);
+                    const row = createRow(state);
+                    await i.update({ embeds: [embed], components: [row] });
+                } catch (error: any) {
+                    if (error.code === 10008) { // Unknown Message error
+                        // Silently fail if the message was deleted or expired
+                        collector.stop('messageDeleted');
+                        return;
+                    }
+                    throw error;
+                }
+            }
         });
 
-        collector.on('end', async () => {
-            const embed = this.createEmbed(
-                conversations[state.currentConvIndex],
-                state.currentMsgIndex,
-                topic,
-                channelName,
-                conversations.length,
-                state.currentConvIndex
-            ).setFooter({ 
-                text: 'Esta sessão de busca expirou. Execute o comando novamente para uma nova busca.' 
-            });
+        collector.on('end', async (_, reason) => {
+            if (reason === 'messageDeleted') return;
+            
+            try {
+                const embed = createEmbed(state)
+                    .setFooter({ 
+                        text: 'Esta sessão expirou. Execute o comando novamente para uma nova sessão.' 
+                    });
 
-            await interaction.editReply({
-                content: `${EMOJIS.warning} Esta sessão de busca expirou.`,
-                embeds: [embed],
-                components: []
-            }).catch(console.error);
+                await interaction.editReply({
+                    embeds: [embed],
+                    components: []
+                });
+            } catch (error: any) {
+                if (error.code !== 10008) { // Only log if it's not an Unknown Message error
+                    console.error('Error updating expired interaction:', error);
+                }
+            }
         });
     }
 }

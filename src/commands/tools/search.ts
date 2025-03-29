@@ -1,8 +1,8 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, PermissionFlagsBits } from "discord.js";
+import { SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, PermissionFlagsBits, MessageFlags } from "discord.js";
 import { MessageService } from "../../services/MessageService";
 import { ConversationService } from "../../services/ConversationService";
 import { AIService } from "../../services/AIService";
-import { UIService } from "../../services/UIService";
+import { ConversationUIService } from "../../services/ui/ConversationUIService";
 import { EMOJIS, ADMIN_IDS } from "../../utils/constants";
 
 module.exports = {
@@ -43,7 +43,9 @@ module.exports = {
             }
 
             const ephemeral = interaction.options.getBoolean("ephemeral") ?? false;
-            await interaction.deferReply({ ephemeral });
+            await interaction.deferReply({ 
+                flags: ephemeral ? MessageFlags.Ephemeral : undefined
+            });
 
             const channel = interaction.options.getChannel("channel");
             const topic = interaction.options.getString("topic");
@@ -95,7 +97,7 @@ module.exports = {
                 }
 
                 // Display results with pagination, passing ephemeral flag
-                await UIService.displaySearchResults(interaction, relevantConversations, topic, channel.name, ephemeral);
+                await ConversationUIService.displayConversations(interaction, relevantConversations, topic, channel.name, ephemeral);
 
             } catch (error) {
                 console.error('Error in search command:', error);
