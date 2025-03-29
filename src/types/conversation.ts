@@ -1,0 +1,17 @@
+import { Message } from "discord.js";
+
+export interface ConversationWithContext {
+    messages: Message[];
+    relevanceScore: number;
+}
+
+export interface MessageGroup {
+    author: string;
+    content: string[];
+    timestamp: number;
+}
+
+export interface AIAnalysisResult {
+    isRelevant: boolean;
+    relevanceScore: number;
+}
