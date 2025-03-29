@@ -8,17 +8,20 @@ import {
     Message
 } from "discord.js";
 import { ConversationWithContext, MessageGroup } from "../types/conversation";
-import { EMOJIS } from "../utils/constants";
+import { EMOJIS, ADMIN_IDS } from "../utils/constants";
 
 export class UIService {
     private static readonly MAX_MESSAGES_PER_PAGE = 5;
     private static readonly COLLECTOR_TIMEOUT = 300000; // 5 minutes
+    private static readonly MAX_FIELD_VALUE_LENGTH = 1024;
+    private static readonly MAX_FIELD_NAME_LENGTH = 256;
 
     public static async displaySearchResults(
         interaction: ChatInputCommandInteraction,
         conversations: ConversationWithContext[],
         topic: string,
-        channelName: string
+        channelName: string,
+        ephemeral: boolean = false
     ): Promise<void> {
         const currentState = {
             currentConvIndex: 0,
@@ -39,7 +42,7 @@ export class UIService {
             time: this.COLLECTOR_TIMEOUT
         });
 
-        this.handleCollector(collector, interaction, conversations, topic, channelName, currentState);
+        this.handleCollector(collector, interaction, conversations, topic, channelName, currentState, ephemeral);
     }
 
     private static createEmbed(
@@ -79,29 +82,74 @@ export class UIService {
                 day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
             });
 
-            let combinedContent = '';
+            const baseFieldName = `${group.author} • ${date}`;
+            const chunks: string[] = [];
+            let currentChunk = '';
+
             for (const content of group.content) {
-                const potentialContent = combinedContent + (combinedContent ? '\n' : '') + content;
-                if (potentialContent.length > 1000) {
-                    embed.addFields({
-                        name: `${group.author} • ${date}`,
-                        value: combinedContent || "*Sem conteúdo*"
-                    });
-                    combinedContent = content;
-                } else {
-                    combinedContent = potentialContent;
+                if (!content.trim()) continue;
+
+                // Split long messages into smaller parts if needed
+                const contentParts = this.splitContentIntoChunks(content);
+                
+                for (const part of contentParts) {
+                    if ((currentChunk + '\n' + part).length <= this.MAX_FIELD_VALUE_LENGTH) {
+                        currentChunk = currentChunk ? currentChunk + '\n' + part : part;
+                    } else {
+                        if (currentChunk) chunks.push(currentChunk);
+                        currentChunk = part;
+                    }
                 }
             }
 
-            if (combinedContent) {
-                embed.addFields({
-                    name: `${group.author} • ${date}`,
-                    value: combinedContent
-                });
+            if (currentChunk) {
+                chunks.push(currentChunk);
             }
+
+            // Add fields with proper length validation
+            chunks.forEach((chunk, index) => {
+                const fieldName = chunks.length > 1 
+                    ? `${baseFieldName} (${index + 1}/${chunks.length})`
+                    : baseFieldName;
+
+                // Ensure field name isn't too long
+                const truncatedName = fieldName.length > this.MAX_FIELD_NAME_LENGTH
+                    ? fieldName.substring(0, this.MAX_FIELD_NAME_LENGTH - 3) + '...'
+                    : fieldName;
+
+                embed.addFields({
+                    name: truncatedName,
+                    value: chunk.substring(0, this.MAX_FIELD_VALUE_LENGTH)
+                });
+            });
         }
 
         return embed;
+    }
+
+    private static splitContentIntoChunks(content: string): string[] {
+        if (content.length <= this.MAX_FIELD_VALUE_LENGTH) {
+            return [content];
+        }
+
+        const chunks: string[] = [];
+        let currentIndex = 0;
+
+        while (currentIndex < content.length) {
+            // Try to split at the last space within the limit
+            let endIndex = currentIndex + this.MAX_FIELD_VALUE_LENGTH;
+            if (endIndex < content.length) {
+                const lastSpace = content.lastIndexOf(' ', endIndex);
+                if (lastSpace > currentIndex) {
+                    endIndex = lastSpace;
+                }
+            }
+
+            chunks.push(content.slice(currentIndex, endIndex).trim());
+            currentIndex = endIndex;
+        }
+
+        return chunks;
     }
 
     private static createButtonRow(
@@ -162,12 +210,13 @@ export class UIService {
         conversations: ConversationWithContext[],
         topic: string,
         channelName: string,
-        state: { currentConvIndex: number; currentMsgIndex: number }
+        state: { currentConvIndex: number; currentMsgIndex: number },
+        ephemeral: boolean = false
     ): void {
         collector.on('collect', async (i: any) => {
-            if (i.user.id !== interaction.user.id) {
+            if (i.user.id !== interaction.user.id && !ADMIN_IDS.includes(i.user.id)) {
                 await i.reply({ 
-                    content: `${EMOJIS.error} Apenas o autor do comando pode interagir com esses botões.`, 
+                    content: `${EMOJIS.error} Apenas o autor do comando e administradores podem interagir com esses botões.`, 
                     ephemeral: true 
                 });
                 return;

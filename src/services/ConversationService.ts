@@ -10,15 +10,14 @@ export class ConversationService {
         const conversations: Message[][] = [];
         let currentConversation: Message[] = [];
         
-        // Sort messages by timestamp (oldest first)
-        const sortedMessages = [...messages].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-        for (const message of sortedMessages) {
+        // Messages come in reverse chronological order, process them backwards
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const message = messages[i];
             if (!message.content.trim()) continue;
 
             if (!this.isRelatedToLastMessage(message, currentConversation)) {
                 if (currentConversation.length > 0) {
-                    conversations.push([...currentConversation]);
+                    conversations.push(currentConversation);
                     currentConversation = [];
                 }
             }

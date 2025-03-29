@@ -3,7 +3,7 @@ import { MessageService } from "../../services/MessageService";
 import { ConversationService } from "../../services/ConversationService";
 import { AIService } from "../../services/AIService";
 import { UIService } from "../../services/UIService";
-import { EMOJIS } from "../../utils/constants";
+import { EMOJIS, ADMIN_IDS } from "../../utils/constants";
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -19,22 +19,35 @@ module.exports = {
                 .setRequired(true))
         .addIntegerOption(option =>
             option.setName("limit")
-                .setDescription("Número máximo de mensagens para buscar (padrão: 1000)")
+                .setDescription("Número máximo de mensagens para buscar (padrão: 2000)")
                 .setMinValue(1)
                 .setMaxValue(20000)
                 .setRequired(false))
         .addBooleanOption(option =>
             option.setName("include_bots")
                 .setDescription("Incluir mensagens de bots na busca (padrão: false)")
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName("ephemeral")
+                .setDescription("Apenas você pode ver o resultado da busca (padrão: false)")
                 .setRequired(false)),
 
     async execute(interaction: ChatInputCommandInteraction) {
         try {
-            await interaction.deferReply();
+            // Check if user is admin
+            if (!ADMIN_IDS.includes(interaction.user.id)) {
+                return await interaction.reply({
+                    content: `${EMOJIS.error} Este comando está disponível apenas para administradores.`,
+                    ephemeral: true
+                });
+            }
+
+            const ephemeral = interaction.options.getBoolean("ephemeral") ?? false;
+            await interaction.deferReply({ ephemeral });
 
             const channel = interaction.options.getChannel("channel");
             const topic = interaction.options.getString("topic");
-            const limit = interaction.options.getInteger("limit") || 1000;
+            const limit = interaction.options.getInteger("limit") || 2000;
             const includeBots = interaction.options.getBoolean("include_bots") ?? false;
 
             if (!channel || !topic) {
@@ -81,8 +94,8 @@ module.exports = {
                     );
                 }
 
-                // Display results with pagination
-                await UIService.displaySearchResults(interaction, relevantConversations, topic, channel.name);
+                // Display results with pagination, passing ephemeral flag
+                await UIService.displaySearchResults(interaction, relevantConversations, topic, channel.name, ephemeral);
 
             } catch (error) {
                 console.error('Error in search command:', error);

@@ -10,4 +10,10 @@ export const EMOJIS = {
     warning: "⚠️"
 } as const;
 
-export default { EMOJIS };
+// Remove the 'as const' to allow string comparison
+export const ADMIN_IDS = [
+    "676156690395037713",
+    "111591984245780480"
+];
+
+export default { EMOJIS, ADMIN_IDS };
