@@ -153,4 +153,39 @@ export class AIService extends AIBaseService {
   public static cleanText(text: string): string {
     return TextProcessingService.cleanText(text);
   }
+
+  /**
+   * Generates a comprehensive response to a question using web search capabilities
+   * and optionally including chat context
+   * @param question - The question to answer
+   * @param chatContext - Optional chat context to supplement web information
+   * @param maxLength - Maximum target length for the response (default: 1000 characters)
+   * @returns Promise with the generated response
+   */
+  public static async generateWebSearchResponse(
+    question: string,
+    chatContext: string = "",
+    maxLength: number = 1000
+  ): Promise<string> {
+    // Create a custom prompt that encourages the model to search the web
+    // but also consider the provided context and offer opinions when needed
+    const searchPrompt = `Responda à seguinte pergunta usando todas as fontes de informação disponíveis:
+
+    PERGUNTA: ${question}
+    
+    ${chatContext ? `CONTEXTO DA CONVERSA:\n${chatContext}\n\n` : ''}
+    
+    INSTRUÇÕES:
+    1. Use informações atualizadas da web para fundamentar sua resposta quando possível
+    2. Considere o contexto da conversa fornecido (se houver) para personalizar sua resposta
+    3. Cite fontes quando relevante
+    4. Se não encontrar informações confiáveis ou se a pergunta for subjetiva, ofereça sua própria análise e opinião
+    5. Se a informação for controversa, apresente diferentes pontos de vista
+    6. MUITO IMPORTANTE: Seja conciso e direto. Limite sua resposta a aproximadamente ${maxLength} caracteres.
+    
+    Forneça uma resposta completa mas concisa, equilibrando fatos objetivos com insights perspicazes.`;
+
+    // Use a higher temperature for more diverse and opinion-based responses
+    return ResponseGenerationService.generateWebSearchResponse(searchPrompt, 0.8);
+  }
 }

@@ -5,6 +5,7 @@ import { AIService } from "../../services/AIService";
 import { ConversationUIService } from "../../services/ui/ConversationUIService";
 import { EMOJIS } from "../../utils/constants";
 import { SecurityService } from "../../services/SecurityService";
+import { UIService } from "../../services/UIService";
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -22,9 +23,9 @@ module.exports = {
                 .setRequired(true))
         .addIntegerOption(option =>
             option.setName("limit")
-                .setDescription("Número máximo de mensagens para buscar (padrão: 2000)")
-                .setMinValue(1)
-                .setMaxValue(20000)
+                .setDescription("Número máximo de mensagens para buscar (padrão 0 para auto-cache)")
+                .setMinValue(0)
+                .setMaxValue(50000)
                 .setRequired(false))
         .addBooleanOption(option =>
             option.setName("include_bots")
@@ -52,29 +53,32 @@ module.exports = {
 
             const channel = interaction.options.getChannel("channel");
             const topic = interaction.options.getString("topic");
-            const limit = interaction.options.getInteger("limit") || 2000;
+            const providedLimit = interaction.options.getInteger("limit"); // Get the limit if provided
             const includeBots = interaction.options.getBoolean("include_bots") ?? false;
 
             if (!channel || !topic) {
-                return await interaction.editReply(`${EMOJIS.error} Por favor, forneça um canal e um tópico para buscar.`);
+                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.info, "Por favor, forneça um canal e um tópico para buscar.", false));
             }
 
             if (!(channel instanceof TextChannel)) {
-                return await interaction.editReply(`${EMOJIS.error} O canal deve ser um canal de texto.`);
+                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "O canal deve ser um canal de texto.", false));
             }
 
             if (!channel.permissionsFor(interaction.client.user!)?.has(PermissionFlagsBits.ViewChannel)) {
-                return await interaction.editReply(`${EMOJIS.error} Eu não tenho permissão para ver esse canal.`);
+                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.error, "Eu não tenho permissão para ver esse canal.", false));
             }
 
-            await interaction.editReply(`${EMOJIS.search} Buscando mensagens sobre **"${topic}"** em ${channel}...`);
+            await interaction.editReply(UIService.formatStatusMessage(EMOJIS.loading, `Buscando mensagens sobre **"${topic}"** em ${channel}...`));
 
             try {
+                // Use 0 as the limit if not provided, so MessageService will use cache size or fallback to 1000
+                const limit = providedLimit || 0;
+                
                 // Fetch messages from the channel
                 const messages = await MessageService.fetchMessages(channel, limit, interaction);
 
                 if (messages.length === 0) {
-                    return await interaction.editReply(`${EMOJIS.warning} Nenhuma mensagem encontrada no canal.`);
+                    return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false));
                 }
 
                 // Filter out command messages
@@ -84,20 +88,25 @@ module.exports = {
                 const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
                 const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
 
+                await interaction.editReply(UIService.formatStatusMessage(EMOJIS.found, `Analisando ${validConversations.length} conversas sobre **"${topic}"**...`));
+
                 // Analyze conversations with AI
                 let relevantConversations;
                 try {
                     relevantConversations = await AIService.analyzeConversations(validConversations, topic, interaction);
                 } catch (error) {
                     console.error('AI analysis failed, falling back to keyword search:', error);
+                    await interaction.editReply(UIService.formatStatusMessage(EMOJIS.sync, "Usando busca alternativa por palavras-chave..."));
                     relevantConversations = AIService.fallbackKeywordSearch(validConversations, topic);
                 }
 
                 if (relevantConversations.length === 0) {
                     return await interaction.editReply(
-                        `${EMOJIS.warning} Nenhuma mensagem relacionada a **"${topic}"** encontrada em ${channel}.`
+                        UIService.formatStatusMessage(EMOJIS.warning, `Nenhuma mensagem relacionada a **"${topic}"** encontrada em ${channel}.`, false)
                     );
                 }
+
+                await interaction.editReply(UIService.formatStatusMessage(EMOJIS.complete, `Encontradas ${relevantConversations.length} conversas relevantes!`));
 
                 // Display results with pagination, passing ephemeral flag
                 await ConversationUIService.displayConversations(interaction, relevantConversations, topic, channel.name, ephemeral);
@@ -110,7 +119,7 @@ module.exports = {
         } catch (error) {
             console.error('Error in search command:', error);
             await interaction.editReply(
-                `${EMOJIS.error} Ocorreu um erro durante a busca. Por favor, tente novamente mais tarde.`
+                UIService.formatStatusMessage(EMOJIS.error, "Ocorreu um erro durante a busca. Por favor, tente novamente mais tarde.", false)
             );
         }
     },

@@ -22,6 +22,37 @@ These constants define various UI and pagination settings:
 
 ## Methods
 
+### `formatStatusMessage`
+
+```typescript
+static formatStatusMessage(emoji: string, message: string, useBackticks = true): string
+```
+
+Creates a formatted status message with an emoji and optional backtick formatting.
+
+#### Features:
+- Consistent formatting for status messages throughout the application
+- Optional backtick formatting for in-progress updates
+- Uses emoji for visual status indicators
+
+#### Parameters:
+- `emoji: string` - The emoji character to use
+- `message: string` - The status message text
+- `useBackticks: boolean` - Whether to format with backticks (default: true)
+
+#### Returns:
+- `string` - Formatted status message
+
+#### Example:
+```typescript
+// With backticks (for progress updates)
+const loadingMessage = UIService.formatStatusMessage(EMOJIS.loading, "Carregando mensagens...");
+// Without backticks (for final results)
+const completeMessage = UIService.formatStatusMessage(EMOJIS.complete, "Busca completa!", false);
+
+await interaction.editReply(loadingMessage);
+```
+
 ### `displaySearchResults`
 
 ```typescript
@@ -186,6 +217,8 @@ Sets up a component collector to handle button interactions.
 
 ## Best Practices
 
+- Use `formatStatusMessage` for all status updates to maintain consistent styling
+- Use backtick formatting for in-progress updates and remove it for final results
 - Use this service as the final step in search and display workflows
 - Consider using ephemeral responses in busy channels to reduce clutter
 - Remember that collectors automatically expire after the timeout period
@@ -200,6 +233,11 @@ The UI Service system is composed of a base `UIService` class and specialized UI
 ## Base UIService
 
 The base `UIService` class provides core functionality for creating interactive Discord message components and handling pagination.
+
+### Public Methods
+
+#### `formatStatusMessage(emoji: string, message: string, useBackticks = true)`
+Creates a formatted status message with consistent styling for use throughout the application.
 
 ### Protected Methods
 
@@ -260,3 +298,4 @@ The service includes robust error handling for:
 2. Use the provided interfaces for type safety
 3. Implement error handling using the base service's mechanisms
 4. Follow the pagination pattern for large datasets
+5. Use formatStatusMessage for consistent status update styling

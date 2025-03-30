@@ -3,6 +3,7 @@ require("dotenv").config();
 import { Client, GatewayIntentBits, Collection, Partials } from "discord.js";
 import { loadEvents } from "./handlers/eventHandler";
 import { loadCommands } from "./handlers/commandHandler";
+import { MessageService } from "./services/MessageService";
 
 const { Guilds, GuildMembers, GuildMessages, MessageContent } =
     GatewayIntentBits;
@@ -19,7 +20,7 @@ const client = new Client({
 
 client.commands = new Collection();
 
-client.login(process.env.CLIENT_TOKEN).then(() => {
+client.login(process.env.CLIENT_TOKEN).then(() => {    
     loadEvents(client);
     loadCommands(client);
 });

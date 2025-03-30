@@ -10,19 +10,27 @@ export class ResponseGenerationService extends AIBaseService {
    * @param prompt - User query or instruction
    * @param context - Conversation context to inform the response
    * @param additionalInstructions - Optional additional instructions for the AI
+   * @param maxLength - Maximum target length for response (default: 1000 characters)
    * @returns Promise with the generated response
    */
   public static async generateContextualResponse(
     prompt: string, 
     context: string,
-    additionalInstructions: string = ""
+    additionalInstructions: string = "",
+    maxLength: number = 1000
   ): Promise<string> {
     try {
+      // Add conciseness instruction
+      const conciseInstruction = `Seja conciso e direto. Limite sua resposta a aproximadamente ${maxLength} caracteres.`;
+      const combinedInstructions = additionalInstructions 
+        ? `${additionalInstructions}\n${conciseInstruction}` 
+        : conciseInstruction;
+      
       // Create structured prompt with context
       const aiPrompt = ContextManagementService.createContextualPrompt(
         prompt, 
         context,
-        additionalInstructions
+        combinedInstructions
       );
       
       // Generate AI response
@@ -145,6 +153,37 @@ export class ResponseGenerationService extends AIBaseService {
       return this.handleError(
         error,
         'generating conversation response'
+      );
+    }
+  }
+  
+  /**
+   * Generates a response based on web search results and optional context
+   * @param prompt - Combined prompt with question and optional context
+   * @param temperature - Temperature parameter for response randomness (0.0-1.0)
+   * @returns Promise with the generated response from web search and/or AI reasoning
+   */
+  public static async generateWebSearchResponse(
+    prompt: string,
+    temperature: number = 0.8
+  ): Promise<string> {
+    try {
+      // Create a model instance with higher temperature for diverse and opinionated responses
+      const webSearchModel = this.createModel({
+        temperature,
+        topP: 0.9,
+        topK: 40,
+        //maxOutputTokens: 4096, // Larger output for comprehensive answers
+        maxOutputTokens: 2048, // Adjusted for performance
+      });
+      
+      // Generate AI response with web search capability and opinion generation
+      const result = await webSearchModel.generateContent(prompt);
+      return result.response.text();
+    } catch (error) {
+      return this.handleError(
+        error,
+        'generating comprehensive response'
       );
     }
   }

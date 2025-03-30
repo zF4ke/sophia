@@ -31,6 +31,17 @@ export class UIService {
     protected static readonly MAX_FIELD_NAME_LENGTH = 256;
     protected static readonly DEFAULT_COLOR = 0x7289da;
 
+    /**
+     * Creates a formatted status message with backticks and emoji
+     * @param emoji The emoji character to use
+     * @param message The status message text
+     * @param useBackticks Whether to format with backticks or return plain text
+     * @returns Formatted status message
+     */
+    public static formatStatusMessage(emoji: string, message: string, useBackticks = true): string {
+        return useBackticks ? `\`${emoji} ${message}\`` : `${emoji} ${message}`;
+    }
+
     protected static createNavigationRow(buttons: NavigationButton[]): ActionRowBuilder<ButtonBuilder> {
         return new ActionRowBuilder<ButtonBuilder>()
             .addComponents(

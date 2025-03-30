@@ -1,4 +1,5 @@
 export const EMOJIS = {
+    // Original emojis
     search: "🔍",
     conversation: "💬",
     page: "📄",
@@ -9,7 +10,18 @@ export const EMOJIS = {
     success: "✅",
     warning: "⚠️",
     wave: "👋",
-    info: "ℹ️"
+    info: "📖",
+    delete: "🗑️",
+    cache: "📦",
+    loading: "⏳",
+    merge: "🔄",
+    found: "🔎",
+    database: "🗄️",
+    network: "📡",
+    complete: "✨",
+    memory: "💾",
+    check: "✅",
+    sync: "🔄"
 } as const;
 
 // Remove the 'as const' to allow string comparison
@@ -18,4 +30,15 @@ export const ADMIN_IDS = [
     "111591984245780480"
 ];
 
-export default { EMOJIS, ADMIN_IDS };
+/**
+ * Discord platform specific constants
+ */
+export const DISCORD = {
+    /**
+     * Maximum character limit for a single Discord message
+     * Messages exceeding this limit need to be split
+     */
+    MESSAGE_LIMIT: 2000
+};
+
+export default { EMOJIS, ADMIN_IDS, DISCORD };

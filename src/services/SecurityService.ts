@@ -1,7 +1,6 @@
 import { ChatInputCommandInteraction, PermissionFlagsBits, GuildMember, ChannelType } from "discord.js";
 import { ADMIN_IDS } from "../utils/constants";
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import { FileSystemService } from "./FileSystemService";
 
 interface RateLimitEntry {
     count: number;
@@ -35,12 +34,16 @@ interface ModeratorUser {
  * Enhanced SecurityService with admin management, command access control and rate limiting
  */
 export class SecurityService {
+    // Service name used for file organization
+    private static readonly SERVICE_NAME = 'security';
+    
+    // File names
+    private static readonly ADMINS_FILE = 'admins.json';
+    private static readonly MODERATORS_FILE = 'moderators.json';
+    private static readonly COMMANDS_CONFIG_FILE = 'commands_config.json';
+
     public static readonly RATE_LIMIT_WINDOW = 60000; // 1 minute in ms
     private static readonly DEFAULT_COMMAND_LIMIT = 5;
-    private static readonly DB_PATH = path.join(process.cwd(), 'data');
-    private static readonly ADMINS_FILE = path.join(this.DB_PATH, 'admins.json');
-    private static readonly MODERATORS_FILE = path.join(this.DB_PATH, 'moderators.json');
-    private static readonly COMMANDS_CONFIG_FILE = path.join(this.DB_PATH, 'commands_config.json');
     
     private static rateLimits: Map<string, RateLimitEntry> = new Map();
     private static admins: AdminUser[] = [];
@@ -55,26 +58,36 @@ export class SecurityService {
         if (this.isInitialized) return;
         
         try {
-            // Ensure DB directory exists
-            await fs.mkdir(this.DB_PATH, { recursive: true });
-            
             // Load admins
             try {
-                const adminData = await fs.readFile(this.ADMINS_FILE, 'utf-8');
-                this.admins = JSON.parse(adminData);
+                const adminsData = FileSystemService.readJsonFromPath<AdminUser[]>(this.ADMINS_FILE);
                 
-                // Add hardcoded admins if they aren't in the loaded admin list
-                for (const id of ADMIN_IDS) {
-                    if (!this.admins.some(admin => admin.userId === id)) {
-                        this.admins.push({
-                            userId: id,
-                            addedBy: 'system',
-                            addedAt: Date.now(),
-                            permissions: ['*']
-                        });
+                if (adminsData) {
+                    this.admins = adminsData;
+                    
+                    // Add hardcoded admins if they aren't in the loaded admin list
+                    for (const id of ADMIN_IDS) {
+                        if (!this.admins.some(admin => admin.userId === id)) {
+                            this.admins.push({
+                                userId: id,
+                                addedBy: 'system',
+                                addedAt: Date.now(),
+                                permissions: ['*']
+                            });
+                        }
                     }
+                } else {
+                    // Create default admins if file doesn't exist
+                    this.admins = ADMIN_IDS.map(id => ({
+                        userId: id, 
+                        addedBy: 'system',
+                        addedAt: Date.now(),
+                        permissions: ['*']
+                    }));
+                    await this.saveAdmins();
                 }
             } catch (error) {
+                console.error('Error loading admins:', error);
                 // Create default admins file if it doesn't exist
                 this.admins = ADMIN_IDS.map(id => ({
                     userId: id, 
@@ -87,9 +100,17 @@ export class SecurityService {
             
             // Load moderators
             try {
-                const moderatorData = await fs.readFile(this.MODERATORS_FILE, 'utf-8');
-                this.moderators = JSON.parse(moderatorData);
+                const moderatorsData = FileSystemService.readJsonFromPath<ModeratorUser[]>(this.MODERATORS_FILE);
+                
+                if (moderatorsData) {
+                    this.moderators = moderatorsData;
+                } else {
+                    // Create empty moderators array if file doesn't exist
+                    this.moderators = [];
+                    await this.saveModerators();
+                }
             } catch (error) {
+                console.error('Error loading moderators:', error);
                 // Create empty moderators file if it doesn't exist
                 this.moderators = [];
                 await this.saveModerators();
@@ -97,10 +118,17 @@ export class SecurityService {
             
             // Load command configs
             try {
-                const commandConfigData = await fs.readFile(this.COMMANDS_CONFIG_FILE, 'utf-8');
-                const loadedConfigs = JSON.parse(commandConfigData);
-                this.commandConfigs = new Map(Object.entries(loadedConfigs));
+                const commandConfigData = FileSystemService.readJsonFromPath<Record<string, CommandConfig>>(this.COMMANDS_CONFIG_FILE);
+                
+                if (commandConfigData) {
+                    this.commandConfigs = new Map(Object.entries(commandConfigData));
+                } else {
+                    // No command configs yet, will create when needed
+                    this.commandConfigs = new Map();
+                    await this.saveCommandConfigs();
+                }
             } catch (error) {
+                console.error('Error loading command configs:', error);
                 // No command configs yet, will create when needed
                 this.commandConfigs = new Map();
                 await this.saveCommandConfigs();
@@ -412,14 +440,14 @@ export class SecurityService {
      * Save admins to file
      */
     private static async saveAdmins(): Promise<void> {
-        await fs.writeFile(this.ADMINS_FILE, JSON.stringify(this.admins, null, 2), 'utf-8');
+        FileSystemService.writeJsonToPath(this.ADMINS_FILE, this.admins, this.SERVICE_NAME);
     }
     
     /**
      * Save moderators to file
      */
     private static async saveModerators(): Promise<void> {
-        await fs.writeFile(this.MODERATORS_FILE, JSON.stringify(this.moderators, null, 2), 'utf-8');
+        FileSystemService.writeJsonToPath(this.MODERATORS_FILE, this.moderators, this.SERVICE_NAME);
     }
     
     /**
@@ -427,7 +455,7 @@ export class SecurityService {
      */
     private static async saveCommandConfigs(): Promise<void> {
         const configsObject = Object.fromEntries(this.commandConfigs);
-        await fs.writeFile(this.COMMANDS_CONFIG_FILE, JSON.stringify(configsObject, null, 2), 'utf-8');
+        FileSystemService.writeJsonToPath(this.COMMANDS_CONFIG_FILE, configsObject, this.SERVICE_NAME);
     }
     
     /**

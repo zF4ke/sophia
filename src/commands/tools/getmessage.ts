@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, PermissionFlagsBits, MessageFlags } from "discord.js";
 import { MessageService } from "../../services/MessageService";
 import { EMOJIS } from "../../utils/constants";
+import { UIService } from "../../services/UIService";
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -38,21 +39,21 @@ module.exports = {
             const messageNumber = interaction.options.getInteger("number");
 
             if (!channel || messageNumber === null) {
-                await safeReply(interaction, `${EMOJIS.error} Por favor, forneça um canal e um número de mensagem.`);
+                await safeReply(interaction, UIService.formatStatusMessage(EMOJIS.info, "Por favor, forneça um canal e um número de mensagem.", false));
                 return;
             }
 
             if (!(channel instanceof TextChannel)) {
-                await safeReply(interaction, `${EMOJIS.error} O canal deve ser um canal de texto.`);
+                await safeReply(interaction, UIService.formatStatusMessage(EMOJIS.warning, "O canal deve ser um canal de texto.", false));
                 return;
             }
 
             if (!channel.permissionsFor(interaction.client.user!)?.has(PermissionFlagsBits.ViewChannel)) {
-                await safeReply(interaction, `${EMOJIS.error} Eu não tenho permissão para ver esse canal.`);
+                await safeReply(interaction, UIService.formatStatusMessage(EMOJIS.error, "Eu não tenho permissão para ver esse canal.", false));
                 return;
             }
 
-            await safeReply(interaction, `${EMOJIS.search} Buscando a mensagem ${messageNumber} em ${channel.toString()}...`);
+            await safeReply(interaction, UIService.formatStatusMessage(EMOJIS.loading, `Buscando a mensagem ${messageNumber} em ${channel.toString()}...`));
 
             try {
                 // Fetch messages from start
@@ -63,7 +64,7 @@ module.exports = {
 
                 if (!targetMessage) {
                     await safeReply(interaction,
-                        `${EMOJIS.warning} Não foi possível encontrar a mensagem ${messageNumber} em ${channel.toString()}.`
+                        UIService.formatStatusMessage(EMOJIS.warning, `Não foi possível encontrar a mensagem ${messageNumber} em ${channel.toString()}.`, false)
                     );
                     return;
                 }
@@ -77,7 +78,7 @@ module.exports = {
                     : targetMessage.content || "*Sem conteúdo textual*";
 
                 // Format response with message details
-                const response = `${EMOJIS.success} **Mensagem ${messageNumber} em ${channel.toString()}:**
+                const response = `${EMOJIS.found} **Mensagem ${messageNumber} em ${channel.toString()}:**
 
 **Autor:** ${targetMessage.author.username}
 **Data:** ${targetMessage.createdAt.toLocaleDateString('pt-BR')} às ${targetMessage.createdAt.toLocaleTimeString('pt-BR')}
@@ -96,7 +97,7 @@ ${contentPreview}
         } catch (error) {
             console.error('Error in getmessage command:', error);
             await safeReply(interaction, 
-                `${EMOJIS.error} Ocorreu um erro durante a busca da mensagem. O canal pode ter muitas mensagens ou a mensagem solicitada não existe.`
+                UIService.formatStatusMessage(EMOJIS.error, "Ocorreu um erro durante a busca da mensagem. O canal pode ter muitas mensagens ou a mensagem solicitada não existe.", false)
             );
         }
     },

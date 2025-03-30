@@ -2,8 +2,9 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, Permissi
 import { MessageService } from "../../services/MessageService";
 import { ConversationService } from "../../services/ConversationService";
 import { AIService } from "../../services/AIService";
-import { EMOJIS } from "../../utils/constants";
+import { EMOJIS, DISCORD } from "../../utils/constants";
 import { SecurityService } from "../../services/SecurityService";
+import { UIService } from "../../services/UIService";
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -21,9 +22,9 @@ module.exports = {
                 .setRequired(true))
         .addIntegerOption(option =>
             option.setName("limit")
-                .setDescription("Número máximo de mensagens para buscar (padrão: 1000)")
-                .setMinValue(1)
-                .setMaxValue(10000)
+                .setDescription("Número máximo de mensagens para buscar (padrão 0 para auto-cache)")
+                .setMinValue(0)
+                .setMaxValue(50000)
                 .setRequired(false))
         .addBooleanOption(option =>
             option.setName("include_bots")
@@ -49,29 +50,32 @@ module.exports = {
 
             const channel = interaction.options.getChannel("channel");
             const prompt = interaction.options.getString("prompt");
-            const limit = interaction.options.getInteger("limit") || 1000;
+            const providedLimit = interaction.options.getInteger("limit");
             const includeBots = interaction.options.getBoolean("include_bots") ?? false;
 
             if (!channel || !prompt) {
-                return await interaction.editReply(`${EMOJIS.error} Por favor, forneça um canal e uma pergunta.`);
+                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.info, "Por favor, forneça um canal e uma pergunta.", false));
             }
 
             if (!(channel instanceof TextChannel)) {
-                return await interaction.editReply(`${EMOJIS.error} O canal deve ser um canal de texto.`);
+                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "O canal deve ser um canal de texto.", false));
             }
 
             if (!channel.permissionsFor(interaction.client.user!)?.has(PermissionFlagsBits.ViewChannel)) {
-                return await interaction.editReply(`${EMOJIS.error} Eu não tenho permissão para ver esse canal.`);
+                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.error, "Eu não tenho permissão para ver esse canal.", false));
             }
 
-            await interaction.editReply(`${EMOJIS.search} Buscando contexto em ${channel}...`);
+            await interaction.editReply(UIService.formatStatusMessage(EMOJIS.loading, `Buscando contexto em \`**\`${channel.name}\`**\` ...`));
 
             try {
+                // Use 0 as the limit if not provided, so MessageService will use cache size or fallback to 1000
+                const limit = providedLimit || 0;
+                
                 // Fetch messages using MessageService
                 const messages = await MessageService.fetchMessages(channel, limit, interaction);
 
                 if (messages.length === 0) {
-                    return await interaction.editReply(`${EMOJIS.warning} Nenhuma mensagem encontrada no canal.`);
+                    return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false));
                 }
 
                 // Filter messages using MessageService
@@ -82,10 +86,10 @@ module.exports = {
                 const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
                 
                 if (validConversations.length === 0) {
-                    return await interaction.editReply(`${EMOJIS.warning} Não foi possível extrair conversas válidas do canal.`);
+                    return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Não foi possível extrair conversas válidas do canal.", false));
                 }
 
-                await interaction.editReply(`${EMOJIS.search} Processando ${validConversations.length} conversas como contexto...`);
+                await interaction.editReply(UIService.formatStatusMessage(EMOJIS.conversation, `Processando ${validConversations.length} conversas como contexto...`));
                 
                 // Select relevant conversations and format them as context using AIService
                 const selectedConversations = AIService.selectConversationsForContext(validConversations, prompt);
@@ -94,10 +98,33 @@ module.exports = {
                 // Generate response using AIService
                 const aiResponse = await AIService.generateContextualResponse(prompt, contextText);
                 
-                // Send the response
-                await interaction.editReply({
-                    content: `${EMOJIS.success} **Resposta baseada no contexto**\n\n**Sua pergunta:** ${prompt}\n\n**Resposta:**\n${aiResponse}`
-                });
+                const messageHeader = UIService.formatStatusMessage(EMOJIS.complete, `Resposta baseada no contexto`);
+                const questionContent = `**Sua pergunta:** ${prompt}`;
+                const responseContent = `**Resposta:**\n${aiResponse}`;
+
+                // Split message if it's too long for a single Discord message
+                //const fullContent = messageHeader + "\n\n" /* + questionContent + "\n\n" */ + responseContent;
+                const fullContent = messageHeader + "\n\n" /* + questionContent + "\n\n" */ + aiResponse;
+                
+                if (fullContent.length <= DISCORD.MESSAGE_LIMIT) {
+                    // If the message fits in a single Discord message
+                    await interaction.editReply({ content: fullContent });
+                } else {
+                    // Send the header and question in the first message
+                    const firstMessage = messageHeader + "\n\n" + questionContent;
+                    await interaction.editReply({ content: firstMessage });
+                    
+                    // Split the response into chunks
+                    const chunks = splitLongMessage(responseContent);
+                    
+                    // Send each chunk as a follow-up message
+                    for (const chunk of chunks) {
+                        await interaction.followUp({ 
+                            content: chunk,
+                            flags: ephemeral ? MessageFlags.Ephemeral : undefined
+                        });
+                    }
+                }
 
             } catch (error) {
                 console.error('Error in context command:', error);
@@ -107,8 +134,85 @@ module.exports = {
         } catch (error) {
             console.error('Error in context command:', error);
             await interaction.editReply(
-                `${EMOJIS.error} Ocorreu um erro ao processar sua pergunta. Por favor, tente novamente mais tarde.`
+                UIService.formatStatusMessage(EMOJIS.error, "Ocorreu um erro ao processar sua pergunta. Por favor, tente novamente mais tarde.", false)
             );
         }
     },
 };
+
+/**
+ * Splits a long message into chunks that fit within Discord's message limit
+ * @param message The message to split
+ * @param limit The maximum length per chunk (default: Discord's message limit)
+ * @returns Array of message chunks
+ */
+function splitLongMessage(message: string, limit: number = DISCORD.MESSAGE_LIMIT): string[] {
+    const chunks: string[] = [];
+    
+    // If message is already within limit, return it as is
+    if (message.length <= limit) {
+        return [message];
+    }
+    
+    let currentChunk = '';
+    // Split by paragraphs (double newlines) first to maintain logical structure
+    const paragraphs = message.split('\n\n');
+    
+    for (const paragraph of paragraphs) {
+        // If adding this paragraph would exceed the limit, push current chunk and start a new one
+        if ((currentChunk + paragraph + '\n\n').length > limit) {
+            // If the paragraph itself is too long, split it further
+            if (paragraph.length > limit) {
+                // First push current chunk if it exists
+                if (currentChunk) {
+                    chunks.push(currentChunk);
+                    currentChunk = '';
+                }
+                
+                // Split long paragraph by sentences and try to keep sentences together
+                const sentences = paragraph.split(/(?<=\.|\?|\!) /);
+                for (const sentence of sentences) {
+                    if ((currentChunk + sentence + ' ').length <= limit) {
+                        currentChunk += sentence + ' ';
+                    } else {
+                        // If the sentence itself is too long, split by words
+                        if (sentence.length > limit) {
+                            if (currentChunk) {
+                                chunks.push(currentChunk);
+                                currentChunk = '';
+                            }
+                            
+                            // Split by words
+                            let words = sentence.split(' ');
+                            for (const word of words) {
+                                if ((currentChunk + word + ' ').length <= limit) {
+                                    currentChunk += word + ' ';
+                                } else {
+                                    chunks.push(currentChunk);
+                                    currentChunk = word + ' ';
+                                }
+                            }
+                        } else {
+                            chunks.push(currentChunk);
+                            currentChunk = sentence + ' ';
+                        }
+                    }
+                }
+            } else {
+                // Paragraph fits in a new chunk
+                chunks.push(currentChunk);
+                currentChunk = paragraph + '\n\n';
+            }
+        } else {
+            // Add paragraph to current chunk
+            currentChunk += paragraph + '\n\n';
+        }
+    }
+    
+    // Add the last chunk if it's not empty
+    if (currentChunk) {
+        chunks.push(currentChunk);
+    }
+    
+    return chunks;
+}

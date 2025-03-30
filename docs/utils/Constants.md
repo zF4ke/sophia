@@ -34,6 +34,24 @@ These emojis are used consistently across the application to indicate:
 - **success**: Success messages and confirmations
 - **warning**: Warning messages and alerts
 
+## Discord Platform Constants
+
+The `DISCORD` object contains platform-specific constants related to Discord limitations and requirements.
+
+```typescript
+export const DISCORD = {
+    /**
+     * Maximum character limit for a single Discord message
+     * Messages exceeding this limit need to be split
+     */
+    MESSAGE_LIMIT: 2000
+};
+```
+
+These constants are used to handle Discord-specific limitations:
+
+- **MESSAGE_LIMIT**: The maximum number of characters allowed in a single Discord message (2000). Used by commands like `ask` and `context` to split long responses into multiple messages when necessary.
+
 ## Admin ID Constants
 
 The `ADMIN_IDS` array contains the Discord user IDs of administrators who have elevated permissions.
@@ -79,6 +97,24 @@ await interaction.reply(`${EMOJIS.error} An error occurred: ${errorMessage}`);
 
 // Progress update with emoji
 await interaction.editReply(`${EMOJIS.search} Searching... (${progress}%)`);
+```
+
+### Using Discord Message Limit
+
+```typescript
+// Check if message exceeds Discord's character limit
+if (responseContent.length > DISCORD.MESSAGE_LIMIT) {
+    // Split the message into multiple parts
+    const messageParts = splitLongMessage(responseContent);
+    
+    // Send each part separately
+    for (const part of messageParts) {
+        await interaction.followUp(part);
+    }
+} else {
+    // Send as a single message
+    await interaction.reply(responseContent);
+}
 ```
 
 ### Admin Permission Check

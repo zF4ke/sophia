@@ -31,7 +31,7 @@ export class ConversationUIService extends UIService {
                 `https://discord.com/channels/${firstMsg.guild?.id}/${firstMsg.channel.id}/${firstMsg.id}` : '';
 
             const embed = new EmbedBuilder()
-                .setTitle(`${EMOJIS.conversation} Conversa sobre "${topic}"`)
+                .setTitle(`${EMOJIS.search} Conversa sobre "${topic}"`)
                 .setDescription(
                     `${EMOJIS.conversation} **Conversa ${state.currentConvIndex + 1} de ${conversations.length}**\n` +
                     `${EMOJIS.relevance} Relevância: ${conversation.relevanceScore}/10\n` +

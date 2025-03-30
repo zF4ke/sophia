@@ -3,23 +3,41 @@ import { AIBaseService } from "./AIBaseService";
 import { TextProcessingService } from "./TextProcessingService";
 import { ConversationWithContext, AIAnalysisResult } from "../../types/conversation";
 import { EMOJIS } from "../../utils/constants";
+import { UIService } from "../UIService";
 
 /**
  * Service for analyzing conversations and determining their relevance to topics
  */
 export class ConversationAnalysisService extends AIBaseService {
+  private static readonly MAX_BATCH_SIZE = 300; // Maximum batch size
+  private static readonly MIN_BATCH_SIZE = 10;  // Minimum batch size
+
   /**
-   * Calculates optimal batch size based on total number of conversations
+   * Calculates optimal batch size based on total number of conversations using a linear equation
    * @param totalConversations - Total number of conversations to analyze
    * @returns Appropriate batch size for processing
    * @private
    */
-  private static calculateBatchSize(totalConversations: number): number {
-    if (totalConversations <= 10) return 10;
-    if (totalConversations <= 50) return 25;
-    if (totalConversations <= 100) return 50;
-    if (totalConversations <= 500) return 100;
-    return 200;
+  private static calculateDynamicBatchSize(totalConversations: number): number {
+    if (totalConversations <= 10) {
+      return this.MIN_BATCH_SIZE;
+    }
+    
+    // Use a linear equation to determine batch size
+    // For small numbers of conversations, use smaller batches
+    // For large numbers of conversations, use larger batches up to the limit
+    
+    // Parameters for linear equation: batchSize = m * log10(conversationCount) + b
+    const m = (this.MAX_BATCH_SIZE - this.MIN_BATCH_SIZE) / 3; // Slope (divided by 3 for log10 scale of 1000)
+    const b = this.MIN_BATCH_SIZE; // Intercept (minimum batch size)
+    
+    // Calculate batch size using logarithmic scale to handle large numbers better
+    // Log base 10 means 10 conversations → 0, 100 conversations → 1, 1000 conversations → 2, etc.
+    const logCount = Math.log10(Math.max(1, totalConversations));
+    const batchSize = Math.round(m * logCount + b);
+    
+    // Ensure it's within bounds
+    return Math.min(Math.max(batchSize, this.MIN_BATCH_SIZE), this.MAX_BATCH_SIZE);
   }
 
   /**
@@ -35,17 +53,28 @@ export class ConversationAnalysisService extends AIBaseService {
     interaction: ChatInputCommandInteraction
   ): Promise<ConversationWithContext[]> {
     const relevantConversations: ConversationWithContext[] = [];
-    const batchSize = this.calculateBatchSize(conversations.length);
+    const batchSize = this.calculateDynamicBatchSize(conversations.length);
     const topicKeywords = TextProcessingService.extractKeywords(topic);
+
+    // Update user on the dynamic batch size calculation
+    await interaction.editReply(
+      UIService.formatStatusMessage(
+        EMOJIS.search, 
+        `Analisando ${conversations.length} conversas em lotes de ${batchSize}...`
+      )
+    );
 
     for (let i = 0; i < conversations.length; i += batchSize) {
       const batch = conversations.slice(i, i + batchSize);
       const batchResults = await this.analyzeBatch(batch, topic, topicKeywords);
 
       // Update progress periodically
-      if (i % (batchSize * 2) === 0) {
+      if (i % (batchSize * 2) === 0 || i === 0) {
         await interaction.editReply(
-          `${EMOJIS.search} Analisando conversas... (${i}/${conversations.length} processadas)`
+          UIService.formatStatusMessage(
+            EMOJIS.search, 
+            `Analisando conversas... (${i}/${conversations.length} processadas)`
+          )
         );
       }
 
