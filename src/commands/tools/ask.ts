@@ -45,8 +45,21 @@ module.exports = {
             await interaction.deferReply({ flags: ephemeral ? MessageFlags.Ephemeral : undefined });
 
             const question = interaction.options.getString("question");
-            const contextChannel = interaction.options.getChannel("context_channel") /* || interaction.channel; */
-            const contextLimit = interaction.options.getInteger("context_limit") || 0; // Use 0 for auto cache size
+            let contextChannel = interaction.options.getChannel("context_channel") /* || interaction.channel; */
+            let contextLimit = interaction.options.getInteger("context_limit"); // Use 0 for auto cache size
+            let useCache = true; // Default to true for cache usage
+
+            if (!contextChannel) {
+                //console.warn("Context channel not provided, using current channel as default.");
+
+                if (interaction.channel instanceof TextChannel) {
+                    contextChannel = interaction.channel;
+                    contextLimit = 20;
+                    useCache = false; // Use cache only if context channel is provided
+                }
+            } else if (!contextLimit) {
+                contextLimit = 0; // Default to 0 for auto cache size if no limit is provided
+            }
             
             if (!question) {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.info, "Por favor, forneça uma pergunta.", false));
@@ -67,7 +80,7 @@ module.exports = {
 
                 try {
                     // Fetch messages from context channel with limit 0 to use cache size or default
-                    const messages = await MessageService.fetchMessages(contextChannel, contextLimit, interaction);
+                    const messages = await MessageService.fetchMessages(contextChannel, contextLimit ?? 20, interaction, useCache);
                     
                     if (messages.length > 0) {
                         // Filter and process messages

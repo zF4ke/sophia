@@ -87,9 +87,10 @@ export class AIService extends AIBaseService {
    */
   public static async generateContextualResponse(
     prompt: string, 
-    context: string
+    context: string,
+    additionalInstructions: string = "",
   ): Promise<string> {
-    return ResponseGenerationService.generateContextualResponse(prompt, context);
+    return ResponseGenerationService.generateContextualResponse(prompt, context, additionalInstructions);
   }
 
   /**
@@ -183,7 +184,9 @@ export class AIService extends AIBaseService {
     5. Se a informação for controversa, apresente diferentes pontos de vista
     6. MUITO IMPORTANTE: Seja conciso e direto. Limite sua resposta a aproximadamente ${maxLength} caracteres.
     
-    Forneça uma resposta completa mas concisa, equilibrando fatos objetivos com insights perspicazes.`;
+    Forneça uma resposta completa mas concisa, equilibrando fatos objetivos com insights perspicazes.
+    
+    Esta é uma conversa entre amigos, então use um tom amigável e acessível. Evite jargões técnicos e explique conceitos complexos de forma simples. Responda de forma clara e direta, como se estivesse conversando com um amigo, de forma natural, casual e adequada ao contexto da conversa. Porém, evite usar emojis excessivos ou linguagem excessivamente coloquial. Mantenha um equilíbrio entre ser amigável e profissional.`;
 
     // Use a higher temperature for more diverse and opinion-based responses
     return ResponseGenerationService.generateWebSearchResponse(searchPrompt, 0.8);

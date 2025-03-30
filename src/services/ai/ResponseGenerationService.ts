@@ -134,17 +134,17 @@ export class ResponseGenerationService extends AIBaseService {
       const conversationHistory = previousMessages.map(msg => 
         `${msg.role}: ${msg.content}`
       ).join('\n\n');
-      
+
       const prompt = `
-      Esta é uma conversa em andamento. Responda à última mensagem do usuário considerando o contexto da conversa.
-      
+      Esta é uma conversa em entre amigos. Responda à última mensagem do usuário considerando o contexto da conversa.
+
       Histórico da conversa:
       ${conversationHistory}
-      
+
       Nova mensagem do usuário:
       ${newUserInput}
-      
-      Responda de forma natural, concisa e adequada ao contexto da conversa.
+
+      Responda de forma natural, casual e adequada ao contexto da conversa. Não faça respostas formais ou técnicas. Não faça respostas muito longas, pois fica chato de ler.
       `;
       
       const result = await this.contextModel.generateContent(prompt);

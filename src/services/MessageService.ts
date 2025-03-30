@@ -36,6 +36,7 @@ export class MessageService {
     private static readonly USE_CACHE = true; // Use cache to avoid hitting API limits
     private static readonly CACHE_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 days cache expiry
     private static readonly DEFAULT_MAX_LIMIT = 1000; // Default maximum limit
+    private static readonly DEFAULT_MAX_CACHE_LIMIT = 10000; // read at most 10k messages from cache unless specified 
     private static readonly CACHE_MEMORY_TTL = 5 * 60 * 1000; // Time to keep cache in memory (5 minutes)
     private static readonly MAX_CACHE_SIZE = 50 * 1024 * 1024; // 50MB em bytes
     private static readonly CACHE_CLEANUP_THRESHOLD = 0.7; // Limpar até 70% do tamanho máximo
@@ -217,14 +218,15 @@ export class MessageService {
     public static async fetchMessages(
         channel: TextChannel, 
         limit: number, 
-        interaction: ChatInputCommandInteraction
+        interaction: ChatInputCommandInteraction,
+        useCache: boolean = this.USE_CACHE
     ): Promise<Message[]> {
         const channelId = channel.id;
         let messages: Message[] = [];
         let lastId: string | undefined;
         let lastProgressUpdate = Date.now();
         let lastBatchSize = this.MAX_BATCH_SIZE;
-        let cacheChecksEnabled = this.USE_CACHE;
+        let cacheChecksEnabled = useCache && this.USE_CACHE;
         
         // Load channel cache if needed
         let cachedData = cacheChecksEnabled ? this.loadChannelCache(channelId) : null;
@@ -233,9 +235,12 @@ export class MessageService {
         this.cleanupMemoryCache();
         
         // Adjust limit based on cache size if not explicitly provided
-        // Use cache size if it's available and within DEFAULT_MAX_LIMIT (1000)
         if (limit === 0 && cachedData && cachedData.messages.length > 0) {
-            limit = Math.min(cachedData.messages.length, this.DEFAULT_MAX_LIMIT);
+            // When we have cache, use DEFAULT_MAX_CACHE_LIMIT (10000)
+            limit = Math.min(
+                cachedData.messages.length,
+                this.DEFAULT_MAX_CACHE_LIMIT
+            );
             await interaction.editReply(
                 UIService.formatStatusMessage(
                     EMOJIS.cache,
@@ -243,7 +248,7 @@ export class MessageService {
                 )
             );
         } else if (limit === 0) {
-            // If no cache and no explicit limit, use the default max limit
+            // If no cache and no explicit limit, use the default max limit (1000)
             limit = this.DEFAULT_MAX_LIMIT;
         }
         

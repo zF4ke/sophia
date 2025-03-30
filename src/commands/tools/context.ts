@@ -12,14 +12,14 @@ module.exports = {
         .setContexts(0, 1, 2)
         .setIntegrationTypes(0, 1)
         .setDescription("Usa mensagens do canal como contexto para uma pergunta")
-        .addChannelOption(option => 
-            option.setName("channel")
-                .setDescription("O canal para usar como contexto")
-                .setRequired(true))
         .addStringOption(option => 
             option.setName("prompt")
                 .setDescription("A pergunta ou instrução para o AI")
                 .setRequired(true))
+        .addChannelOption(option => 
+            option.setName("channel")
+                .setDescription("O canal para usar como contexto")
+                .setRequired(false))
         .addIntegerOption(option =>
             option.setName("limit")
                 .setDescription("Número máximo de mensagens para buscar (padrão 0 para auto-cache)")
@@ -48,7 +48,7 @@ module.exports = {
             const ephemeral = interaction.options.getBoolean("ephemeral") ?? false;
             await interaction.deferReply({ flags: ephemeral ? MessageFlags.Ephemeral : undefined });
 
-            const channel = interaction.options.getChannel("channel");
+            const channel = interaction.options.getChannel("channel") || interaction.channel;
             const prompt = interaction.options.getString("prompt");
             const providedLimit = interaction.options.getInteger("limit");
             const includeBots = interaction.options.getBoolean("include_bots") ?? false;
@@ -74,6 +74,8 @@ module.exports = {
                 // Fetch messages using MessageService
                 const messages = await MessageService.fetchMessages(channel, limit, interaction);
 
+                //console.log(`Fetched ${messages.length} messages from channel ${channel.name}`);
+
                 if (messages.length === 0) {
                     return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false));
                 }
@@ -96,7 +98,9 @@ module.exports = {
                 const contextText = AIService.formatConversationsAsContext(selectedConversations);
                 
                 // Generate response using AIService
-                const aiResponse = await AIService.generateContextualResponse(prompt, contextText);
+                const additionalInstructions = `Isto é uma conversa entre amigos. Por isso, responda como se estivesse conversando com um amigo.
+                Responda de forma natural, casual e adequada ao contexto da conversa. Não faça respostas formais ou técnicas. Não faça respostas muito longas, pois fica chato de ler. Porém, evite usar emojis excessivos ou linguagem excessivamente coloquial. Mantenha um equilíbrio entre ser amigável e profissional.`;
+                const aiResponse = await AIService.generateContextualResponse(prompt, contextText, additionalInstructions);
                 
                 const messageHeader = UIService.formatStatusMessage(EMOJIS.complete, `Resposta baseada no contexto`);
                 const questionContent = `**Sua pergunta:** ${prompt}`;
