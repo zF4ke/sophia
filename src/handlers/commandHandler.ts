@@ -22,14 +22,21 @@ function loadCommands(client: TDiscordClient) {
 
             const properties = { folder, ...commandFile };
 
+            // Validate command file data and name
+            if (!commandFile.data || !commandFile.data.name) {
+                console.warn(`Command file ${file} is missing a valid 'data' or 'name' property.`);
+                table.addRow(file, "invalid");
+                continue;
+            }
+
             // Check command visibility and rate limit using SecurityService
-            if (SecurityService.isCommandVisible(commandFile.data.name) && SecurityService.isRateLimitAllowed(commandFile.data.name)) {
+            // if (SecurityService.isCommandVisible(commandFile.data.name) && SecurityService.isRateLimitAllowed(commandFile.data.name)) {
                 client.commands.set(commandFile.data.name, properties);
                 commandsArray.push(commandFile.data.toJSON());
                 table.addRow(file, "loaded");
-            } else {
-                table.addRow(file, "skipped");
-            }
+            // } else {
+            //     table.addRow(file, "skipped");
+            // }
         }
     }
 

@@ -3,11 +3,14 @@ import { MessageService } from "../../services/MessageService";
 import { ConversationService } from "../../services/ConversationService";
 import { AIService } from "../../services/AIService";
 import { ConversationUIService } from "../../services/ui/ConversationUIService";
-import { EMOJIS, ADMIN_IDS } from "../../utils/constants";
+import { EMOJIS } from "../../utils/constants";
+import { SecurityService } from "../../services/SecurityService";
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("search")
+        .setContexts(0, 1, 2)
+        .setIntegrationTypes(0, 1)
         .setDescription("Buscar mensagens em um canal sobre um tópico específico")
         .addChannelOption(option =>
             option.setName("channel")
@@ -35,7 +38,7 @@ module.exports = {
     async execute(interaction: ChatInputCommandInteraction) {
         try {
             // Check if user is admin
-            if (!ADMIN_IDS.includes(interaction.user.id)) {
+            if (!SecurityService.isAdmin(interaction.user.id)) {
                 return await interaction.reply({
                     content: `${EMOJIS.error} Este comando está disponível apenas para administradores.`,
                     flags: MessageFlags.Ephemeral

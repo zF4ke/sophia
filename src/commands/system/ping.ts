@@ -5,8 +5,7 @@ module.exports = {
         .setName("ping")
         .setDescription("Pong")
         .setContexts(0, 1, 2)
-        .setIntegrationTypes(0, 1)
-        ,
+        .setIntegrationTypes(0, 1),
     async execute(interaction: ChatInputCommandInteraction) {
         const ms = Date.now() - interaction.createdTimestamp;
         const ping = Math.round(interaction.client.ws.ping);

@@ -107,9 +107,9 @@ export class SecurityService {
             }
             
             this.isInitialized = true;
-            console.log('SecurityService initialized successfully');
+            console.log('SecurityService inicializado com sucesso.');
         } catch (error) {
-            console.error('Failed to initialize SecurityService:', error);
+            console.error('Erro ao inicializar o SecurityService:', error);
             throw error;
         }
     }
@@ -179,9 +179,12 @@ export class SecurityService {
     public static async removeAdmin(userId: string): Promise<boolean> {
         await this.initialize();
         
-        // Don't allow removing hardcoded admins
+        // If the user is not an admin, they can't be removed
+        if (!SecurityService.isAdmin(userId)) return false;
+
+        // Prevent removal of hardcoded admins
         if (ADMIN_IDS.includes(userId)) return false;
-        
+
         const initialLength = this.admins.length;
         this.admins = this.admins.filter(admin => admin.userId !== userId);
         
@@ -367,6 +370,14 @@ export class SecurityService {
         await this.initialize();
         return [...this.moderators];
     }
+
+    /**
+     * Get all command configurations
+     */
+    public static async getCommandConfigs(): Promise<Map<string, CommandConfig>> {
+        await this.initialize();
+        return new Map(this.commandConfigs);
+    }
     
     /**
      * Check if a command is visible (for command handler)
@@ -378,7 +389,7 @@ export class SecurityService {
             if (!this.isInitialized) return true;
             
             // Admin commands are always visible
-            if (commandName === 'admin') return true;
+            if (commandName === 'access') return true;
             
             const config = this.commandConfigs.get(commandName);
             return config ? config.isPublic : true;
@@ -425,7 +436,7 @@ export class SecurityService {
     private static getCommandConfig(commandName: string): CommandConfig {
         if (!this.commandConfigs.has(commandName)) {
             this.commandConfigs.set(commandName, {
-                isPublic: true,
+                isPublic: false,
                 rateLimits: {
                     default: this.DEFAULT_COMMAND_LIMIT,
                     admin: this.DEFAULT_COMMAND_LIMIT * 2,

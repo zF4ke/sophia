@@ -5,6 +5,8 @@ import { EMOJIS } from "../../utils/constants";
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("getmessage")
+        .setContexts(0, 1, 2)
+        .setIntegrationTypes(0, 1)
         .setDescription("Obter uma mensagem específica por posição em um canal")
         .addChannelOption(option =>
             option.setName("channel")

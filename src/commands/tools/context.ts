@@ -2,11 +2,14 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, TextChannel, Permissi
 import { MessageService } from "../../services/MessageService";
 import { ConversationService } from "../../services/ConversationService";
 import { AIService } from "../../services/AIService";
-import { EMOJIS, ADMIN_IDS } from "../../utils/constants";
+import { EMOJIS } from "../../utils/constants";
+import { SecurityService } from "../../services/SecurityService";
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName("context")
+        .setContexts(0, 1, 2)
+        .setIntegrationTypes(0, 1)
         .setDescription("Usa mensagens do canal como contexto para uma pergunta")
         .addChannelOption(option => 
             option.setName("channel")
@@ -34,7 +37,7 @@ module.exports = {
     async execute(interaction: ChatInputCommandInteraction) {
         try {
             // Check if user is admin
-            if (!ADMIN_IDS.includes(interaction.user.id)) {
+            if (!SecurityService.isAdmin(interaction.user.id)) {
                 return await interaction.reply({
                     content: `${EMOJIS.error} Este comando está disponível apenas para administradores.`,
                     flags: MessageFlags.Ephemeral
@@ -42,7 +45,7 @@ module.exports = {
             }
 
             const ephemeral = interaction.options.getBoolean("ephemeral") ?? false;
-            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            await interaction.deferReply({ flags: ephemeral ? MessageFlags.Ephemeral : undefined });
 
             const channel = interaction.options.getChannel("channel");
             const prompt = interaction.options.getString("prompt");

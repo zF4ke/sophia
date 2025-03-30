@@ -9,7 +9,8 @@ import {
     MessageFlags
 } from "discord.js";
 import { MessageGroup } from "../types/conversation";
-import { EMOJIS, ADMIN_IDS } from "../utils/constants";
+import { EMOJIS } from "../utils/constants";
+import { SecurityService } from "./SecurityService";
 
 export interface NavigationButton {
     customId: string;
@@ -149,7 +150,7 @@ export class UIService {
         });
 
         collector.on('collect', async (i: any) => {
-            if (i.user.id !== interaction.user.id && !ADMIN_IDS.includes(i.user.id)) {
+            if (i.user.id !== interaction.user.id && !SecurityService.isAdmin(i.user.id)) {
                 await i.reply({ 
                     content: `${EMOJIS.error} Apenas o autor do comando e administradores podem interagir com esses botões.`, 
                     flags: MessageFlags.Ephemeral

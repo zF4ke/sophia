@@ -17,8 +17,8 @@ module.exports = {
             // Initialize security service
             await SecurityService.initialize();
             
-            // Skip security checks for admin command
-            if (interaction.commandName !== 'admin') {
+            // Skip security checks for access command
+            if (interaction.commandName !== 'access') {
                 // Check if command is public or user is admin
                 const isPublic = await SecurityService.isCommandPublic(interaction.commandName);
                 if (!isPublic && !SecurityService.isAdmin(interaction.user.id)) {
