@@ -118,3 +118,8 @@ dist
 .pnp.*
 
 # End of https://mrkandreev.name/snippets/gitignore-generator/#Node
+
+
+# ignore data/messages/cache/
+
+data/messages/cache/*
