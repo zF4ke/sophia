@@ -1,89 +1,223 @@
 [Back to Index](../../API.md)
 
-# ConversationUIService Documentation
+# ConversationUIService
 
-The `ConversationUIService` extends the base `UIService` to provide specialized UI functionality for displaying Discord conversations with rich formatting and interactive navigation.
+The ConversationUIService provides specialized UI components for displaying conversations and search results.
 
-## Overview
+## Core Features
 
-ConversationUIService specializes in displaying conversations with pagination controls, metadata, and interactive navigation. It inherits core UI functionality from UIService while adding conversation-specific features.
+### Display Components
+- Conversation embeds
+- Search result views
+- Thread displays
+- Message formatting
 
-## Main Features
+### Interaction Handling
+- Result pagination
+- Navigation controls
+- Action buttons
+- Progress indicators
 
-### `displayConversations`
+## Method Reference
 
+### displayConversations
 ```typescript
-public static async displayConversations(
-    interaction: ChatInputCommandInteraction,
-    conversations: ConversationWithContext[],
-    topic: string,
-    channelName: string,
-    ephemeral: boolean = false
+static async displayConversations(
+  interaction: CommandInteraction,
+  conversations: ConversationWithContext[],
+  options?: DisplayOptions
 ): Promise<void>
 ```
 
-Displays paginated conversations with the following features:
-- Conversation-level navigation
-- Page-level navigation within conversations
-- Metadata display (scores, channel information)
-- Direct links to original messages
-- Channel context information
-- Support for ephemeral (private) responses
+Displays conversations with interactive controls.
 
 #### Parameters:
-- `interaction` - The Discord interaction to respond to
-- `conversations` - Array of conversations with context
-- `topic` - The context or topic being displayed
-- `channelName` - The name of the channel
-- `ephemeral` - Whether to show results only to the command user
+- `interaction`: Discord interaction
+- `conversations`: Conversations to display
+- `options`: Display settings
+  - `itemsPerPage`: Results per page
+  - `showMetadata`: Include metadata
+  - `format`: Display format
+  - `ephemeral`: Private response
 
-## Implementation Details
-
-### Embed Creation
-- Dynamic title with context/topic
-- Metadata display
-- Channel information
-- Jump links to original messages
-- Paginated message display
-- Timestamp information
-
-### Navigation
-- Primary buttons for conversation navigation
-- Secondary buttons for page navigation
-- Dynamic button states based on current position
-- Proper handling of navigation limits
-
-## Usage Example
-
+### createConversationEmbed
 ```typescript
-// Display conversations with pagination
-const conversations = await getConversations();
+static createConversationEmbed(
+  conversation: ConversationWithContext,
+  options?: EmbedOptions
+): EmbedBuilder
+```
+
+Creates an embed for a conversation.
+
+#### Parameters:
+- `conversation`: Conversation data
+- `options`: Embed settings
+  - `color`: Embed color
+  - `showTimestamps`: Include times
+  - `includeContext`: Show context
+  - `maxLength`: Content limit
+
+#### Returns:
+Configured EmbedBuilder
+
+### handlePagination
+```typescript
+static async handlePagination(
+  interaction: ButtonInteraction,
+  conversations: ConversationWithContext[],
+  options?: PaginationOptions
+): Promise<void>
+```
+
+Handles pagination interactions.
+
+#### Parameters:
+- `interaction`: Button interaction
+- `conversations`: Full result set
+- `options`: Pagination settings
+  - `currentPage`: Active page
+  - `itemsPerPage`: Items per page
+  - `timeout`: Control timeout
+
+### updateDisplay
+```typescript
+static async updateDisplay(
+  interaction: CommandInteraction,
+  content: DisplayContent,
+  options?: UpdateOptions
+): Promise<void>
+```
+
+Updates conversation display.
+
+#### Parameters:
+- `interaction`: Command interaction
+- `content`: New display content
+- `options`: Update settings
+  - `edit`: Edit existing
+  - `components`: UI components
+  - `ephemeral`: Private update
+
+## Integration Examples
+
+### Basic Display
+```typescript
+// Display search results
 await ConversationUIService.displayConversations(
-    interaction,
-    conversations,
-    "Topic or Context",
-    "channel-name",
-    true // for ephemeral response
+  interaction,
+  searchResults,
+  {
+    itemsPerPage: 5,
+    showMetadata: true,
+    ephemeral: true
+  }
+);
+```
+
+### Custom Embed
+```typescript
+// Create conversation embed
+const embed = ConversationUIService.createConversationEmbed(
+  conversation,
+  {
+    color: UI_CONSTANTS.COLORS.PRIMARY,
+    showTimestamps: true,
+    maxLength: 1024
+  }
+);
+
+await interaction.reply({ embeds: [embed] });
+```
+
+### Interactive Navigation
+```typescript
+// Handle navigation
+await ConversationUIService.handlePagination(
+  buttonInteraction,
+  allResults,
+  {
+    currentPage: 0,
+    itemsPerPage: 5,
+    timeout: 300000
+  }
 );
 ```
 
 ## Error Handling
 
-The service includes specific handling for:
-- Invalid interactions
-- Expired messages
-- Navigation boundaries
-- Permission errors
+### Display Errors
+```typescript
+try {
+  await ConversationUIService.displayConversations(interaction, results);
+} catch (error) {
+  if (error instanceof DisplayError) {
+    await interaction.reply({
+      content: 'Could not display results: ' + error.message,
+      ephemeral: true
+    });
+    return;
+  }
+  throw error;
+}
+```
+
+### Interaction Timeouts
+```typescript
+try {
+  await ConversationUIService.handlePagination(interaction, results);
+} catch (error) {
+  if (error instanceof InteractionTimeoutError) {
+    await interaction.editReply({
+      components: [] // Remove buttons
+    });
+  }
+}
+```
 
 ## Best Practices
 
-1. Use ephemeral responses when appropriate to reduce channel clutter
-2. Ensure conversations are properly formatted before display
-3. Consider any relevant metadata for the conversations
-4. Handle navigation timeouts gracefully
-5. Provide clear context in the embed description
+1. **User Experience**
+   - Clear navigation
+   - Consistent formatting
+   - Informative metadata
 
-## Related Services
-- Base UIService for core functionality
-- ConversationService for message grouping
-- MessageService for message handling
+2. **Performance**
+   - Optimize embed content
+   - Efficient pagination
+   - Handle large datasets
+
+3. **Interaction Design**
+   - Intuitive controls
+   - Proper timeouts
+   - Error feedback
+
+## Configuration
+
+```typescript
+const UI_CONFIG = {
+  // Display settings
+  ITEMS_PER_PAGE: 5,
+  MAX_PAGES: 20,
+  BUTTON_TIMEOUT: 300000,
+  
+  // Content limits
+  MAX_EMBED_LENGTH: 4096,
+  MAX_FIELD_LENGTH: 1024,
+  MAX_TITLE_LENGTH: 256,
+  
+  // Style settings
+  COLORS: {
+    DEFAULT: 0x0099ff,
+    HIGHLIGHT: 0x00ff00,
+    ERROR: 0xff0000
+  },
+  
+  // Button settings
+  NAVIGATION_STYLE: 'PRIMARY',
+  ACTION_STYLE: 'SECONDARY',
+  EMOJI_ENABLED: true
+};
+```
+
+For implementation examples, see the [Examples Guide](../guides/Examples.md).

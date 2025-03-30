@@ -2,110 +2,235 @@
 
 # AIBaseService
 
-The AIBaseService is the foundation class for all AI-related functionality, providing common utilities and model initialization for working with Google's Generative AI (Gemini).
+The AIBaseService provides core AI functionality and common utilities for Gemini API integration.
 
-## Overview
+## Core Features
 
-AIBaseService establishes the base connection to Google's Generative AI and provides shared functionality for the AI subsystem. It's designed to be extended by specialized AI services rather than used directly.
+### API Integration
+- Gemini API management
+- Token handling
+- Rate limiting
+- Error recovery
 
-## Properties
+### Common Utilities
+- Token counting
+- Request formatting
+- Response parsing
+- Error handling
 
-### Shared AI Client Instance
+## Method Reference
 
+### initializeAPI
 ```typescript
-protected static genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
+static async initializeAPI(
+  options?: InitOptions
+): Promise<void>
 ```
 
-A shared instance of the Google Generative AI client, initialized with the API key from environment variables.
-
-### Model Instances
-
-```typescript
-protected static defaultModel = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-protected static contextModel = this.genAI.getGenerativeModel({ 
-  model: "gemini-2.0-flash",
-  generationConfig: {
-    temperature: 0.4,
-    topP: 0.8,
-    topK: 40,
-    maxOutputTokens: 2048,
-  }
-});
-```
-
-Pre-configured model instances:
-- `defaultModel`: Standard configuration for general-purpose use
-- `contextModel`: Optimized configuration for context-aware responses with controlled randomness
-
-## Methods
-
-### `createModel`
-
-```typescript
-protected static createModel(config: GenerationConfig): GenerativeModel
-```
-
-Creates a model with custom generation configuration.
-
-#### Features:
-- Allows custom configuration of model parameters
-- Uses the "gemini-2.0-flash" model
-- Supports full Generative AI configuration options
+Initializes Gemini API client.
 
 #### Parameters:
-- `config: GenerationConfig` - Generation configuration parameters
+- `options`: Initialization settings
+  - `apiKey`: API key override
+  - `timeout`: Request timeout
+  - `retries`: Max retries
+  - `model`: Model version
 
-#### Returns:
-- `GenerativeModel` - A configured GenerativeModel instance
-
-#### Example:
+### formatPrompt
 ```typescript
-// Within a service that extends AIBaseService
-const customModel = this.createModel({
-  temperature: 0.7,
-  topP: 0.9,
-  topK: 50,
-  maxOutputTokens: 1024,
-});
+static formatPrompt(
+  text: string,
+  context: string,
+  options?: PromptOptions
+): string
 ```
 
-### `handleError`
-
-```typescript
-protected static handleError(error: any, context: string): string
-```
-
-Handles AI generation errors with standardized logging.
-
-#### Features:
-- Standardized error handling for AI operations
-- Contextual error logging
-- Returns user-friendly error message
+Formats prompt for AI processing.
 
 #### Parameters:
-- `error: any` - The error that occurred
-- `context: string` - Additional context about where the error occurred
+- `text`: Main prompt text
+- `context`: Additional context
+- `options`: Format settings
+  - `temperature`: Response randomness
+  - `maxTokens`: Token limit
+  - `template`: Prompt template
 
 #### Returns:
-- `string` - A default error message for the user
+Formatted prompt string
 
-#### Example:
+### countTokens
 ```typescript
-// Within a service that extends AIBaseService
-try {
-  // AI operation
-} catch (error) {
-  return this.handleError(error, 'generating response');
+static countTokens(
+  text: string,
+  options?: TokenOptions
+): number
+```
+
+Estimates token count for text.
+
+#### Parameters:
+- `text`: Input text
+- `options`: Count settings
+  - `model`: Model version
+  - `detailed`: Return details
+  - `encoding`: Token encoding
+
+#### Returns:
+Estimated token count
+
+### handleRateLimit
+```typescript
+static async handleRateLimit(
+  error: Error,
+  options?: RetryOptions
+): Promise<void>
+```
+
+Handles API rate limiting.
+
+#### Parameters:
+- `error`: Rate limit error
+- `options`: Retry settings
+  - `maxRetries`: Maximum attempts
+  - `delay`: Retry delay
+  - `backoff`: Delay multiplier
+
+## Integration Examples
+
+### Basic API Usage
+```typescript
+// Initialize API
+await AIBaseService.initializeAPI({
+  timeout: 30000,
+  retries: 3
+});
+
+// Format and validate prompt
+const prompt = AIBaseService.formatPrompt(
+  userQuery,
+  context,
+  { temperature: 0.7 }
+);
+```
+
+### Token Management
+```typescript
+// Check token count
+const tokens = AIBaseService.countTokens(text);
+
+if (tokens > MAX_TOKENS) {
+  text = await optimizeText(text, MAX_TOKENS);
 }
 ```
 
-## Usage Notes
+### Rate Limit Handling
+```typescript
+try {
+  await makeAPIRequest();
+} catch (error) {
+  if (error.code === 'RATE_LIMIT') {
+    await AIBaseService.handleRateLimit(error, {
+      maxRetries: 3,
+      delay: 1000
+    });
+    await makeAPIRequest();
+  }
+}
+```
 
-- AIBaseService is designed to be extended rather than used directly
-- All specialized AI services inherit from AIBaseService
-- Centralized API key management ensures consistent authentication
-- The model configurations are optimized for different use cases:
-  - Default model: General queries and tasks
-  - Context model: Processing conversations with specific context
-- Custom models can be created for specific temperature needs
+## Error Handling
+
+### API Errors
+```typescript
+try {
+  await AIBaseService.makeRequest(prompt);
+} catch (error) {
+  if (error instanceof AIError) {
+    switch (error.code) {
+      case 'INVALID_API_KEY':
+        await handleAuthError(error);
+        break;
+      case 'QUOTA_EXCEEDED':
+        await notifyQuotaExceeded();
+        break;
+      default:
+        throw error;
+    }
+  }
+}
+```
+
+### Recovery Strategies
+```typescript
+static async withRetry<T>(
+  operation: () => Promise<T>,
+  options: RetryOptions
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (shouldRetry(error, options)) {
+      await delay(options.delay);
+      return await this.withRetry(operation, {
+        ...options,
+        retries: options.retries - 1
+      });
+    }
+    throw error;
+  }
+}
+```
+
+## Best Practices
+
+1. **API Management**
+   - Handle rate limits
+   - Implement retries
+   - Monitor quotas
+
+2. **Token Usage**
+   - Count tokens accurately
+   - Optimize prompts
+   - Respect limits
+
+3. **Error Recovery**
+   - Graceful degradation
+   - Clear error messages
+   - Proper logging
+
+## Configuration
+
+```typescript
+const AI_BASE_CONFIG = {
+  // API settings
+  API: {
+    TIMEOUT: 30000,
+    MAX_RETRIES: 3,
+    RETRY_DELAY: 1000,
+    DEFAULT_MODEL: 'gemini-pro'
+  },
+  
+  // Token limits
+  TOKENS: {
+    MAX_PROMPT: 4000,
+    MAX_CONTEXT: 8000,
+    SAFETY_MARGIN: 100
+  },
+  
+  // Rate limits
+  RATE_LIMITS: {
+    REQUESTS_PER_MIN: 60,
+    TOKENS_PER_MIN: 40000,
+    MAX_PARALLEL: 5
+  },
+  
+  // Error handling
+  ERRORS: {
+    MAX_RETRIES: 3,
+    BASE_DELAY: 1000,
+    MAX_DELAY: 10000
+  }
+};
+```
+
+For implementation examples, see the [Examples Guide](../guides/Examples.md).

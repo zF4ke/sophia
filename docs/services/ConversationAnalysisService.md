@@ -2,203 +2,223 @@
 
 # ConversationAnalysisService
 
-The ConversationAnalysisService specializes in analyzing conversations and determining their relevance to specific topics using AI. It provides sophisticated conversation scoring and ranking capabilities.
+The ConversationAnalysisService provides advanced conversation analysis and understanding using Gemini AI.
 
-## Methods
+## Core Features
 
-### `analyzeConversations`
+### Analysis Capabilities
+- Topic relevance analysis
+- Sentiment detection
+- Intent recognition
+- Entity extraction
 
+### Conversation Processing
+- Thread analysis
+- Context correlation
+- Participant tracking
+- Time-based analysis
+
+## Method Reference
+
+### analyzeConversation
 ```typescript
-public static async analyzeConversations(
-  conversations: Message[][],
-  topic: string,
-  interaction: ChatInputCommandInteraction
-): Promise<ConversationWithContext[]>
+static async analyzeConversation(
+  conversation: Message[],
+  options?: AnalysisOptions
+): Promise<ConversationAnalysis>
 ```
 
-Analyzes conversations for relevance to a specific topic.
-
-#### Features:
-- Uses AI to analyze conversation relevance to topics
-- Implements batch processing for efficient API usage
-- Provides progress updates during analysis
-- Applies multiple relevance validation rules
-- Sorts results by relevance score
+Performs comprehensive conversation analysis.
 
 #### Parameters:
-- `conversations: Message[][]` - Array of message arrays representing conversations
-- `topic: string` - The topic to analyze relevance against
-- `interaction: ChatInputCommandInteraction` - Discord interaction for updating status
+- `conversation`: Array of messages
+- `options`: Analysis settings
+  - `features`: Analysis features to include
+  - `depth`: Analysis depth level
+  - `maxTokens`: Token limit
 
 #### Returns:
-- `Promise<ConversationWithContext[]>` - Array of relevant conversations with context and relevance scores
+Detailed conversation analysis
 
-#### Example:
+### detectTopic
 ```typescript
-const relevantConversations = await ConversationAnalysisService.analyzeConversations(
-  validConversations, 
-  "project planning", 
-  interaction
+static async detectTopic(
+  conversation: Message[],
+  options?: TopicOptions
+): Promise<TopicAnalysis>
+```
+
+Identifies conversation topics.
+
+#### Parameters:
+- `conversation`: Message array
+- `options`: Topic detection settings
+  - `minConfidence`: Minimum confidence
+  - `maxTopics`: Maximum topics
+  - `hierarchical`: Enable topic hierarchy
+
+#### Returns:
+Topic analysis results
+
+### analyzeSentiment
+```typescript
+static async analyzeSentiment(
+  messages: Message[],
+  options?: SentimentOptions
+): Promise<SentimentAnalysis>
+```
+
+Analyzes conversation sentiment.
+
+#### Parameters:
+- `messages`: Messages to analyze
+- `options`: Sentiment settings
+  - `granularity`: Analysis detail level
+  - `aggregation`: Result aggregation
+  - `timeline`: Include temporal analysis
+
+#### Returns:
+Sentiment analysis results
+
+### extractEntities
+```typescript
+static async extractEntities(
+  conversation: Message[],
+  options?: EntityOptions
+): Promise<EntityAnalysis>
+```
+
+Extracts named entities and concepts.
+
+#### Parameters:
+- `conversation`: Message array
+- `options`: Extraction settings
+  - `types`: Entity types to extract
+  - `confidence`: Minimum confidence
+  - `resolution`: Enable entity resolution
+
+#### Returns:
+Extracted entities and metadata
+
+## Integration Examples
+
+### Basic Analysis
+```typescript
+// Analyze conversation
+const analysis = await ConversationAnalysisService.analyzeConversation(
+  messages,
+  {
+    features: ['topics', 'sentiment', 'entities'],
+    depth: 'detailed'
+  }
 );
-```
 
-### `calculateBatchSize` (Private)
-
-```typescript
-private static calculateBatchSize(totalConversations: number): number
-```
-
-Calculates optimal batch size based on total number of conversations.
-
-#### Features:
-- Dynamically adjusts batch size based on dataset size
-- Optimizes for both API efficiency and response time
-- Scales from small to very large datasets
-
-#### Parameters:
-- `totalConversations: number` - Total number of conversations to analyze
-
-#### Returns:
-- `number` - Appropriate batch size for processing
-
-### `validateRelevance` (Private)
-
-```typescript
-private static validateRelevance(
-  conversation: ConversationWithContext, 
-  topic: string
-): boolean
-```
-
-Validates whether a conversation is truly relevant to the topic using multiple criteria.
-
-#### Features:
-- Applies tiered validation based on different relevance measures
-- Checks for direct topic mentions
-- Evaluates keyword matches
-- Considers conversation engagement level
-- Uses relevance score thresholds
-
-#### Parameters:
-- `conversation: ConversationWithContext` - Conversation with context and initial relevance score
-- `topic: string` - Topic to validate relevance against
-
-#### Returns:
-- `boolean` - Boolean indicating if conversation passes relevance checks
-
-### `analyzeBatch` (Private)
-
-```typescript
-private static async analyzeBatch(
-  conversations: Message[][], 
-  topic: string,
-  topicKeywords: string[] 
-): Promise<AIAnalysisResult[]>
-```
-
-Analyzes a batch of conversations using AI to determine relevance to a topic.
-
-#### Features:
-- Creates AI-optimized conversation formatting
-- Implements detailed relevance scoring criteria
-- Processes multiple conversations in a single AI request
-- Parses AI response to extract structured scores
-- Includes error handling with fallback analysis
-
-#### Parameters:
-- `conversations: Message[][]` - Batch of conversations to analyze
-- `topic: string` - Topic to analyze against
-- `topicKeywords: string[]` - Pre-extracted keywords from the topic
-
-#### Returns:
-- `Promise<AIAnalysisResult[]>` - Array of analysis results with relevance scores
-
-### `fallbackAnalysis` (Private)
-
-```typescript
-private static fallbackAnalysis(
-  conversation: Message[], 
-  topic: string, 
-  topicKeywords: string[]
-): AIAnalysisResult
-```
-
-Performs fallback analysis when AI analysis fails.
-
-#### Features:
-- Keyword-based relevance scoring
-- Direct topic mention detection
-- Content quality assessment
-- Conversation engagement evaluation
-- Multi-factor relevance determination
-
-#### Parameters:
-- `conversation: Message[]` - The conversation to analyze
-- `topic: string` - Topic to analyze against
-- `topicKeywords: string[]` - Pre-extracted keywords from the topic
-
-#### Returns:
-- `AIAnalysisResult` - Analysis result with relevance score
-
-### `fallbackKeywordSearch`
-
-```typescript
-public static fallbackKeywordSearch(
-  conversations: Message[][], 
-  topic: string
-): ConversationWithContext[]
-```
-
-Performs keyword-based search across conversations when AI search fails.
-
-#### Features:
-- Analyzes all conversations using keyword matching
-- Applies relevance scoring similar to AI scoring
-- Filters results based on minimum content and relevance thresholds
-- Sorts results by relevance score
-
-#### Parameters:
-- `conversations: Message[][]` - Array of conversations to search through
-- `topic: string` - Topic to search for
-
-#### Returns:
-- `ConversationWithContext[]` - Array of relevant conversations with context and scores
-
-#### Example:
-```typescript
-try {
-  return await ConversationAnalysisService.analyzeConversations(conversations, topic, interaction);
-} catch (error) {
-  console.error('AI analysis failed, falling back to keyword search:', error);
-  return ConversationAnalysisService.fallbackKeywordSearch(conversations, topic);
+// Process results
+if (analysis.confidence > 0.8) {
+  await processAnalysisResults(analysis);
 }
 ```
 
-## Scoring System
+### Topic Detection
+```typescript
+// Detect conversation topics
+const topics = await ConversationAnalysisService.detectTopic(messages, {
+  minConfidence: 0.7,
+  maxTopics: 3,
+  hierarchical: true
+});
 
-The service uses a multi-factor scoring system (0-10 scale) based on:
+// Handle topics
+for (const topic of topics.mainTopics) {
+  await trackConversationTopic(topic);
+}
+```
 
-1. **Direct Topic Match (0-4 points)**
-   - Exact topic mentions: 4 points
-   - Key topic terms: 2-3 points
-   - Topic synonyms/related terms: 1-2 points
+### Sentiment Analysis
+```typescript
+// Analyze sentiment over time
+const sentiment = await ConversationAnalysisService.analyzeSentiment(
+  messages,
+  {
+    granularity: 'message',
+    timeline: true
+  }
+);
 
-2. **Context Relevance (0-3 points)**
-   - Direct topic discussion: 3 points
-   - Related concepts/context: 1-2 points
-   - Implicit references: 1 point
+if (sentiment.overall < 0.3) {
+  await flagNegativeConversation(conversation);
+}
+```
 
-3. **Conversation Quality (0-3 points)**
-   - Meaningful discussion: 2-3 points
-   - Multiple messages: 1-2 points
-   - Information value: 1 point
+## Error Handling
 
-Conversations typically need a score of 3 or higher to be considered relevant.
+### Analysis Errors
+```typescript
+try {
+  const analysis = await ConversationAnalysisService.analyzeConversation(messages);
+} catch (error) {
+  if (error instanceof AIAnalysisError) {
+    console.error('Analysis failed:', error.message);
+    return await performBasicAnalysis(messages);
+  }
+  throw error;
+}
+```
+
+### Fallback Handling
+```typescript
+try {
+  return await ConversationAnalysisService.detectTopic(messages);
+} catch (error) {
+  console.warn('Topic detection failed:', error);
+  return {
+    confidence: 0,
+    topics: [],
+    error: error.message
+  };
+}
+```
 
 ## Best Practices
 
-- Always implement error handling around AI analysis
-- Use the fallback keyword search as a reliable backup
-- Consider preprocessing conversations to filter out obvious irrelevant content
-- Adjust batch sizes for your specific application performance needs
-- Process conversations in smaller batches for real-time applications
+1. **Analysis Quality**
+   - Set appropriate confidence thresholds
+   - Use proper feature combinations
+   - Validate results
+
+2. **Performance**
+   - Optimize token usage
+   - Batch similar analyses
+   - Cache frequent results
+
+3. **Integration**
+   - Coordinate with other services
+   - Handle partial results
+   - Implement fallbacks
+
+## Configuration
+
+```typescript
+const ANALYSIS_CONFIG = {
+  // Analysis settings
+  DEFAULT_CONFIDENCE: 0.6,
+  MAX_TOPICS: 5,
+  SENTIMENT_GRANULARITY: 'message',
+  
+  // Processing limits
+  MAX_MESSAGES: 100,
+  MAX_TOKENS: 8000,
+  BATCH_SIZE: 20,
+  
+  // Feature flags
+  ENABLE_HIERARCHY: true,
+  ENABLE_TIMELINE: true,
+  ENABLE_ENTITY_RESOLUTION: true,
+  
+  // Cache settings
+  CACHE_LIFETIME: 3600,
+  MAX_CACHE_ENTRIES: 1000
+};
+```
+
+For implementation examples, see the [Examples Guide](../guides/Examples.md).

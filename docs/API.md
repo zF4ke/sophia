@@ -2,50 +2,119 @@
 
 ## Overview
 
-Sophia3 is a Discord bot that uses the Gemini API to help find and organize relevant messages from a channel's history. It provides tools for message searching, conversation grouping, and interactive result display.
+Sophia3 is a Discord bot that provides AI-powered conversation analysis and context-aware responses using Google's Gemini API.
 
-## Table of Contents
+## Services
 
-- **Core Services**
-  - [MessageService](./services/MessageService.md) - Message fetching and filtering
-  - [ConversationService](./services/ConversationService.md) - Message grouping logic
-  - [UIService](./services/UIService.md) - Discord message display components
-    - [ConversationUIService](./services/ui/ConversationUIService.md) - Conversation display controls
+### AI Services
+- [AIService](services/AIService.md) - Primary AI operations interface
+- [AIBaseService](services/AIBaseService.md) - Core AI functionality and utilities
+- [ConversationAnalysisService](services/ConversationAnalysisService.md) - Conversation analysis
+- [ContextManagementService](services/ContextManagementService.md) - Context handling
+- [ResponseGenerationService](services/ResponseGenerationService.md) - AI response generation
+- [TextProcessingService](services/TextProcessingService.md) - Text preprocessing
 
-- **AI Integration**
-  - [AIService](./services/AIService.md) - Main Gemini API interface
-  - [AIBaseService](./services/AIBaseService.md) - Common AI functionality
-  - [ContextManagementService](./services/ContextManagementService.md) - Message context handling
-  - [ConversationAnalysisService](./services/ConversationAnalysisService.md) - Relevance evaluation
-  - [ResponseGenerationService](./services/ResponseGenerationService.md) - AI response handling
-  - [TextProcessingService](./services/TextProcessingService.md) - Text preparation utilities
+### Core Services
+- [ConversationService](services/ConversationService.md) - Message grouping and threads
+- [MessageService](services/MessageService.md) - Message operations
+- [SecurityService](services/SecurityService.md) - Access control
+- [FileSystemService](services/FileSystemService.md) - Data persistence
 
-- **Types & Constants**
-  - [Types](./types/Types.md) - TypeScript type definitions
-  - [Constants](./utils/Constants.md) - Configuration constants
+### UI Services
+- [UIService](services/UIService.md) - Base UI components
+- [ConversationUIService](services/ui/ConversationUIService.md) - Conversation display
+- [SearchUIService](services/ui/SearchUIService.md) - Search result display
 
-- **Guides**
-  - [Getting Started](./guides/GettingStarted.md) - Basic setup and usage
-  - [Integration Examples](./guides/Examples.md) - Code examples
+## Commands
 
-## Project Structure
+### Core Commands
+- [search](commands/search.md) - Search conversations
+- [context](commands/context.md) - Get AI responses
+- [getmessage](commands/getmessage.md) - Retrieve messages
 
-The code is organized in three layers:
+### Administrative
+- [access](commands/access.md) - Manage permissions
+- [cache](commands/cache.md) - Manage caching
 
-1. **Commands**: Discord slash command handlers
-2. **Services**: Core business logic
-3. **AI Integration**: Gemini API interaction
+## Types and Utilities
 
-## Basic Usage
+### Types
+- [Types Reference](types/Types.md) - Core type definitions
 
-```typescript
-// Example: Search for messages about a topic
-const messages = await MessageService.fetchMessages(channel, limit, interaction);
-const filteredMessages = MessageService.filterCommandMessages(messages, interaction);
-const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
-const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
-const relevantConversations = await AIService.analyzeConversations(validConversations, topic, interaction);
-await ConversationUIService.displayConversations(interaction, relevantConversations, topic, channel.name, ephemeral);
-```
+### Constants
+- [System Constants](utils/Constants.md) - Configuration constants
 
-For implementation details and more examples, see the individual service documentation.
+## Getting Started
+
+For setup and basic usage, see the [Getting Started Guide](guides/GettingStarted.md).
+For implementation examples, see the [Examples Guide](guides/Examples.md).
+
+## Core Features
+
+### Conversation Analysis
+- AI-powered relevance scoring
+- Topic detection
+- Context preservation
+- Natural language understanding
+
+### Message Management
+- Efficient caching
+- Smart grouping
+- Thread handling
+- Search optimization
+
+### Security
+- Role-based access
+- Command restrictions
+- Rate limiting
+- Permission hierarchy
+
+### User Interface
+- Rich embeds
+- Interactive controls
+- Pagination
+- Progress indicators
+
+## Best Practices
+
+1. **AI Operations**
+   - Provide sufficient context
+   - Handle rate limits
+   - Validate responses
+   - Optimize prompts
+
+2. **Performance**
+   - Use appropriate caching
+   - Batch operations
+   - Monitor resources
+   - Handle errors
+
+3. **Security**
+   - Follow least privilege
+   - Validate inputs
+   - Monitor access
+   - Regular reviews
+
+4. **User Experience**
+   - Clear feedback
+   - Consistent formatting
+   - Helpful errors
+   - Intuitive controls
+
+## Configuration
+
+Global configuration settings can be found in the following files:
+- AI settings: `AIService.md`
+- Security settings: `SecurityService.md`
+- UI settings: `UIService.md`
+- Cache settings: `FileSystemService.md`
+
+## Error Handling
+
+Each service implements specific error handling:
+- AI errors: `AIBaseService.md`
+- Security errors: `SecurityService.md`
+- Message errors: `MessageService.md`
+- UI errors: `UIService.md`
+
+For implementation examples and detailed documentation, refer to the individual service documentation.

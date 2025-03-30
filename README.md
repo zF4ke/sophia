@@ -1,47 +1,90 @@
 # Sophia3
 
-A Discord bot that helps find and display relevant message history using the Gemini API. It can group related messages into conversations and evaluate their relevance to search topics.
+A powerful Discord bot leveraging Google's Gemini AI for intelligent message searching, conversation analysis, and context-aware responses.
 
-## Features
+## Key Features
 
-- **Message Search**: Find related messages using topic keywords or natural language queries
-- **Message Organization**: Groups messages into conversations based on time and context
-- **Interactive Display**: Navigate through search results with pagination
-- **Relevance Scoring**: Uses Gemini API to help determine message relevance
-- **Private Responses**: Option to show results only to the command user
+- **AI-Powered Search**: Natural language search using Gemini API
+- **Smart Conversation Analysis**: Groups and analyzes message context
+- **Interactive UI**: Rich embeds with pagination and interactive controls
+- **Context-Aware Responses**: AI responses based on channel conversation history
+- **Security Controls**: Command-level access management
+- **Ephemeral Responses**: Optional private results
 
-## Commands
+## Available Commands
 
-- `/search [topic]` - Find messages related to a topic
-- `/context [message]` - Show messages around a specific message
-- `/getmessage [message_id]` - Get a specific message and its context
+### Core Commands
+- `/search [topic] [channel] [limit] [include_bots] [ephemeral]` - Search conversations
+- `/context [prompt] [channel] [limit] [include_bots] [ephemeral]` - Get AI responses with context
+- `/getmessage [channel] [number] [ephemeral]` - Retrieve specific messages
 
-## Project Structure
+### System Commands
+- `/access` - Manage command access
+- `/ping` - Check bot status
+- `/cache` - Manage message cache
 
-Three main layers:
+## Quick Start
 
-1. **Commands**: Discord slash commands
-2. **Services**: Core functionality
-3. **AI Integration**: Gemini API integration
+1. **Prerequisites**
+   - Node.js v18+
+   - Discord.js v14+
+   - Google Cloud account with Gemini API access
+   - Discord Bot Token
 
-Main components:
-- `AIService`: Handles Gemini API interactions
-- `ConversationService`: Groups related messages
-- `UIService`: Handles Discord message display
-- `ContextManagementService`: Manages message context
+2. **Installation**
+```bash
+# Clone repository
+git clone https://github.com/yourusername/Sophia3.git
+cd Sophia3
+
+# Install dependencies
+npm install
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your tokens
+```
+
+3. **Start the Bot**
+```bash
+# Development
+npm run dev
+
+# Production
+npm start
+```
+
+## Architecture
+
+```
+src/
+├── commands/    # Discord slash commands
+├── events/      # Discord event handlers
+├── services/    # Core business logic
+│   ├── ai/      # AI services (Gemini integration)
+│   └── ui/      # UI components
+└── utils/       # Utilities and constants
+```
 
 ## Documentation
 
-See the [docs](./docs/API.md) folder for detailed technical documentation.
-
-## Requirements
-
-- Node.js v18+
-- Discord.js v14+
-- Google Cloud Platform account
-- Discord Bot Token
+- [API Documentation](./docs/API.md) - Technical details
+- [Getting Started Guide](./docs/guides/GettingStarted.md) - Setup tutorial
+- [Examples](./docs/guides/Examples.md) - Code examples
 
 ## Built With
 
-- [Discord.js](https://discord.js.org/)
-- [Google Generative AI (Gemini)](https://cloud.google.com/ai/generative-ai)
+- [Discord.js](https://discord.js.org/) - Discord API framework
+- [Google Generative AI (Gemini)](https://cloud.google.com/ai/generative-ai) - AI capabilities
+- TypeScript - Type safety and modern JavaScript features
+
+## Required Permissions
+
+Bot requires the following Discord permissions:
+- Read Messages/View Channels
+- Send Messages
+- Embed Links
+- Read Message History
+- Use Application Commands
+
+Permission Integer: `274878286912`

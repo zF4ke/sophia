@@ -1,106 +1,232 @@
 [Back to Index](../API.md)
 
-# Types
+# Type Definitions
 
-This document describes the core type definitions used throughout the Sophia3 application.
+This document defines the core types used throughout Sophia3.
 
-## Conversation Types
+## Message Types
+
+### Message
+```typescript
+interface Message {
+  id: string;
+  content: string;
+  author: User;
+  channelId: string;
+  guildId: string;
+  createdTimestamp: number;
+  mentions: MessageMentions;
+  attachments: Collection<string, MessageAttachment>;
+}
+```
 
 ### ConversationWithContext
-
 ```typescript
 interface ConversationWithContext {
-    messages: Message[];     // Array of Discord messages in the conversation
-    relevanceScore: number;  // AI-assigned relevance score (0-10)
+  messages: Message[];
+  context: {
+    before: Message[];
+    after: Message[];
+  };
+  metadata: ConversationMetadata;
 }
 ```
 
-Represents a conversation with its relevance score as determined by AI analysis. Used extensively in search results and AI processing.
-
-### MessageGroup
-
+### ConversationMetadata
 ```typescript
-interface MessageGroup {
-    author: string;      // Author's username
-    content: string[];   // Array of message contents
-    timestamp: number;   // Timestamp of first message
+interface ConversationMetadata {
+  id: string;
+  topic?: string;
+  participants: string[];
+  startTime: number;
+  endTime: number;
+  messageCount: number;
+  relevanceScore?: number;
 }
 ```
 
-Used for grouping messages by author for display purposes, especially in the UIService. Simplifies UI display by combining consecutive messages from the same author.
+## Analysis Types
 
-### AIAnalysisResult
-
+### AnalysisOptions
 ```typescript
-interface AIAnalysisResult {
-    isRelevant: boolean;     // Whether the conversation is relevant
-    relevanceScore: number;  // Relevance score (0-10)
+interface AnalysisOptions {
+  features?: ('topics' | 'sentiment' | 'entities')[];
+  depth?: 'basic' | 'detailed';
+  maxTokens?: number;
+  minConfidence?: number;
 }
 ```
 
-Represents the result of an AI analysis on a conversation's relevance. The `relevanceScore` is a numeric value from 0-10 indicating how relevant the conversation is to a specific topic.
-
-## Discord Client Type
-
-### TDiscordClient
-
+### TopicAnalysis
 ```typescript
-type TDiscordClient = Client & {
-    commands: Collection<string, any>;
-};
-```
-
-Extends the Discord.js Client type with a commands collection to store and manage slash commands.
-
-## Usage Examples
-
-### ConversationWithContext Example
-
-```typescript
-// Creating a ConversationWithContext object
-const relevantConversation: ConversationWithContext = {
-    messages: messageArray, // Array of Discord Message objects
-    relevanceScore: 8       // High relevance score on a scale of 0-10
-};
-
-// Accessing data
-const messageCount = relevantConversation.messages.length;
-const firstMessageAuthor = relevantConversation.messages[0].author.username;
-const relevance = relevantConversation.relevanceScore;
-```
-
-### MessageGroup Example
-
-```typescript
-// Creating a MessageGroup for UI display
-const userMessages: MessageGroup = {
-    author: "ExampleUser",
-    content: [
-        "First message content",
-        "Second message content from same user",
-        "Third follow-up message"
-    ],
-    timestamp: 1625097600000 // Unix timestamp
-};
-
-// Using in a UI display context
-messageGroups.forEach(group => {
-    renderAuthorHeader(group.author, new Date(group.timestamp));
-    group.content.forEach(msg => renderMessageContent(msg));
-});
-```
-
-### AIAnalysisResult Example
-
-```typescript
-// Result from AI conversation analysis
-const analysisResult: AIAnalysisResult = {
-    isRelevant: true,
-    relevanceScore: 7.5
-};
-
-// Using the result for filtering
-if (analysisResult.isRelevant && analysisResult.relevanceScore >= 5) {
-    includeConversationInResults(conversation);
+interface TopicAnalysis {
+  mainTopics: string[];
+  subtopics: Record<string, string[]>;
+  confidence: number;
+  relevance: number;
 }
 ```
+
+### SentimentAnalysis
+```typescript
+interface SentimentAnalysis {
+  overall: number;  // -1 to 1
+  messages: {
+    id: string;
+    sentiment: number;
+    confidence: number;
+  }[];
+  timeline?: {
+    timestamp: number;
+    sentiment: number;
+  }[];
+}
+```
+
+## Cache Types
+
+### CacheData
+```typescript
+interface CacheData {
+  messages: Message[];
+  metadata: {
+    channelId: string;
+    lastUpdate: number;
+    messageCount: number;
+    expiresAt?: number;
+  };
+  analysis?: {
+    topics?: TopicAnalysis;
+    sentiment?: SentimentAnalysis;
+  };
+}
+```
+
+### CacheOptions
+```typescript
+interface CacheOptions {
+  compress?: boolean;
+  expiry?: string | number;
+  priority?: number;
+  tags?: string[];
+}
+```
+
+## UI Types
+
+### DisplayOptions
+```typescript
+interface DisplayOptions {
+  itemsPerPage?: number;
+  showMetadata?: boolean;
+  format?: 'compact' | 'detailed';
+  ephemeral?: boolean;
+}
+```
+
+### EmbedOptions
+```typescript
+interface EmbedOptions {
+  color?: number;
+  showTimestamps?: boolean;
+  includeContext?: boolean;
+  maxLength?: number;
+  template?: string;
+}
+```
+
+## Security Types
+
+### AccessOptions
+```typescript
+interface AccessOptions {
+  requireModerator?: boolean;
+  allowBots?: boolean;
+  channels?: string[];
+  expiry?: string | number;
+}
+```
+
+### RateLimitOptions
+```typescript
+interface RateLimitOptions {
+  maxUses: number;
+  window: string | number;
+  cooldown?: string | number;
+}
+```
+
+## Error Types
+
+### AIError
+```typescript
+class AIError extends Error {
+  code: string;
+  details?: any;
+  retryable: boolean;
+}
+```
+
+### SecurityError
+```typescript
+class SecurityError extends Error {
+  code: string;
+  user: string;
+  command: string;
+}
+```
+
+### CacheError
+```typescript
+class CacheError extends Error {
+  code: string;
+  channelId?: string;
+  cacheKey?: string;
+}
+```
+
+## AI Types
+
+### PromptOptions
+```typescript
+interface PromptOptions {
+  temperature?: number;
+  maxTokens?: number;
+  template?: string;
+  stream?: boolean;
+}
+```
+
+### TokenOptions
+```typescript
+interface TokenOptions {
+  model?: string;
+  detailed?: boolean;
+  encoding?: string;
+}
+```
+
+## Service Response Types
+
+### ConversationAnalysis
+```typescript
+interface ConversationAnalysis {
+  topics: TopicAnalysis;
+  sentiment?: SentimentAnalysis;
+  entities?: EntityAnalysis;
+  confidence: number;
+  metadata: ConversationMetadata;
+}
+```
+
+### RateLimitResult
+```typescript
+interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  reset: number;
+  retryAfter?: number;
+}
+```
+
+For usage examples, see the [Examples Guide](../guides/Examples.md).

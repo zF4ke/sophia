@@ -2,157 +2,223 @@
 
 # ContextManagementService
 
-The ContextManagementService is responsible for managing conversation contexts for AI interactions. It provides functionality for selecting, formatting, and optimizing conversation contexts for use in AI prompts.
+The ContextManagementService handles the preparation, optimization, and management of conversation context for AI operations.
 
-## Properties
+## Core Features
 
-### Configuration Constants
+### Context Management
+- Context window optimization
+- Token limit management
+- Relevance scoring
+- Context preservation
 
+### Memory Management
+- Short-term context cache
+- Long-term memory storage
+- Context prioritization
+- Memory cleanup
+
+## Method Reference
+
+### getChannelContext
 ```typescript
-private static readonly DEFAULT_MAX_CONTEXT_CHARS = 50000;
+static async getChannelContext(
+  channel: TextChannel,
+  options?: ContextOptions
+): Promise<string>
 ```
 
-The default maximum context length in characters (50,000).
-
-## Methods
-
-### `selectConversationsForContext`
-
-```typescript
-public static selectConversationsForContext(
-  conversations: Message[][], 
-  prompt: string, 
-  maxChars: number = this.DEFAULT_MAX_CONTEXT_CHARS
-): Message[][]
-```
-
-Selects the most relevant conversations for providing context to AI.
-
-#### Features:
-- Uses keyword matching to determine relevance to the prompt
-- Scores conversations based on keyword matches and conversation complexity
-- Ensures total context stays within character limits
-- Prioritizes more relevant conversations
+Retrieves and optimizes context from a channel.
 
 #### Parameters:
-- `conversations: Message[][]` - Array of conversations to select from
-- `prompt: string` - User prompt to base relevance on
-- `maxChars: number` - Maximum character limit for context (default: 50000)
+- `channel`: Discord text channel
+- `options`: Context settings
+  - `messageLimit`: Max messages to fetch
+  - `maxTokens`: Token limit
+  - `relevanceThreshold`: Min relevance score
 
 #### Returns:
-- `Message[][]` - Array of selected conversations within character limit
+Optimized context string
 
-#### Example:
+### optimizeContext
 ```typescript
-const relevantContext = ContextManagementService.selectConversationsForContext(
-  allConversations,
-  "project deadline",
-  30000
-);
-```
-
-### `formatConversationsAsContext`
-
-```typescript
-public static formatConversationsAsContext(conversations: Message[][]): string
-```
-
-Formats conversations into a structured context string for AI.
-
-#### Features:
-- Creates a clear, numbered format for conversations
-- Preserves author information with each message
-- Organizes content in a way that's optimal for AI processing
-
-#### Parameters:
-- `conversations: Message[][]` - Array of conversations to format
-
-#### Returns:
-- `string` - Formatted context string
-
-#### Example:
-```typescript
-const selectedContexts = ContextManagementService.selectConversationsForContext(
-  allConversations, 
-  userQuery
-);
-const formattedContext = ContextManagementService.formatConversationsAsContext(selectedContexts);
-```
-
-### `createContextualPrompt`
-
-```typescript
-public static createContextualPrompt(
-  userPrompt: string, 
+static optimizeContext(
   context: string,
-  additionalInstructions: string = ""
+  options: OptimizationOptions
 ): string
 ```
 
-Creates a structured prompt with context for AI response generation.
-
-#### Features:
-- Adds clear section headers for context and user prompt
-- Includes guidelines for how the AI should use the context
-- Supports additional customization through instructions parameter
+Optimizes context for token limits.
 
 #### Parameters:
-- `userPrompt: string` - The user's original query or request
-- `context: string` - Context information from conversations
-- `additionalInstructions: string` - Any additional instructions for AI behavior
+- `context`: Raw context string
+- `options`: Optimization settings
+  - `maxTokens`: Maximum tokens
+  - `preserveRecent`: Prioritize recent
+  - `strategy`: Optimization strategy
 
 #### Returns:
-- `string` - Complete formatted prompt with context
+Optimized context string
 
-#### Example:
+### createMemoryCache
 ```typescript
-const prompt = ContextManagementService.createContextualPrompt(
-  "What was the final decision about the project timeline?",
-  formattedContext,
-  "Focus on the most recent information and concrete dates mentioned."
-);
+static createMemoryCache(
+  key: string,
+  options?: CacheOptions
+): ContextCache
 ```
 
-### `optimizeContextForTokenLimit`
-
-```typescript
-public static optimizeContextForTokenLimit(
-  conversations: Message[][], 
-  prompt: string, 
-  maxTokens: number = 8000
-): string
-```
-
-Optimizes context by focusing on most relevant parts if context exceeds token limits.
-
-#### Features:
-- Approximates token count from character length
-- Intelligently reduces context while preserving most relevant information
-- Prioritizes conversations and messages with keyword matches
-- Can extract portions of conversations if needed
+Creates a context memory cache.
 
 #### Parameters:
-- `conversations: Message[][]` - Array of conversations
-- `prompt: string` - User prompt
-- `maxTokens: number` - Approximate maximum token count for context
+- `key`: Cache identifier
+- `options`: Cache configuration
+  - `maxSize`: Maximum entries
+  - `ttl`: Time to live
+  - `priority`: Cache priority
 
 #### Returns:
-- `string` - Optimized context string
+Context cache instance
 
-#### Example:
+### scoreRelevance
 ```typescript
-// When working with a model with strict token limits
-const optimizedContext = ContextManagementService.optimizeContextForTokenLimit(
-  allConversations,
-  userQuery,
-  4000 // Limit for smaller models
-);
+static scoreRelevance(
+  content: string,
+  topic: string,
+  options?: ScoringOptions
+): number
 ```
 
-## Usage Recommendations
+Scores content relevance to a topic.
 
-- Use `selectConversationsForContext` to intelligently choose which conversations to include
-- Always format conversations with `formatConversationsAsContext` for consistency
-- Use `createContextualPrompt` to create well-structured prompts for AI
-- Consider token limits of the AI model and use `optimizeContextForTokenLimit` when necessary
-- For very large conversation sets, apply pre-filtering before selection
+#### Parameters:
+- `content`: Content to score
+- `topic`: Reference topic
+- `options`: Scoring options
+  - `algorithm`: Scoring method
+  - `threshold`: Minimum score
+  - `weights`: Feature weights
+
+#### Returns:
+Relevance score (0-1)
+
+## Integration Examples
+
+### Basic Context Management
+```typescript
+// Get channel context
+const context = await ContextManagementService.getChannelContext(channel, {
+  messageLimit: 1000,
+  maxTokens: 6000,
+  relevanceThreshold: 0.6
+});
+
+// Optimize for AI
+const optimized = ContextManagementService.optimizeContext(context, {
+  maxTokens: 4000,
+  preserveRecent: true
+});
+```
+
+### Memory Management
+```typescript
+// Create context cache
+const cache = ContextManagementService.createMemoryCache('channel-123', {
+  maxSize: 1000,
+  ttl: '1h'
+});
+
+// Store context
+await cache.set('conversation-1', {
+  content: context,
+  timestamp: Date.now(),
+  score: 0.8
+});
+```
+
+### Relevance Scoring
+```typescript
+// Score content relevance
+const score = ContextManagementService.scoreRelevance(
+  messageContent,
+  searchTopic,
+  {
+    algorithm: 'cosine',
+    threshold: 0.5
+  }
+);
+
+if (score > 0.7) {
+  await includeInContext(messageContent);
+}
+```
+
+## Error Handling
+
+### Context Errors
+```typescript
+try {
+  const context = await ContextManagementService.getChannelContext(channel);
+} catch (error) {
+  if (error instanceof ContextLimitError) {
+    return await getReducedContext(channel);
+  }
+  throw error;
+}
+```
+
+### Memory Management
+```typescript
+try {
+  await cache.set(key, value);
+} catch (error) {
+  if (error instanceof CacheFullError) {
+    await cache.cleanup();
+    await cache.set(key, value);
+  }
+}
+```
+
+## Best Practices
+
+1. **Context Optimization**
+   - Balance context size
+   - Preserve important content
+   - Implement smart truncation
+
+2. **Memory Management**
+   - Regular cache cleanup
+   - Priority-based retention
+   - Efficient storage use
+
+3. **Performance**
+   - Optimize token usage
+   - Cache frequent contexts
+   - Batch operations
+
+## Configuration
+
+```typescript
+const CONTEXT_CONFIG = {
+  // Context limits
+  MAX_TOKENS: 8000,
+  MAX_MESSAGES: 2000,
+  MIN_RELEVANCE: 0.6,
+  
+  // Memory settings
+  CACHE_SIZE: 10000,
+  CACHE_TTL: '1h',
+  CLEANUP_INTERVAL: '5m',
+  
+  // Optimization
+  PRESERVATION_RATIO: 0.7,
+  RECENCY_WEIGHT: 0.3,
+  RELEVANCE_WEIGHT: 0.7,
+  
+  // Algorithms
+  SCORING_METHOD: 'cosine',
+  OPTIMIZATION_STRATEGY: 'balanced'
+};
+```
+
+For implementation examples, see the [Examples Guide](../guides/Examples.md).

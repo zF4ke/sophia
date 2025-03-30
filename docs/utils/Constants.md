@@ -84,60 +84,251 @@ export const busy = [
 
 These messages are used primarily in the `oi` command to provide friendly responses when the bot is not available.
 
-## Usage Examples
+## System Constants
 
-### Using Emojis in Messages
+This document defines the constants and configuration values used throughout Sophia3.
+
+### UI Constants
 
 ```typescript
-// Success message with emoji
-await interaction.reply(`${EMOJIS.success} Operation completed successfully!`);
+export const UI_CONSTANTS = {
+  // Colors
+  COLORS: {
+    PRIMARY: 0x0099ff,
+    SUCCESS: 0x00ff00,
+    ERROR: 0xff0000,
+    WARNING: 0xffff00,
+    INFO: 0x7289da,
+    DEFAULT: 0x2f3136
+  },
 
-// Error message with emoji
-await interaction.reply(`${EMOJIS.error} An error occurred: ${errorMessage}`);
+  // Timeouts (ms)
+  TIMEOUTS: {
+    BUTTON: 300000,         // 5 minutes
+    MENU: 120000,          // 2 minutes
+    PROGRESS: 2000,        // 2 seconds
+    MESSAGE: 15000         // 15 seconds
+  },
 
-// Progress update with emoji
-await interaction.editReply(`${EMOJIS.search} Searching... (${progress}%)`);
+  // Display Limits
+  LIMITS: {
+    EMBED_LENGTH: 4096,
+    FIELD_LENGTH: 1024,
+    TITLE_LENGTH: 256,
+    ITEMS_PER_PAGE: 5,
+    MAX_FIELDS: 25
+  },
+
+  // Buttons
+  BUTTONS: {
+    PREVIOUS: '⬅️',
+    NEXT: '➡️',
+    CLOSE: '❌',
+    REFRESH: '🔄',
+    FILTER: '🔍'
+  }
+};
 ```
 
-### Using Discord Message Limit
+### Message Constants
 
 ```typescript
-// Check if message exceeds Discord's character limit
-if (responseContent.length > DISCORD.MESSAGE_LIMIT) {
-    // Split the message into multiple parts
-    const messageParts = splitLongMessage(responseContent);
-    
-    // Send each part separately
-    for (const part of messageParts) {
-        await interaction.followUp(part);
+export const MESSAGE_CONSTANTS = {
+  // Fetch Limits
+  FETCH: {
+    DEFAULT_LIMIT: 2000,
+    MAX_LIMIT: 10000,
+    BATCH_SIZE: 100,
+    FETCH_DELAY: 1000
+  },
+
+  // Cache Settings
+  CACHE: {
+    MAX_SIZE: 10000,
+    DEFAULT_EXPIRY: '1h',
+    CLEANUP_INTERVAL: '5m',
+    COMPRESSION: true
+  },
+
+  // Context Window
+  CONTEXT: {
+    BEFORE_MESSAGES: 5,
+    AFTER_MESSAGES: 5,
+    MAX_CONTEXT: 8000,
+    MIN_CONTEXT: 100
+  },
+
+  // Group Settings
+  GROUPING: {
+    TIME_THRESHOLD: 300000,  // 5 minutes
+    MIN_MESSAGES: 2,
+    MAX_GAP: 3600000        // 1 hour
+  }
+};
+```
+
+### Security Constants
+
+```typescript
+export const SECURITY_CONSTANTS = {
+  // Permission Levels
+  LEVELS: {
+    ADMIN: 3,
+    MOD: 2,
+    USER: 1,
+    RESTRICTED: 0
+  },
+
+  // Rate Limits
+  RATE_LIMITS: {
+    SEARCH: {
+      USES: 10,
+      WINDOW: '1h',
+      COOLDOWN: '1m'
+    },
+    CONTEXT: {
+      USES: 20,
+      WINDOW: '1h',
+      COOLDOWN: '30s'
+    },
+    GETMESSAGE: {
+      USES: 30,
+      WINDOW: '1h',
+      COOLDOWN: '10s'
     }
-} else {
-    // Send as a single message
-    await interaction.reply(responseContent);
-}
+  },
+
+  // Access Control
+  ACCESS: {
+    DEFAULT_DURATION: '30d',
+    MAX_DURATION: '365d',
+    MIN_DURATION: '1d',
+    LOG_CHANGES: true
+  },
+
+  // Command Categories
+  CATEGORIES: {
+    ADMIN: ['access', 'config'],
+    MOD: ['search', 'context'],
+    USER: ['getmessage'],
+    PUBLIC: ['help', 'ping']
+  }
+};
 ```
 
-### Admin Permission Check
+### AI Constants
 
 ```typescript
-// Check if user has admin permissions
-if (!ADMIN_IDS.includes(interaction.user.id)) {
-    return await interaction.reply({
-        content: `${EMOJIS.error} This command is available only to administrators.`,
-        flags: MessageFlags.Ephemeral
-    });
-}
+export const AI_CONSTANTS = {
+  // Model Settings
+  MODEL: {
+    DEFAULT: 'gemini-pro',
+    CONTEXT_LENGTH: 8192,
+    MAX_OUTPUT: 4096,
+    SAFETY_MARGIN: 100
+  },
+
+  // Generation Settings
+  GENERATION: {
+    DEFAULT_TEMP: 0.7,
+    TOP_P: 0.95,
+    TOP_K: 40,
+    MIN_TOKENS: 100
+  },
+
+  // Rate Limits
+  LIMITS: {
+    REQUESTS_PER_MIN: 60,
+    TOKENS_PER_MIN: 40000,
+    MAX_PARALLEL: 5,
+    RETRY_DELAY: 1000
+  },
+
+  // Analysis Settings
+  ANALYSIS: {
+    MIN_RELEVANCE: 0.6,
+    MIN_CONFIDENCE: 0.7,
+    MAX_TOPICS: 5,
+    SENTIMENT_SCALE: [-1, 1]
+  }
+};
 ```
 
-### Random Busy Message
+### File System Constants
 
 ```typescript
-// Get a random busy message
-const randomIndex = Math.floor(Math.random() * busy.length);
-const randomMessage = busy[randomIndex];
+export const FS_CONSTANTS = {
+  // Paths
+  PATHS: {
+    CACHE: './data/cache',
+    LOGS: './logs',
+    TEMP: './temp',
+    CONFIG: './config'
+  },
 
-// Send the message
-await interaction.reply({
-    content: randomMessage,
-});
+  // File Settings
+  FILES: {
+    MAX_SIZE: '1GB',
+    COMPRESSION: true,
+    ENCODING: 'utf8',
+    LINE_ENDING: '\n'
+  },
+
+  // Cache Settings
+  CACHE: {
+    MAX_AGE: '7d',
+    CLEANUP_INTERVAL: '1d',
+    MIN_AGE: '1h',
+    BATCH_SIZE: 100
+  },
+
+  // Security
+  SECURITY: {
+    ALLOWED_PATHS: ['data', 'logs', 'temp'],
+    FILE_PERMISSIONS: 0o644,
+    DIR_PERMISSIONS: 0o755
+  }
+};
 ```
+
+### Error Constants
+
+```typescript
+export const ERROR_CONSTANTS = {
+  // Error Codes
+  CODES: {
+    // AI Errors
+    AI_TOKEN_LIMIT: 'TOKEN_LIMIT',
+    AI_RATE_LIMIT: 'RATE_LIMIT',
+    AI_INVALID_RESPONSE: 'INVALID_RESPONSE',
+    
+    // Security Errors
+    ACCESS_DENIED: 'ACCESS_DENIED',
+    RATE_LIMITED: 'RATE_LIMITED',
+    INVALID_PERMISSION: 'INVALID_PERMISSION',
+    
+    // Cache Errors
+    CACHE_MISS: 'CACHE_MISS',
+    CACHE_FULL: 'CACHE_FULL',
+    CACHE_EXPIRED: 'CACHE_EXPIRED'
+  },
+
+  // Retry Settings
+  RETRY: {
+    MAX_RETRIES: 3,
+    BASE_DELAY: 1000,
+    MAX_DELAY: 10000,
+    BACKOFF: 2
+  },
+
+  // Messages
+  MESSAGES: {
+    DEFAULT_ERROR: 'An error occurred',
+    ACCESS_DENIED: 'You do not have permission',
+    RATE_LIMITED: 'Please wait before trying again',
+    INVALID_INPUT: 'Invalid input provided'
+  }
+};
+```
+
+For implementation examples, see the [Examples Guide](../guides/Examples.md).

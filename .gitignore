@@ -120,6 +120,6 @@ dist
 # End of https://mrkandreev.name/snippets/gitignore-generator/#Node
 
 
-# ignore data/messages/cache/
+# ignore data/message/cache/
 
-data/messages/cache/*
+data/*

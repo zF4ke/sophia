@@ -2,164 +2,227 @@
 
 # ResponseGenerationService
 
-The ResponseGenerationService is responsible for generating AI responses based on user prompts and contexts. It provides various methods for different types of response generation needs using Google's Generative AI.
+The ResponseGenerationService handles AI response generation and formatting using the Gemini API.
 
-## Methods
+## Core Features
 
-### `generateContextualResponse`
+### Response Generation
+- Context-aware responses
+- Template-based generation
+- Response formatting
+- Stream processing
 
+### Template Management
+- Response templates
+- Dynamic formatting
+- Variable interpolation
+- Style customization
+
+## Method Reference
+
+### generateResponse
 ```typescript
-public static async generateContextualResponse(
-  prompt: string, 
+static async generateResponse(
+  prompt: string,
   context: string,
-  additionalInstructions: string = ""
+  options?: GenerationOptions
 ): Promise<string>
 ```
 
-Generates a contextual response to a user prompt using provided conversation context.
-
-#### Features:
-- Uses conversation context to inform the AI response
-- Supports additional instructions to fine-tune response
-- Uses optimized context model for balanced output
-- Includes error handling
+Generates an AI response with context.
 
 #### Parameters:
-- `prompt: string` - User query or instruction
-- `context: string` - Conversation context to inform the response
-- `additionalInstructions: string` - Optional additional instructions for the AI
+- `prompt`: User query/instruction
+- `context`: Conversation context
+- `options`: Generation settings
+  - `temperature`: Response randomness
+  - `maxTokens`: Length limit
+  - `format`: Output format
+  - `stream`: Enable streaming
 
 #### Returns:
-- `Promise<string>` - The generated response
+Generated response string
 
-#### Example:
+### applyTemplate
 ```typescript
-const response = await ResponseGenerationService.generateContextualResponse(
-  "What was the conclusion about the project timeline?",
-  conversationContext,
-  "Focus on specific dates mentioned"
-);
+static applyTemplate(
+  template: string,
+  variables: Record<string, string>,
+  options?: TemplateOptions
+): string
 ```
 
-### `generateCustomResponse`
-
-```typescript
-public static async generateCustomResponse(
-  promptTemplate: string, 
-  params: Record<string, string>,
-  temperature: number = 0.4
-): Promise<string>
-```
-
-Generates a response using a custom prompt template and specified parameters.
-
-#### Features:
-- Template-based prompt generation with parameter substitution
-- Adjustable temperature for controlling response randomness
-- Custom model configuration for specific use cases
-- Error handling with informative errors
+Applies variables to a response template.
 
 #### Parameters:
-- `promptTemplate: string` - Template string with placeholders in `{{parameter}}` format
-- `params: Record<string, string>` - Object containing values to replace placeholders
-- `temperature: number` - Temperature parameter (0.0-1.0) for controlling response randomness
+- `template`: Response template
+- `variables`: Template variables
+- `options`: Template settings
+  - `escapeHtml`: HTML escaping
+  - `fallback`: Default values
+  - `formatter`: Custom formatting
 
 #### Returns:
-- `Promise<string>` - The generated response
+Formatted response string
 
-#### Example:
+### streamResponse
 ```typescript
-const response = await ResponseGenerationService.generateCustomResponse(
-  "Write a {{tone}} explanation of {{concept}} suitable for {{audience}}",
+static async *streamResponse(
+  prompt: string,
+  context: string,
+  options?: StreamOptions
+): AsyncGenerator<string>
+```
+
+Streams AI response generation.
+
+#### Parameters:
+- `prompt`: Generation prompt
+- `context`: Background context
+- `options`: Stream settings
+  - `chunkSize`: Token chunk size
+  - `delimiter`: Chunk delimiter
+  - `maxDuration`: Stream timeout
+
+#### Returns:
+AsyncGenerator of response chunks
+
+### formatResponse
+```typescript
+static formatResponse(
+  response: string,
+  options?: FormatOptions
+): string
+```
+
+Formats a response for display.
+
+#### Parameters:
+- `response`: Raw response
+- `options`: Format options
+  - `style`: Display style
+  - `markdown`: Enable markdown
+  - `maxLength`: Length limit
+  - `truncation`: Truncation style
+
+#### Returns:
+Formatted response string
+
+## Integration Examples
+
+### Basic Response Generation
+```typescript
+// Generate response with context
+const response = await ResponseGenerationService.generateResponse(
+  userQuery,
+  channelContext,
   {
-    tone: "friendly",
-    concept: "artificial intelligence",
-    audience: "beginners"
+    temperature: 0.7,
+    maxTokens: 2000
+  }
+);
+
+// Format and send
+const formatted = ResponseGenerationService.formatResponse(response, {
+  style: 'markdown',
+  maxLength: 1500
+});
+```
+
+### Template Usage
+```typescript
+// Apply template variables
+const filled = ResponseGenerationService.applyTemplate(
+  responseTemplate,
+  {
+    username: user.name,
+    query: userQuery,
+    context: summary
   },
-  0.6
+  { escapeHtml: true }
 );
 ```
 
-### `generateSummary`
-
+### Streaming Response
 ```typescript
-public static async generateSummary(
-  text: string, 
-  maxLength: number = 500,
-  focusTopics: string[] = []
-): Promise<string>
+// Stream response generation
+for await (const chunk of ResponseGenerationService.streamResponse(
+  prompt,
+  context,
+  { chunkSize: 100 }
+)) {
+  await updateResponse(chunk);
+}
 ```
 
-Summarizes a long text or conversation.
+## Error Handling
 
-#### Features:
-- Creates concise summaries with length control
-- Optional topic focus for targeted summaries
-- Uses contextual model for coherent output
-- Error handling with fallback messaging
-
-#### Parameters:
-- `text: string` - Text to be summarized
-- `maxLength: number` - Target maximum length for summary (default: 500 characters)
-- `focusTopics: string[]` - Optional array of topics to focus on in the summary
-
-#### Returns:
-- `Promise<string>` - The generated summary
-
-#### Example:
+### Generation Errors
 ```typescript
-const longDiscussion = getConversationText(conversation);
-const summary = await ResponseGenerationService.generateSummary(
-  longDiscussion,
-  300,
-  ["budget constraints", "timeline"]
-);
+try {
+  const response = await ResponseGenerationService.generateResponse(prompt, context);
+} catch (error) {
+  if (error instanceof GenerationError) {
+    console.error('Generation failed:', error.message);
+    return getFallbackResponse(prompt);
+  }
+  throw error;
+}
 ```
 
-### `generateConversationResponse`
-
+### Stream Handling
 ```typescript
-public static async generateConversationResponse(
-  previousMessages: {role: string, content: string}[],
-  newUserInput: string
-): Promise<string>
+try {
+  for await (const chunk of ResponseGenerationService.streamResponse(prompt, context)) {
+    await processChunk(chunk);
+  }
+} catch (error) {
+  console.warn('Stream interrupted:', error);
+  await finalizeResponse();
+}
 ```
 
-Generates a follow-up response based on previous conversation and new input.
+## Best Practices
 
-#### Features:
-- Maintains conversation continuity and context
-- Handles multi-turn conversations naturally
-- Formats conversation history appropriately for the AI
-- Error handling with default responses
+1. **Response Quality**
+   - Provide sufficient context
+   - Use appropriate temperature
+   - Validate outputs
 
-#### Parameters:
-- `previousMessages: {role: string, content: string}[]` - Array of previous message pairs
-- `newUserInput: string` - Latest user input to respond to
+2. **Performance**
+   - Optimize context size
+   - Stream long responses
+   - Cache templates
 
-#### Returns:
-- `Promise<string>` - The follow-up response
+3. **User Experience**
+   - Handle interruptions
+   - Show progress
+   - Format consistently
 
-#### Example:
+## Configuration
+
 ```typescript
-const conversationHistory = [
-  { role: "user", content: "Can you explain Docker containers?" },
-  { role: "assistant", content: "Docker containers are lightweight, standalone executable packages..." }
-];
-
-const response = await ResponseGenerationService.generateConversationResponse(
-  conversationHistory,
-  "How do they differ from virtual machines?"
-);
+const RESPONSE_CONFIG = {
+  // Generation settings
+  DEFAULT_TEMPERATURE: 0.7,
+  MAX_TOKENS: 4000,
+  MIN_TOKENS: 100,
+  
+  // Stream settings
+  CHUNK_SIZE: 100,
+  STREAM_TIMEOUT: 30000,
+  MAX_CHUNKS: 50,
+  
+  // Format settings
+  MAX_LENGTH: 2000,
+  TRUNCATION_MARKER: '...',
+  DEFAULT_STYLE: 'markdown',
+  
+  // Template settings
+  VARIABLE_PATTERN: /\${(\w+)}/g,
+  DEFAULT_FALLBACK: '',
+  ESCAPE_HTML: true
+};
 ```
 
-## Usage Recommendations
-
-- Use `generateContextualResponse` when you have specific conversation context to inform responses
-- Use `generateCustomResponse` for template-based generation with variable parameters
-- Use `generateSummary` for condensing long texts or conversations
-- Use `generateConversationResponse` for maintaining conversational continuity
-- Adjust temperature based on need for creativity vs. determinism:
-  - Lower values (0.2-0.4) for factual, consistent responses
-  - Medium values (0.4-0.7) for balanced responses
-  - Higher values (0.7-1.0) for more creative, varied responses
+For implementation examples, see the [Examples Guide](../guides/Examples.md).

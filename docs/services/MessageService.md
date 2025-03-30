@@ -2,191 +2,208 @@
 
 # MessageService
 
-The MessageService handles Discord message fetching and filtering operations. It provides robust methods for retrieving messages from Discord channels with built-in rate limiting, progress reporting, filtering capabilities, and an advanced persistent caching system.
+The MessageService handles message operations including fetching, caching, and filtering Discord messages.
 
-## Properties
+## Core Features
 
-### Cache-Related Constants
+### Message Operations
+- Message fetching with pagination
+- Efficient caching system
+- Message filtering
+- Batch processing
 
-```typescript
-private static readonly USE_CACHE = true;              // Enable/disable caching
-private static readonly CACHE_EXPIRY = 30 * 24 * 60 * 60 * 1000;  // 30 days cache expiry
-private static readonly SERVICE_NAME = 'message';       // Service name for file organization
-private static readonly messageCache = new Map<string, MessageCache>();
-```
+### Cache Management
+- Intelligent cache storage
+- Automatic cache cleanup
+- Cache invalidation
+- Memory optimization
 
-These properties control the message caching behavior:
-- `USE_CACHE`: Toggle to enable/disable the caching system
-- `CACHE_EXPIRY`: Time in milliseconds before cached messages expire (set to 30 days)
-- `SERVICE_NAME`: Used for file path organization with FileSystemService
-- `messageCache`: In-memory storage for cached messages by channel ID
+## Method Reference
 
-## Methods
-
-### `initializeCache`
-
-```typescript
-public static initializeCache(): void
-```
-
-Initializes the message cache from disk storage on bot startup.
-
-#### Features:
-- Automatically called when the bot starts
-- Loads previously cached messages from disk
-- Removes expired cache files
-- Uses FileSystemService for cache file operations
-
-#### Implementation Details:
-- Checks each cached file for validity before loading
-- Reports the number of channels with successfully loaded caches
-- Handles and reports errors during cache initialization
-
-### `fetchMessages`
-
+### fetchMessages
 ```typescript
 static async fetchMessages(
-  channel: TextChannel, 
-  limit: number, 
-  interaction: ChatInputCommandInteraction
+  channel: TextChannel,
+  options: FetchOptions
 ): Promise<Message[]>
 ```
 
-Fetches messages from a Discord channel with progress updates.
-
-#### Features:
-- Advanced intelligent caching system with disk persistence
-- Smart fetching algorithm that prioritizes getting only new messages
-- Persistent cache checking that looks for cached messages in every batch
-- Seamlessly merges new messages with cached messages at any point in history
-- Supports fetching up to 20,000 messages
-- Handles Discord API rate limiting automatically
-- Shows progress updates during fetching via interaction responses
-- Intelligently detects when channel history end is reached
-- Includes retry logic for transient errors
-- Uses UIService.formatStatusMessage for consistent status updates
+Fetches messages from a Discord channel.
 
 #### Parameters:
-- `channel: TextChannel` - The Discord text channel to fetch messages from
-- `limit: number` - Maximum number of messages to fetch
-- `interaction: ChatInputCommandInteraction` - Discord interaction for progress updates
+- `channel`: Discord text channel
+- `options`: Fetch configuration
+  - `limit`: Maximum messages
+  - `before`: Message ID to fetch before
+  - `after`: Message ID to fetch after
+  - `around`: Message ID to fetch around
 
 #### Returns:
-- `Promise<Message[]>` - Array of Discord messages
+Array of fetched messages
 
-#### Example:
+### cacheMessages
 ```typescript
-const messages = await MessageService.fetchMessages(channel, 1000, interaction);
-console.log(`Fetched ${messages.length} messages`);
+static async cacheMessages(
+  messages: Message[],
+  options?: CacheOptions
+): Promise<void>
 ```
 
-#### Implementation Details:
-- First attempts to fetch newest messages and compare with cache
-- When overlap is found, combines new messages with cached messages
-- Continues checking for cached messages in subsequent batches
-- Never gives up looking for matching messages in cache, even after many batches
-- Reconstructs Message-like objects from cached data
-- Only fetches additional messages when necessary
-- Automatically updates cache with new messages
-- Saves cache to disk for persistence
-- Uses batch processing with `MAX_BATCH_SIZE` (100) messages per request
-- Provides descriptive progress updates using UIService.formatStatusMessage
-- Uses backtick-formatted status messages for in-progress updates
-- Plain text formatting for final status message
-- Handles permission errors (code 50001) by throwing clear errors
-- Implements rate limit handling by respecting Discord's retry-after response
+Stores messages in the cache.
 
-### `filterCommandMessages`
+#### Parameters:
+- `messages`: Messages to cache
+- `options`: Cache settings
+  - `expiry`: Cache lifetime
+  - `priority`: Cache priority
+  - `tags`: Cache tags
 
+### getCachedMessages
 ```typescript
-static filterCommandMessages(
-  messages: Message[], 
-  interaction: ChatInputCommandInteraction
+static async getCachedMessages(
+  channelId: string,
+  options?: CacheQueryOptions
+): Promise<Message[]>
+```
+
+Retrieves messages from cache.
+
+#### Parameters:
+- `channelId`: Channel ID
+- `options`: Query options
+  - `limit`: Maximum results
+  - `tags`: Filter by tags
+  - `includeExpired`: Include expired entries
+
+#### Returns:
+Array of cached messages
+
+### filterMessages
+```typescript
+static filterMessages(
+  messages: Message[],
+  filters: MessageFilter
 ): Message[]
 ```
 
-Filters out bot commands and recent messages from the command author.
-
-#### Features:
-- Removes bot own messages to reduce noise
-- Filters out command invocations from the current interaction user
-- Maintains context by keeping older messages from the command author
+Filters messages based on criteria.
 
 #### Parameters:
-- `messages: Message[]` - Array of messages to filter
-- `interaction: ChatInputCommandInteraction` - Current command interaction
+- `messages`: Messages to filter
+- `filters`: Filter criteria
+  - `content`: Content filter
+  - `authors`: Author filter
+  - `timestamp`: Time range
+  - `hasAttachments`: Attachment filter
 
 #### Returns:
-- `Message[]` - Filtered array of messages
+Filtered message array
 
-#### Example:
+## Integration Examples
+
+### Basic Message Fetch
 ```typescript
-const messages = await MessageService.fetchMessages(channel, 1000, interaction);
-const filteredMessages = MessageService.filterCommandMessages(messages, interaction);
-console.log(`Filtered out ${messages.length - filteredMessages.length} messages`);
+const messages = await MessageService.fetchMessages(channel, {
+  limit: 1000,
+  before: lastMessageId
+});
+
+const filtered = MessageService.filterMessages(messages, {
+  authors: ['user1', 'user2'],
+  hasAttachments: true
+});
 ```
 
-#### Implementation Details:
-- Removes messages from the bot itself
-- Filters out messages from the command author within the last 10 seconds
-- Preserves older messages from all users, including command author
-
-### `clearCache`
-
+### Cache Usage
 ```typescript
-static clearCache(channelId?: string): void
+// Cache fetched messages
+await MessageService.cacheMessages(messages, {
+  expiry: '1h',
+  tags: ['search', channelId]
+});
+
+// Retrieve from cache
+const cached = await MessageService.getCachedMessages(channelId, {
+  limit: 100,
+  tags: ['search']
+});
 ```
 
-Clears the message cache for a specific channel or all channels, both from memory and disk.
-
-#### Features:
-- Selectively clear cache for a specific channel
-- Option to clear the entire cache
-- Removes cache files from disk to free up storage
-- Useful when channel content has changed significantly
-
-#### Parameters:
-- `channelId?: string` - Optional channel ID to clear cache for. If not provided, clears all cache.
-
-#### Example:
+### Batch Processing
 ```typescript
-// Clear cache for a specific channel
-MessageService.clearCache('123456789012345678');
+const batches = MessageService.createBatches(messages, {
+  size: 100,
+  overlap: 10
+});
 
-// Clear all cached messages
-MessageService.clearCache();
+for (const batch of batches) {
+  await processMessageBatch(batch);
+}
 ```
 
-## Internal Methods
+## Error Handling
 
-### `saveCache`
-
+### Fetch Errors
 ```typescript
-private static saveCache(channelId: string): void
+try {
+  const messages = await MessageService.fetchMessages(channel, options);
+} catch (error) {
+  if (error instanceof DiscordAPIError) {
+    console.error('API error:', error.message);
+    return await MessageService.getCachedMessages(channel.id);
+  }
+  throw error;
+}
 ```
 
-Saves the in-memory cache to disk for persistence.
-
-### `messageToCache`
-
+### Cache Management
 ```typescript
-private static messageToCache(message: Message): MessageCacheItem
+try {
+  await MessageService.cacheMessages(messages);
+} catch (error) {
+  if (error instanceof CacheFullError) {
+    await MessageService.cleanupCache();
+    await MessageService.cacheMessages(messages);
+  }
+}
 ```
 
-Converts a Discord Message object to a simplified format for storage.
+## Best Practices
 
-### `updateCache`
+1. **Performance**
+   - Use appropriate fetch limits
+   - Implement efficient caching
+   - Process in batches
+
+2. **Cache Management**
+   - Set reasonable expiry times
+   - Regular cache cleanup
+   - Priority-based eviction
+
+3. **Error Recovery**
+   - Handle API limits
+   - Implement retries
+   - Use cache fallback
+
+## Configuration
 
 ```typescript
-private static updateCache(channelId: string, messages: Message[]): void
+const MESSAGE_CONFIG = {
+  // Fetch settings
+  DEFAULT_FETCH_LIMIT: 2000,
+  MAX_FETCH_SIZE: 100,
+  FETCH_DELAY: 1000,
+  
+  // Cache settings
+  CACHE_SIZE: 10000,
+  DEFAULT_EXPIRY: '1h',
+  CLEANUP_INTERVAL: '5m',
+  
+  // Batch settings
+  BATCH_SIZE: 100,
+  DEFAULT_OVERLAP: 10,
+  MAX_BATCHES: 20
+};
 ```
 
-Updates the message cache with new messages and saves to disk.
-
-### `reconstructMessages`
-
-```typescript
-private static reconstructMessages(channel: TextChannel, cachedMessages: MessageCacheItem[]): Message[]
-```
-
-Reconstructs Message-like objects from cached data.
+For implementation examples, see the [Examples Guide](../guides/Examples.md).
