@@ -42,7 +42,7 @@ export class SecurityService {
     private static readonly MODERATORS_FILE = 'moderators.json';
     private static readonly COMMANDS_CONFIG_FILE = 'commands_config.json';
 
-    public static readonly RATE_LIMIT_WINDOW = 60000; // 1 minute in ms
+    public static readonly RATE_LIMIT_WINDOW = 15000; // 15 seconds in ms
     private static readonly DEFAULT_COMMAND_LIMIT = 5;
     
     private static rateLimits: Map<string, RateLimitEntry> = new Map();
@@ -60,7 +60,7 @@ export class SecurityService {
         try {
             // Load admins
             try {
-                const adminsData = FileSystemService.readJsonFromPath<AdminUser[]>(this.ADMINS_FILE);
+                const adminsData = FileSystemService.readJsonFromPath<AdminUser[]>(this.ADMINS_FILE, this.SERVICE_NAME);
                 
                 if (adminsData) {
                     this.admins = adminsData;
@@ -100,7 +100,7 @@ export class SecurityService {
             
             // Load moderators
             try {
-                const moderatorsData = FileSystemService.readJsonFromPath<ModeratorUser[]>(this.MODERATORS_FILE);
+                const moderatorsData = FileSystemService.readJsonFromPath<ModeratorUser[]>(this.MODERATORS_FILE, this.SERVICE_NAME);
                 
                 if (moderatorsData) {
                     this.moderators = moderatorsData;
@@ -118,7 +118,7 @@ export class SecurityService {
             
             // Load command configs
             try {
-                const commandConfigData = FileSystemService.readJsonFromPath<Record<string, CommandConfig>>(this.COMMANDS_CONFIG_FILE);
+                const commandConfigData = FileSystemService.readJsonFromPath<Record<string, CommandConfig>>(this.COMMANDS_CONFIG_FILE, this.SERVICE_NAME);
                 
                 if (commandConfigData) {
                     this.commandConfigs = new Map(Object.entries(commandConfigData));

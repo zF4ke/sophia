@@ -7,10 +7,15 @@ export default {
     async execute(interaction: AutocompleteInteraction) {
         if (!interaction.isAutocomplete()) return;
 
-        // Handle command selection for admin command
-        if (interaction.commandName === 'admin' && interaction.options.getFocused(true).name === 'command') {
+        console.log(`Autocomplete interaction: ${interaction.commandName}`);
+
+        // Handle command selection for access command
+        if (interaction.commandName === 'access' && interaction.options.getFocused(true).name === 'command') {
             const focusedValue = interaction.options.getFocused().toString().toLowerCase();
             const commands = getCommandList();
+
+            console.log(`Focused value: ${focusedValue}`);
+            console.log(`Commands: ${commands}`);
             
             const filtered = commands.filter(choice => choice.toLowerCase().startsWith(focusedValue));
             

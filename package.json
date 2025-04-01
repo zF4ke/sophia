@@ -14,13 +14,17 @@
   "description": "",
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
+    "@leodog896/vigenere-cipher": "^0.0.1",
     "ascii-table": "^0.0.9",
+    "dedent": "^1.5.3",
     "discord.js": "^14.18.0",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "vigenere": "^1.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.9",
     "ts-node": "^10.9.2",
+    "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }
 }

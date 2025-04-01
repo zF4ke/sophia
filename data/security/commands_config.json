@@ -1,1 +1,42 @@
-{}
+{
+  "r": {
+    "isPublic": true,
+    "rateLimits": {
+      "default": 5,
+      "admin": 10,
+      "moderator": 7
+    }
+  },
+  "palavra": {
+    "isPublic": true,
+    "rateLimits": {
+      "default": 5,
+      "admin": 10,
+      "moderator": 7
+    }
+  },
+  "encriptar": {
+    "isPublic": true,
+    "rateLimits": {
+      "default": 5,
+      "admin": 10,
+      "moderator": 7
+    }
+  },
+  "decriptar": {
+    "isPublic": true,
+    "rateLimits": {
+      "default": 5,
+      "admin": 10,
+      "moderator": 7
+    }
+  },
+  "adss": {
+    "isPublic": true,
+    "rateLimits": {
+      "default": 5,
+      "admin": 10,
+      "moderator": 7
+    }
+  }
+}
