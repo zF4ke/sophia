@@ -80,20 +80,6 @@ export class AIService extends AIBaseService {
   }
 
   /**
-   * Generates a contextual response to a user prompt using conversation context
-   * @param prompt - User query or instruction
-   * @param context - Conversation context to inform the response
-   * @returns Promise with the generated response
-   */
-  public static async generateContextualResponse(
-    prompt: string, 
-    context: string,
-    additionalInstructions: string = "",
-  ): Promise<string> {
-    return ResponseGenerationService.generateContextualResponse(prompt, context, additionalInstructions);
-  }
-
-  /**
    * Optimizes context for token limitations while preserving relevance
    * @param conversations - Array of conversations
    * @param prompt - User prompt
@@ -113,18 +99,12 @@ export class AIService extends AIBaseService {
   }
 
   /**
-   * Summarizes a long text or conversation
-   * @param text - Text to be summarized
-   * @param maxLength - Target maximum length for summary
-   * @param focusTopics - Optional array of topics to focus on
-   * @returns Promise with the generated summary
+   * Cleans text by removing Markdown formatting characters
+   * @param text - The text to clean
+   * @returns Cleaned text without markdown characters
    */
-  public static async generateSummary(
-    text: string, 
-    maxLength: number = 500,
-    focusTopics: string[] = []
-  ): Promise<string> {
-    return ResponseGenerationService.generateSummary(text, maxLength, focusTopics);
+  public static cleanText(text: string): string {
+    return TextProcessingService.cleanText(text);
   }
 
   /**
@@ -147,12 +127,17 @@ export class AIService extends AIBaseService {
   }
 
   /**
-   * Cleans text by removing Markdown formatting characters
-   * @param text - The text to clean
-   * @returns Cleaned text without markdown characters
+   * Generates a contextual response to a user prompt using conversation context
+   * @param prompt - User query or instruction
+   * @param context - Conversation context to inform the response
+   * @returns Promise with the generated response
    */
-  public static cleanText(text: string): string {
-    return TextProcessingService.cleanText(text);
+  public static async generateContextualResponse(
+    question: string, 
+    context: string,
+    additionalInstructions: string = "",
+  ): Promise<string> {
+    return ResponseGenerationService.generateContextualResponse(question, context, additionalInstructions);
   }
 
   /**
@@ -165,30 +150,9 @@ export class AIService extends AIBaseService {
    */
   public static async generateWebSearchResponse(
     question: string,
-    chatContext: string = "",
-    maxLength: number = 1000
+    context: string = "",
+    additionalInstructions: string = "",
   ): Promise<string> {
-    // Create a custom prompt that encourages the model to search the web
-    // but also consider the provided context and offer opinions when needed
-    const searchPrompt = `Responda à seguinte pergunta usando todas as fontes de informação disponíveis:
-
-    PERGUNTA: ${question}
-    
-    ${chatContext ? `CONTEXTO DA CONVERSA:\n${chatContext}\n\n` : ''}
-    
-    INSTRUÇÕES:
-    1. Use informações atualizadas da web para fundamentar sua resposta quando possível
-    2. Considere o contexto da conversa fornecido (se houver) para personalizar sua resposta
-    3. Cite fontes quando relevante
-    4. Se não encontrar informações confiáveis ou se a pergunta for subjetiva, ofereça sua própria análise e opinião
-    5. Se a informação for controversa, apresente diferentes pontos de vista
-    6. MUITO IMPORTANTE: Seja conciso e direto. Limite sua resposta a aproximadamente ${maxLength} caracteres.
-    
-    Forneça uma resposta completa mas concisa, equilibrando fatos objetivos com insights perspicazes.
-    
-    Esta é uma conversa entre amigos, então use um tom amigável e acessível. Evite jargões técnicos e explique conceitos complexos de forma simples. Responda de forma clara e direta, como se estivesse conversando com um amigo, de forma natural, casual e adequada ao contexto da conversa. Porém, evite usar emojis excessivos ou linguagem excessivamente coloquial. Mantenha um equilíbrio entre ser amigável e profissional.`;
-
-    // Use a higher temperature for more diverse and opinion-based responses
-    return ResponseGenerationService.generateWebSearchResponse(searchPrompt, 0.8);
+    return ResponseGenerationService.generateWebSearchResponse(question, context, additionalInstructions);
   }
 }

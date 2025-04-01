@@ -6,47 +6,6 @@ import { ContextManagementService } from "./ContextManagementService";
  */
 export class ResponseGenerationService extends AIBaseService {
   /**
-   * Generates a contextual response to a user prompt using provided conversation context
-   * @param prompt - User query or instruction
-   * @param context - Conversation context to inform the response
-   * @param additionalInstructions - Optional additional instructions for the AI
-   * @param maxLength - Maximum target length for response (default: 1000 characters)
-   * @returns Promise with the generated response
-   */
-  public static async generateContextualResponse(
-    prompt: string, 
-    context: string,
-    additionalInstructions: string = "",
-    maxLength: number = 1000
-  ): Promise<string> {
-    try {
-      // Add conciseness instruction
-      const conciseInstruction = `Seja conciso e direto. Limite sua resposta a aproximadamente ${maxLength} caracteres.`;
-      const combinedInstructions = additionalInstructions 
-        ? `${additionalInstructions}\n${conciseInstruction}` 
-        : conciseInstruction;
-      
-      // Create structured prompt with context
-      const aiPrompt = ContextManagementService.createContextualPrompt(
-        prompt, 
-        context,
-        combinedInstructions
-      );
-      
-      // Generate AI response
-      const result = await this.contextModel.generateContent(aiPrompt);
-      const response = result.response.text();
-      
-      return response;
-    } catch (error) {
-      return this.handleError(
-        error, 
-        'generating contextual response'
-      );
-    }
-  }
-  
-  /**
    * Generates a response using a custom prompt template and specified parameters
    * @param promptTemplate - Template string with placeholders
    * @param params - Object containing values to replace placeholders
@@ -80,41 +39,6 @@ export class ResponseGenerationService extends AIBaseService {
       return this.handleError(
         error,
         'generating custom response'
-      );
-    }
-  }
-  
-  /**
-   * Summarizes a long text or conversation
-   * @param text - Text to be summarized
-   * @param maxLength - Target maximum length for summary
-   * @param focusTopics - Optional array of topics to focus on
-   * @returns Promise with the generated summary
-   */
-  public static async generateSummary(
-    text: string, 
-    maxLength: number = 500,
-    focusTopics: string[] = []
-  ): Promise<string> {
-    try {
-      let prompt = `
-      Resumir o seguinte texto de forma concisa e clara. 
-      O resumo deve ter aproximadamente ${maxLength} caracteres ou menos.
-      
-      ${focusTopics.length > 0 
-        ? `Foque nos seguintes aspectos: ${focusTopics.join(', ')}.` 
-        : 'Capture os pontos e informações mais importantes.'}
-      
-      Texto para resumir:
-      ${text}
-      `;
-      
-      const result = await this.contextModel.generateContent(prompt);
-      return result.response.text();
-    } catch (error) {
-      return this.handleError(
-        error,
-        'generating summary'
       );
     }
   }
@@ -156,6 +80,52 @@ export class ResponseGenerationService extends AIBaseService {
       );
     }
   }
+
+  /**
+   * Generates a contextual response to a user prompt using provided conversation context
+   * @param prompt - User query or instruction
+   * @param context - Conversation context to inform the response
+   * @param additionalInstructions - Optional additional instructions for the AI
+   * @param maxLength - Maximum target length for response (default: 1000 characters)
+   * @returns Promise with the generated response
+   */
+  public static async generateContextualResponse(
+    question: string, 
+    context: string,
+    additionalInstructions: string = "",
+  ): Promise<string> {
+    try {
+      const prompt = `
+            Você tem acesso a conversas de um canal do Discord. Use essas conversas como contexto para responder à pergunta ou executar a instrução do usuário.
+            
+            Contexto das conversas:
+            ${context}
+            
+            ${additionalInstructions ? additionalInstructions + "\n\n" : ""}
+            Pergunta/instrução do usuário:
+            ${question}
+            
+            Diretrizes:
+            - Base sua resposta no contexto fornecido
+            - Se o contexto não contiver informações relevantes, diga isso claramente
+            - Cite partes específicas do contexto para justificar sua resposta quando relevante
+            - Seja conciso mas completo
+            - Formate sua resposta de forma clara e organizada
+            - Não inclua prefixos como "Baseado no contexto" ou "Resposta:"
+        `;
+      
+      // Generate AI response
+      const result = await this.contextModel.generateContent(prompt);
+      const response = result.response.text();
+      
+      return response;
+    } catch (error) {
+      return this.handleError(
+        error, 
+        'generating contextual response'
+      );
+    }
+  }
   
   /**
    * Generates a response based on web search results and optional context
@@ -164,21 +134,12 @@ export class ResponseGenerationService extends AIBaseService {
    * @returns Promise with the generated response from web search and/or AI reasoning
    */
   public static async generateWebSearchResponse(
-    prompt: string,
-    temperature: number = 0.8
+    question: string,
+    context: string = "",
+    additionalInstructions: string = "",
   ): Promise<string> {
     try {
-      // Create a model instance with higher temperature for diverse and opinionated responses
-      const webSearchModel = this.createModel({
-        temperature,
-        topP: 0.9,
-        topK: 40,
-        //maxOutputTokens: 4096, // Larger output for comprehensive answers
-        maxOutputTokens: 2048, // Adjusted for performance
-      });
-      
-      // Generate AI response with web search capability and opinion generation
-      const result = await webSearchModel.generateContent(prompt);
+      const result = await this.contextModel.generateContent(question);
       return result.response.text();
     } catch (error) {
       return this.handleError(

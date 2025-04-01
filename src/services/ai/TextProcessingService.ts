@@ -1,3 +1,4 @@
+import { DISCORD } from "@/utils/constants";
 import { AIBaseService } from "./AIBaseService";
 
 /**
@@ -40,67 +41,79 @@ export class TextProcessingService extends AIBaseService {
   public static cleanText(text: string): string {
     return text.replace(/[\\`*_{}[\]()#+\-.!]/g, '').trim();
   }
-
-  /**
-   * Truncates text to specified maximum length, preserving word boundaries
-   * @param text - The input text to truncate
-   * @param maxLength - Maximum length for the output text
-   * @returns Truncated text ending at a word boundary
-   */
-  public static truncateText(text: string, maxLength: number): string {
-    if (text.length <= maxLength) return text;
-    
-    // Find a good breaking point at word boundary
-    const breakPoint = text.lastIndexOf(' ', maxLength);
-    return breakPoint > 0 ? text.substring(0, breakPoint) + '...' : text.substring(0, maxLength) + '...';
-  }
   
   /**
-   * Splits text into chunks of specified maximum size while preserving paragraph breaks
-   * @param text - The text to split into chunks
-   * @param maxChunkSize - Maximum size for each chunk
-   * @returns Array of text chunks
+   * Splits a long message into chunks that fit within Discord's message limit
+   * @param message The message to split
+   * @param limit The maximum length per chunk (default: Discord's message limit)
+   * @returns Array of message chunks
    */
-  public static splitTextIntoChunks(text: string, maxChunkSize: number): string[] {
+  public static splitLongMessage(message: string, limit: number = DISCORD.MESSAGE_LIMIT): string[] {
     const chunks: string[] = [];
     
-    if (text.length <= maxChunkSize) {
-      return [text];
+    // If message is already within limit, return it as is
+    if (message.length <= limit) {
+        return [message];
     }
     
-    let currentIndex = 0;
+    let currentChunk = '';
+    // Split by paragraphs (double newlines) first to maintain logical structure
+    const paragraphs = message.split('\n\n');
     
-    while (currentIndex < text.length) {
-      // Try to split at paragraph or sentence boundaries if possible
-      let endIndex = currentIndex + maxChunkSize;
-      
-      if (endIndex < text.length) {
-        // Try paragraph break first
-        const paragraphBreak = text.lastIndexOf('\n\n', endIndex);
-        if (paragraphBreak > currentIndex && paragraphBreak - currentIndex >= maxChunkSize / 2) {
-          endIndex = paragraphBreak;
-        } else {
-          // Then try sentence break
-          const sentenceBreak = Math.max(
-            text.lastIndexOf('. ', endIndex),
-            text.lastIndexOf('! ', endIndex),
-            text.lastIndexOf('? ', endIndex)
-          );
-          
-          if (sentenceBreak > currentIndex && sentenceBreak - currentIndex >= maxChunkSize / 3) {
-            endIndex = sentenceBreak + 1; // Include the punctuation
-          } else {
-            // Fall back to word boundary
-            const wordBreak = text.lastIndexOf(' ', endIndex);
-            if (wordBreak > currentIndex) {
-              endIndex = wordBreak;
+    for (const paragraph of paragraphs) {
+        // If adding this paragraph would exceed the limit, push current chunk and start a new one
+        if ((currentChunk + paragraph + '\n\n').length > limit) {
+            // If the paragraph itself is too long, split it further
+            if (paragraph.length > limit) {
+                // First push current chunk if it exists
+                if (currentChunk) {
+                    chunks.push(currentChunk);
+                    currentChunk = '';
+                }
+                
+                // Split long paragraph by sentences and try to keep sentences together
+                const sentences = paragraph.split(/(?<=\.|\?|\!) /);
+                for (const sentence of sentences) {
+                    if ((currentChunk + sentence + ' ').length <= limit) {
+                        currentChunk += sentence + ' ';
+                    } else {
+                        // If the sentence itself is too long, split by words
+                        if (sentence.length > limit) {
+                            if (currentChunk) {
+                                chunks.push(currentChunk);
+                                currentChunk = '';
+                            }
+                            
+                            // Split by words
+                            let words = sentence.split(' ');
+                            for (const word of words) {
+                                if ((currentChunk + word + ' ').length <= limit) {
+                                    currentChunk += word + ' ';
+                                } else {
+                                    chunks.push(currentChunk);
+                                    currentChunk = word + ' ';
+                                }
+                            }
+                        } else {
+                            chunks.push(currentChunk);
+                            currentChunk = sentence + ' ';
+                        }
+                    }
+                }
+            } else {
+                // Paragraph fits in a new chunk
+                chunks.push(currentChunk);
+                currentChunk = paragraph + '\n\n';
             }
-          }
+        } else {
+            // Add paragraph to current chunk
+            currentChunk += paragraph + '\n\n';
         }
-      }
-      
-      chunks.push(text.slice(currentIndex, endIndex).trim());
-      currentIndex = endIndex;
+    }
+    
+    // Add the last chunk if it's not empty
+    if (currentChunk) {
+        chunks.push(currentChunk);
     }
     
     return chunks;

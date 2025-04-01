@@ -97,31 +97,25 @@ module.exports = {
                 const selectedConversations = AIService.selectConversationsForContext(validConversations, prompt);
                 const contextText = AIService.formatConversationsAsContext(selectedConversations);
                 
-                // Generate response using AIService
-                const additionalInstructions = `Isto é uma conversa entre amigos. Por isso, responda como se estivesse conversando com um amigo.
-                Responda de forma natural, casual e adequada ao contexto da conversa. Não faça respostas formais ou técnicas. Não faça respostas muito longas, pois fica chato de ler. Porém, evite usar emojis excessivos ou linguagem excessivamente coloquial. Mantenha um equilíbrio entre ser amigável e profissional.`;
-                const aiResponse = await AIService.generateContextualResponse(prompt, contextText, additionalInstructions);
+                const response = await AIService.generateContextualResponse(prompt, contextText);
                 
                 const messageHeader = UIService.formatStatusMessage(EMOJIS.complete, `Resposta baseada no contexto`);
-                const questionContent = `**Sua pergunta:** ${prompt}`;
-                const responseContent = `**Resposta:**\n${aiResponse}`;
-
                 // Split message if it's too long for a single Discord message
-                //const fullContent = messageHeader + "\n\n" /* + questionContent + "\n\n" */ + responseContent;
-                const fullContent = messageHeader + "\n\n" /* + questionContent + "\n\n" */ + aiResponse;
+                const fullContent = messageHeader + "\n\n" + response;
                 
                 if (fullContent.length <= DISCORD.MESSAGE_LIMIT) {
                     // If the message fits in a single Discord message
                     await interaction.editReply({ content: fullContent });
                 } else {
-                    // Send the header and question in the first message
-                    const firstMessage = messageHeader + "\n\n" + questionContent;
-                    await interaction.editReply({ content: firstMessage });
-                    
-                    // Split the response into chunks
-                    const chunks = splitLongMessage(responseContent);
-                    
-                    // Send each chunk as a follow-up message
+                    const chunks = splitLongMessage(fullContent);
+
+                    // send the header and a chunk in the first message
+                    const firstChunk = chunks.shift() || "";
+                    await interaction.editReply({ 
+                        content: firstChunk
+                    });
+
+                    // send the rest of the chunks as follow-up messages
                     for (const chunk of chunks) {
                         await interaction.followUp({ 
                             content: chunk,

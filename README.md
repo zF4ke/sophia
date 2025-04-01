@@ -2,89 +2,84 @@
 
 A powerful Discord bot leveraging Google's Gemini AI for intelligent message searching, conversation analysis, and context-aware responses.
 
-## Key Features
+## Features
 
-- **AI-Powered Search**: Natural language search using Gemini API
-- **Smart Conversation Analysis**: Groups and analyzes message context
+- **AI-Powered Search**: Find relevant conversations using semantic search and context analysis
+- **Conversation Analysis**: Analyze chat context and relevance using Google's Gemini AI
+- **Message Management**: Efficient caching and smart message grouping
 - **Interactive UI**: Rich embeds with pagination and interactive controls
-- **Context-Aware Responses**: AI responses based on channel conversation history
-- **Security Controls**: Command-level access management
-- **Ephemeral Responses**: Optional private results
+- **Security**: Role-based access control and command restrictions
 
-## Available Commands
+## Tech Stack
 
-### Core Commands
-- `/search [topic] [channel] [limit] [include_bots] [ephemeral]` - Search conversations
-- `/context [prompt] [channel] [limit] [include_bots] [ephemeral]` - Get AI responses with context
-- `/getmessage [channel] [number] [ephemeral]` - Retrieve specific messages
+- TypeScript
+- Discord.js
+- Google Gemini AI
+- Express (API Server)
+- Node.js
 
-### System Commands
-- `/access` - Manage command access
-- `/ping` - Check bot status
-- `/cache` - Manage message cache
-
-## Quick Start
-
-1. **Prerequisites**
-   - Node.js v18+
-   - Discord.js v14+
-   - Google Cloud account with Gemini API access
-   - Discord Bot Token
-
-2. **Installation**
-```bash
-# Clone repository
-git clone https://github.com/yourusername/Sophia3.git
-cd Sophia3
-
-# Install dependencies
-npm install
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your tokens
-```
-
-3. **Start the Bot**
-```bash
-# Development
-npm run dev
-
-# Production
-npm start
-```
-
-## Architecture
+## Project Structure
 
 ```
 src/
-├── commands/    # Discord slash commands
-├── events/      # Discord event handlers
-├── services/    # Core business logic
-│   ├── ai/      # AI services (Gemini integration)
+├── api/          # API endpoints
+├── commands/     # Bot commands
+├── events/       # Discord event handlers
+├── handlers/     # Command and event handlers
+├── services/     # Core services
+│   ├── ai/      # AI-related services
 │   └── ui/      # UI components
-└── utils/       # Utilities and constants
+├── types/        # TypeScript type definitions
+└── utils/        # Utility functions
 ```
 
-## Documentation
+## Services
 
-- [API Documentation](./docs/API.md) - Technical details
-- [Getting Started Guide](./docs/guides/GettingStarted.md) - Setup tutorial
-- [Examples](./docs/guides/Examples.md) - Code examples
+### AI Services
+- `AIService`: Primary interface for AI operations
+- `ConversationAnalysisService`: Analyzes chat relevance and context
+- `ContextManagementService`: Manages conversation context
+- `ResponseGenerationService`: Generates AI responses
+- `TextProcessingService`: Text preprocessing and analysis
 
-## Built With
+### Core Services
+- `ConversationService`: Message grouping and threading
+- `MessageService`: Message operations and caching
+- `SecurityService`: Access control and permissions
+- `FileSystemService`: Data persistence and cache management
+- `UIService`: User interface components
 
-- [Discord.js](https://discord.js.org/) - Discord API framework
-- [Google Generative AI (Gemini)](https://cloud.google.com/ai/generative-ai) - AI capabilities
-- TypeScript - Type safety and modern JavaScript features
+## Getting Started
 
-## Required Permissions
+1. Install dependencies:
+```bash
+npm install
+```
 
-Bot requires the following Discord permissions:
-- Read Messages/View Channels
-- Send Messages
-- Embed Links
-- Read Message History
-- Use Application Commands
+2. Configure environment variables:
+```env
+DISCORD_TOKEN=your_discord_token
+GOOGLE_AI_KEY=your_gemini_api_key
+```
 
-Permission Integer: `274878286912`
+3. Start development server:
+```bash
+npm run dev
+```
+
+4. Build and run production:
+```bash
+npm run build
+npm start
+```
+
+## Commands
+
+### Core Commands
+- `/search`: Search through conversations
+- `/context`: Get AI-powered responses
+- `/getmessage`: Retrieve specific messages
+
+### System Commands
+- `/access`: Manage user permissions
+- `/cache`: Manage message cache

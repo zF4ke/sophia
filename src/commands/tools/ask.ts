@@ -5,6 +5,7 @@ import { SecurityService } from "../../services/SecurityService";
 import { UIService } from "../../services/UIService";
 import { MessageService } from "../../services/MessageService";
 import { ConversationService } from "../../services/ConversationService";
+import { TextProcessingService } from "@/services/ai/TextProcessingService";
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -135,7 +136,7 @@ module.exports = {
                 await interaction.editReply({ content: firstMessage });
                 
                 // Split the response into chunks
-                const chunks = splitLongMessage(responseContent);
+                const chunks = TextProcessingService.splitLongMessage(responseContent);
                 
                 // Send each chunk as a follow-up message
                 for (const chunk of chunks) {
@@ -154,80 +155,3 @@ module.exports = {
         }
     },
 };
-
-/**
- * Splits a long message into chunks that fit within Discord's message limit
- * @param message The message to split
- * @param limit The maximum length per chunk (default: Discord's message limit)
- * @returns Array of message chunks
- */
-function splitLongMessage(message: string, limit: number = DISCORD.MESSAGE_LIMIT): string[] {
-    const chunks: string[] = [];
-    
-    // If message is already within limit, return it as is
-    if (message.length <= limit) {
-        return [message];
-    }
-    
-    let currentChunk = '';
-    // Split by paragraphs (double newlines) first to maintain logical structure
-    const paragraphs = message.split('\n\n');
-    
-    for (const paragraph of paragraphs) {
-        // If adding this paragraph would exceed the limit, push current chunk and start a new one
-        if ((currentChunk + paragraph + '\n\n').length > limit) {
-            // If the paragraph itself is too long, split it further
-            if (paragraph.length > limit) {
-                // First push current chunk if it exists
-                if (currentChunk) {
-                    chunks.push(currentChunk);
-                    currentChunk = '';
-                }
-                
-                // Split long paragraph by sentences and try to keep sentences together
-                const sentences = paragraph.split(/(?<=\.|\?|\!) /);
-                for (const sentence of sentences) {
-                    if ((currentChunk + sentence + ' ').length <= limit) {
-                        currentChunk += sentence + ' ';
-                    } else {
-                        // If the sentence itself is too long, split by words
-                        if (sentence.length > limit) {
-                            if (currentChunk) {
-                                chunks.push(currentChunk);
-                                currentChunk = '';
-                            }
-                            
-                            // Split by words
-                            let words = sentence.split(' ');
-                            for (const word of words) {
-                                if ((currentChunk + word + ' ').length <= limit) {
-                                    currentChunk += word + ' ';
-                                } else {
-                                    chunks.push(currentChunk);
-                                    currentChunk = word + ' ';
-                                }
-                            }
-                        } else {
-                            chunks.push(currentChunk);
-                            currentChunk = sentence + ' ';
-                        }
-                    }
-                }
-            } else {
-                // Paragraph fits in a new chunk
-                chunks.push(currentChunk);
-                currentChunk = paragraph + '\n\n';
-            }
-        } else {
-            // Add paragraph to current chunk
-            currentChunk += paragraph + '\n\n';
-        }
-    }
-    
-    // Add the last chunk if it's not empty
-    if (currentChunk) {
-        chunks.push(currentChunk);
-    }
-    
-    return chunks;
-}

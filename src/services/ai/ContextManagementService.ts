@@ -89,38 +89,6 @@ export class ContextManagementService extends AIBaseService {
   }
   
   /**
-   * Creates a structured prompt with context for AI response generation
-   * @param userPrompt - The user's original query or request
-   * @param context - Context information from conversations
-   * @param additionalInstructions - Any additional instructions for AI behavior
-   * @returns Complete formatted prompt with context
-   */
-  public static createContextualPrompt(
-    userPrompt: string, 
-    context: string,
-    additionalInstructions: string = ""
-  ): string {
-    return `
-    Você tem acesso a conversas de um canal do Discord. Use essas conversas como contexto para responder à pergunta ou executar a instrução do usuário.
-    
-    Contexto das conversas:
-    ${context}
-    
-    ${additionalInstructions ? additionalInstructions + "\n\n" : ""}
-    Pergunta/instrução do usuário:
-    ${userPrompt}
-    
-    Diretrizes:
-    - Base sua resposta no contexto fornecido
-    - Se o contexto não contiver informações relevantes, diga isso claramente
-    - Cite partes específicas do contexto para justificar sua resposta quando relevante
-    - Seja conciso mas completo
-    - Formate sua resposta de forma clara e organizada
-    - Não inclua prefixos como "Baseado no contexto" ou "Resposta:"
-    `;
-  }
-  
-  /**
    * Optimizes context by focusing on most relevant parts if context exceeds token limits
    * @param conversations - Array of conversations
    * @param prompt - User prompt
