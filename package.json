@@ -16,12 +16,16 @@
     "@google/generative-ai": "^0.24.0",
     "@leodog896/vigenere-cipher": "^0.0.1",
     "ascii-table": "^0.0.9",
+    "cors": "^2.8.5",
     "dedent": "^1.5.3",
     "discord.js": "^14.18.0",
     "dotenv": "^16.4.7",
+    "express": "^5.1.0",
     "vigenere": "^1.0.2"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
     "nodemon": "^3.1.9",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.3",
