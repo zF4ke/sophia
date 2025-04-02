@@ -46,21 +46,8 @@ module.exports = {
             await interaction.deferReply({ flags: ephemeral ? MessageFlags.Ephemeral : undefined });
 
             const question = interaction.options.getString("question");
-            let contextChannel = interaction.options.getChannel("context_channel") /* || interaction.channel; */
-            let contextLimit = interaction.options.getInteger("context_limit"); // Use 0 for auto cache size
-            let useCache = true; // Default to true for cache usage
-
-            if (!contextChannel) {
-                //console.warn("Context channel not provided, using current channel as default.");
-
-                if (interaction.channel instanceof TextChannel) {
-                    contextChannel = interaction.channel;
-                    contextLimit = 20;
-                    useCache = false; // Use cache only if context channel is provided
-                }
-            } else if (!contextLimit) {
-                contextLimit = 0; // Default to 0 for auto cache size if no limit is provided
-            }
+            const contextChannel = interaction.options.getChannel("context_channel") /* || interaction.channel; */
+            const contextLimit = interaction.options.getInteger("context_limit") || 20; // Default to 20 if not provided
             
             if (!question) {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.info, "Por favor, forneça uma pergunta.", false));
@@ -80,8 +67,7 @@ module.exports = {
                 }
 
                 try {
-                    // Fetch messages from context channel with limit 0 to use cache size or default
-                    const messages = await MessageService.fetchMessages(contextChannel, contextLimit ?? 20, interaction, useCache);
+                    const messages = await MessageService.fetchMessages(contextChannel, contextLimit, interaction);
                     
                     if (messages.length > 0) {
                         // Filter and process messages
@@ -112,41 +98,16 @@ module.exports = {
             }
             
             // Generate response with web search and optional context
-            const response = await AIService.generateWebSearchResponse(question, chatContext);
+            const questionWithAuthor = TextProcessingService.addAuthorToQuestion(question, interaction.user.username);
+            const response = await AIService.generateWebSearchResponse(questionWithAuthor, chatContext);
             
             // Format the response
             const messageHeader = UIService.formatStatusMessage(
                 EMOJIS.complete, 
                 chatContext ? `Resposta com informações da web e contexto do canal` : `Resposta com informações da web`
             );
-            
-            const questionContent = `**Sua pergunta:** ${question}`;
-            const responseContent = `**Resposta:**\n${response}`;
 
-            // Split message if it's too long for a single Discord message
-            //const fullContent = messageHeader + "\n\n" /* + questionContent + "\n\n" */ + responseContent;
-            const fullContent = messageHeader + "\n\n" /* + questionContent + "\n\n" */ + response;
-
-            if (fullContent.length <= DISCORD.MESSAGE_LIMIT) {
-                // If the message fits in a single Discord message
-                await interaction.editReply({ content: fullContent });
-            } else {
-                // Send the header and question in the first message
-                const firstMessage = messageHeader + "\n\n" + questionContent;
-                await interaction.editReply({ content: firstMessage });
-                
-                // Split the response into chunks
-                const chunks = TextProcessingService.splitLongMessage(responseContent);
-                
-                // Send each chunk as a follow-up message
-                for (const chunk of chunks) {
-                    await interaction.followUp({ 
-                        content: chunk,
-                        flags: ephemeral ? MessageFlags.Ephemeral : undefined
-                    });
-                }
-            }
-
+            await UIService.sendLongResponse(interaction, messageHeader, response, ephemeral);
         } catch (error) {
             console.error('Error in ask command:', error);
             await interaction.editReply(

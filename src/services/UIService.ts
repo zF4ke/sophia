@@ -9,8 +9,9 @@ import {
     MessageFlags
 } from "discord.js";
 import { MessageGroup } from "../types/conversation";
-import { EMOJIS } from "../utils/constants";
+import { EMOJIS, DISCORD } from "../utils/constants";
 import { SecurityService } from "./SecurityService";
+import { TextProcessingService } from "./ai/TextProcessingService";
 
 export interface NavigationButton {
     customId: string;
@@ -235,5 +236,42 @@ export class UIService {
                 }
             }
         });
+    }
+
+    /**
+     * Sends a long message, automatically splitting it if it exceeds Discord's message limit
+     * @param interaction The interaction to reply to
+     * @param messageHeader The header message to show at the start
+     * @param response The main response content
+     * @param ephemeral Whether the message should be ephemeral
+     */
+    public static async sendLongResponse(
+        interaction: ChatInputCommandInteraction,
+        messageHeader: string,
+        response: string,
+        ephemeral: boolean = false
+    ): Promise<void> {
+        const fullContent = messageHeader + "\n\n" + response;
+        
+        if (fullContent.length <= DISCORD.MESSAGE_LIMIT) {
+            // If the message fits in a single Discord message
+            await interaction.editReply({ content: fullContent });
+        } else {
+            const chunks = TextProcessingService.splitLongMessage(fullContent);
+
+            // send the header and a chunk in the first message
+            const firstChunk = chunks.shift() || "";
+            await interaction.editReply({ 
+                content: firstChunk
+            });
+
+            // send the rest of the chunks as follow-up messages
+            for (const chunk of chunks) {
+                await interaction.followUp({ 
+                    content: chunk,
+                    flags: ephemeral ? MessageFlags.Ephemeral : undefined
+                });
+            }
+        }
     }
 }

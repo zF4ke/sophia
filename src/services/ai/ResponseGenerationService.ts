@@ -1,5 +1,6 @@
 import { AIBaseService } from "./AIBaseService";
 import { ContextManagementService } from "./ContextManagementService";
+import { PersonalityService } from "./PersonalityService";
 
 /**
  * Service for generating AI responses based on user prompts and contexts
@@ -24,6 +25,10 @@ export class ResponseGenerationService extends AIBaseService {
         finalPrompt = finalPrompt.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
       }
       
+      // Add personality to the prompt
+      const style = PersonalityService.determineResponseStyle(finalPrompt);
+      finalPrompt = PersonalityService.adjustPromptForPersonality(finalPrompt, style);
+      
       // Create custom model with specified temperature
       const customModel = this.createModel({
         temperature,
@@ -34,7 +39,9 @@ export class ResponseGenerationService extends AIBaseService {
       
       // Generate AI response
       const result = await customModel.generateContent(finalPrompt);
-      return result.response.text();
+      const response = result.response.text();
+      
+      return response;
     } catch (error) {
       return this.handleError(
         error,
@@ -45,34 +52,46 @@ export class ResponseGenerationService extends AIBaseService {
   
   /**
    * Generates a follow-up response based on previous conversation and new input
-   * @param previousMessages - Array of previous message pairs [user, assistant]
-   * @param newUserInput - Latest user input to respond to
-   * @returns Promise with the follow-up response
+   * @param question - User's question or instruction
+   * @param context - Conversation context to inform the response
+   * @param additionalInstructions - Optional additional instructions for the AI
+   * @returns Promise with the generated response
    */
   public static async generateConversationResponse(
-    previousMessages: {role: string, content: string}[],
-    newUserInput: string
+    question: string,
+    context: string,
+    additionalInstructions: string = "",
   ): Promise<string> {
     try {
-      // Format conversation history for context
-      const conversationHistory = previousMessages.map(msg => 
-        `${msg.role}: ${msg.content}`
-      ).join('\n\n');
+      // Determine appropriate style based on conversation history and new input
+      const style = PersonalityService.determineResponseStyle(question, context);
 
-      const prompt = `
-      Esta é uma conversa em entre amigos. Responda à última mensagem do usuário considerando o contexto da conversa.
-
+      const basePrompt = `
+            Você tem acesso a conversas de um canal do Discord.
+            Responda à última mensagem do usuário considerando o contexto da conversa, para continuar a conversa.
+            
       Histórico da conversa:
-      ${conversationHistory}
-
-      Nova mensagem do usuário:
-      ${newUserInput}
-
-      Responda de forma natural, casual e adequada ao contexto da conversa. Não faça respostas formais ou técnicas. Não faça respostas muito longas, pois fica chato de ler.
+            ${context}
+            
+            ${additionalInstructions ? additionalInstructions + "\n\n" : ""}
+            Nova mensagem do usuário:
+            ${question}
+            
+            Diretrizes:
+            - Responda como uma conversa entre colegas
+            - É provável que a conversa seja informal e amigável
+            - Continue a conversa na mesma linha de raciocínio, mantendo o tom e o estilo
+            - Não inclua prefixos como "Baseado no contexto" ou "Resposta:"
+            - Evite repetir o que já foi dito anteriormente
+            - Se o usuário mudar de assunto, adapte sua resposta para o novo tópico
       `;
+
+      const finalPrompt = PersonalityService.adjustPromptForPersonality(basePrompt, style);
       
-      const result = await this.contextModel.generateContent(prompt);
-      return result.response.text();
+      const result = await this.contextModel.generateContent(finalPrompt);
+      const response = result.response.text();
+      
+      return response;
     } catch (error) {
       return this.handleError(
         error,
@@ -95,7 +114,9 @@ export class ResponseGenerationService extends AIBaseService {
     additionalInstructions: string = "",
   ): Promise<string> {
     try {
-      const prompt = `
+      const style = PersonalityService.determineResponseStyle(question, context);
+
+      const basePrompt = `
             Você tem acesso a conversas de um canal do Discord. Use essas conversas como contexto para responder à pergunta ou executar a instrução do usuário.
             
             Contexto das conversas:
@@ -109,13 +130,15 @@ export class ResponseGenerationService extends AIBaseService {
             - Base sua resposta no contexto fornecido
             - Se o contexto não contiver informações relevantes, diga isso claramente
             - Cite partes específicas do contexto para justificar sua resposta quando relevante
-            - Seja conciso mas completo
+            - Seja concisa mas completa
             - Formate sua resposta de forma clara e organizada
             - Não inclua prefixos como "Baseado no contexto" ou "Resposta:"
-        `;
+      `;
+
+      const finalPrompt = PersonalityService.adjustPromptForPersonality(basePrompt, style);
       
       // Generate AI response
-      const result = await this.contextModel.generateContent(prompt);
+      const result = await this.contextModel.generateContent(finalPrompt);
       const response = result.response.text();
       
       return response;
@@ -129,8 +152,9 @@ export class ResponseGenerationService extends AIBaseService {
   
   /**
    * Generates a response based on web search results and optional context
-   * @param prompt - Combined prompt with question and optional context
-   * @param temperature - Temperature parameter for response randomness (0.0-1.0)
+   * @param question - User's question or instruction
+   * @param context - Optional context to inform the response
+   * @param additionalInstructions - Optional additional instructions for the AI
    * @returns Promise with the generated response from web search and/or AI reasoning
    */
   public static async generateWebSearchResponse(
@@ -139,12 +163,28 @@ export class ResponseGenerationService extends AIBaseService {
     additionalInstructions: string = "",
   ): Promise<string> {
     try {
-      const result = await this.contextModel.generateContent(question);
-      return result.response.text();
+      const style = PersonalityService.determineResponseStyle(question, context);
+
+      const basePrompt = `
+        Responda à pergunta do usuário usando seu conhecimento, conhecimento da web, e o contexto fornecido (se houver).
+        
+        ${context ? `Contexto disponível:\n${context}\n\n` : ''}
+        ${additionalInstructions ? `${additionalInstructions}\n\n` : ''}
+        
+        Pergunta do usuário:
+        ${question}
+      `;
+
+      const finalPrompt = PersonalityService.adjustPromptForPersonality(basePrompt, style);
+
+      const result = await this.contextModel.generateContent(finalPrompt);
+      const response = result.response.text();
+      
+      return response;
     } catch (error) {
       return this.handleError(
         error,
-        'generating comprehensive response'
+        'generating web search response'
       );
     }
   }

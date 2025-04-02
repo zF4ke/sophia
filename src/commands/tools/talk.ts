@@ -9,13 +9,13 @@ import { TextProcessingService } from "@/services/ai/TextProcessingService";
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName("context")
+        .setName("talk")
         .setContexts(0, 1, 2)
         .setIntegrationTypes(0, 1)
-        .setDescription("Usa mensagens do canal como contexto para uma pergunta")
+        .setDescription("Usa mensagens do canal como contexto para falar")
         .addStringOption(option => 
-            option.setName("prompt")
-                .setDescription("A pergunta ou instrução para o AI")
+            option.setName("message")
+                .setDescription("A mensagem ou instrução para o AI")
                 .setRequired(true))
         .addChannelOption(option => 
             option.setName("channel")
@@ -49,7 +49,7 @@ module.exports = {
             await interaction.deferReply({ flags: ephemeral ? MessageFlags.Ephemeral : undefined });
 
             const channel = interaction.options.getChannel("channel") || interaction.channel;
-            const prompt = interaction.options.getString("prompt");
+            const prompt = interaction.options.getString("message");
             const limit = interaction.options.getInteger("limit") || 0;
             const includeBots = interaction.options.getBoolean("include_bots") ?? false;
 
@@ -73,21 +73,23 @@ module.exports = {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false));
             }
 
-            const filteredMessages = MessageService.filterCommandMessages(messages, interaction);
-            const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
-            const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
+            //const filteredMessages = MessageService.filterCommandMessages(messages, interaction);
+            //const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
+            // const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
             
-            if (validConversations.length === 0) {
-                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Não foi possível extrair conversas válidas do canal.", false));
-            }
+            // if (validConversations.length === 0) {
+            //     return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Não foi possível extrair conversas válidas do canal.", false));
+            // }
 
-            await interaction.editReply(UIService.formatStatusMessage(EMOJIS.conversation, `Processando ${validConversations.length} conversas como contexto...`));
+            // await interaction.editReply(UIService.formatStatusMessage(EMOJIS.conversation, `Processando ${validConversations.length} conversas como contexto...`));
             
-            const selectedConversations = AIService.selectConversationsForContext(validConversations, prompt);
-            const contextText = AIService.formatConversationsAsContext(selectedConversations);
+            // const selectedConversations = AIService.selectConversationsForContext(validConversations, prompt);
+            // const contextText = AIService.formatConversationsAsContext(selectedConversations);
+            //const contextText = AIService.formatConversationsAsContext(conversations);
+            const contextText = AIService.formatMessagesAsContext(messages, includeBots);
             
             const promptWithAuthor = TextProcessingService.addAuthorToQuestion(prompt, interaction.user.username);
-            const response = await AIService.generateContextualResponse(promptWithAuthor, contextText);
+            const response = await AIService.generateConversationResponse(promptWithAuthor, contextText);
             const messageHeader = UIService.formatStatusMessage(EMOJIS.complete, `Resposta baseada no contexto`);
             
             await UIService.sendLongResponse(interaction, messageHeader, response, ephemeral);

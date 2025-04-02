@@ -80,6 +80,19 @@ export class AIService extends AIBaseService {
   }
 
   /**
+   * Formats messages into a structured context string
+   * @param messages - Array of messages to format
+   * @param includeBots - Flag to include bot messages in context
+   * @returns Formatted context string
+   */
+  public static formatMessagesAsContext(
+    messages: Message[], 
+    includeBots: boolean = false
+  ): string {
+    return ContextManagementService.formatMessagesAsContext(messages, includeBots);
+  }
+
+  /**
    * Optimizes context for token limitations while preserving relevance
    * @param conversations - Array of conversations
    * @param prompt - User prompt
@@ -127,9 +140,25 @@ export class AIService extends AIBaseService {
   }
 
   /**
+   * Generates a response to a user prompt using conversation context
+   * @param prompt - User query or instruction
+   * @param context - Conversation context to inform the response
+   * @param additionalInstructions - Additional instructions for the AI
+   * @returns Promise with the generated response
+   */
+  public static async generateConversationResponse(
+    question: string, 
+    context: string,
+    additionalInstructions: string = "",
+  ): Promise<string> {
+    return ResponseGenerationService.generateConversationResponse(question, context, additionalInstructions);
+  }
+
+  /**
    * Generates a contextual response to a user prompt using conversation context
    * @param prompt - User query or instruction
    * @param context - Conversation context to inform the response
+   * @param additionalInstructions - Additional instructions for the AI
    * @returns Promise with the generated response
    */
   public static async generateContextualResponse(
@@ -144,8 +173,8 @@ export class AIService extends AIBaseService {
    * Generates a comprehensive response to a question using web search capabilities
    * and optionally including chat context
    * @param question - The question to answer
-   * @param chatContext - Optional chat context to supplement web information
-   * @param maxLength - Maximum target length for the response (default: 1000 characters)
+   * @param context - Optional chat context to supplement web information
+   * @param additionalInstructions - Additional instructions for the AI
    * @returns Promise with the generated response
    */
   public static async generateWebSearchResponse(

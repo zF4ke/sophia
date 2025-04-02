@@ -79,13 +79,36 @@ export class ContextManagementService extends AIBaseService {
    * @returns Formatted context string
    */
   public static formatConversationsAsContext(conversations: Message[][]): string {
-    return conversations.map((conversation, index) => {
+    let context = conversations.map((conversation, index) => {
       const formattedConversation = conversation.map(msg => 
         `${msg.author.username}: ${msg.content.trim()}`
       ).join('\n');
       
       return `[Conversa ${index + 1}]\n${formattedConversation}`;
     }).join('\n\n');
+    // add separator at the end
+    context += '\n\n---------------\n\n';
+
+    return context;
+  }
+
+  /**
+   * Formats messages into a structured context string for AI
+   * @param messages - Array of messages to format
+   * @param includeBots - Flag to include bot messages in context
+   * @returns Formatted context string
+   */
+  public static formatMessagesAsContext(
+    messages: Message[], 
+    includeBots: boolean = false
+  ): string {
+    const filteredMessages = messages.filter(msg => 
+      includeBots || !msg.author.bot
+    );
+    
+    return filteredMessages.map(msg => 
+      `${msg.author.username}: ${msg.content.trim()}`
+    ).join('\n');
   }
   
   /**
