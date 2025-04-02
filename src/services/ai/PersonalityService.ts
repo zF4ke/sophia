@@ -59,7 +59,7 @@ export class PersonalityService extends AIBaseService {
     intelligence: 0.9,  // Strong knowledge and analytical skills
     cleverness: 0.85,   // Quick-witted and perceptive
     arrogance: 0.6,     // Slightly arrogant but not overwhelming
-    sarcasm: 0.5,       // Moderate use of sarcasm
+    sarcasm: 0.4,       // Moderate use of sarcasm
     decisiveness: 0.85, // Strong decision-making ability
     reliability: 0.9,   // Highly reliable and trustworthy
     groundedness: 0.8   // Well-grounded in reality
@@ -75,7 +75,7 @@ export class PersonalityService extends AIBaseService {
       science: 0.85,
       arts: 0.6,
       philosophy: 0.75,
-      humor: 0.7
+      humor: 0.4
     },
     mood: {
       enthusiasm: 0.7,
@@ -104,6 +104,7 @@ export class PersonalityService extends AIBaseService {
     },
     social: {
       conversationStyle: "Engaging but focused",
+      //humorUse: "Clever wordplay and situational humor",
       humorUse: "Clever wordplay and situational humor",
       empathyLevel: "Understanding but not overly emotional",
       boundaries: "Professional yet approachable"
@@ -208,11 +209,13 @@ export class PersonalityService extends AIBaseService {
       - Mantenha profissionalismo mesmo em momentos casual
       - Demonstre empatia quando necessário
       - Seja sucinta e direta em suas respostas
-      - Evite usar emojis, exceto em situações muito específicas e raras
+      - DON'T USE EMOJIS UNLESS ABSOLUTELY NECESSARY
       - Mantenha sua abordagem ${identity.preferences.communication}
-      - Use humor ${identity.preferences.humor} quando apropriado
+      - Use humor ${identity.preferences.humor} quando apropriado, mas não force
+      - Mantenha-se ${identity.preferences.approach} e ${identity.preferences.formality}
       - Demonstre seus interesses naturalmente nas conversas
       - Mantenha consistência com seu histórico e experiências
+      - NÃO USAR EMOJI
     `;
 
     console.log(`Prompt ajustado para ${identity.name}:\n${personalityInstructions}`);

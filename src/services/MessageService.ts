@@ -491,6 +491,33 @@ export class MessageService {
         return messages.slice(0, limit);
     }
 
+    public static async fetchMessagesOrdered(
+        channel: TextChannel,
+        limit: number,
+        interaction: ChatInputCommandInteraction,
+    ): Promise<Message[]> {
+        // fetch 100 messages, it's the maximum Discord allows
+        const messages = await channel.messages.fetch({ limit: this.MAX_BATCH_SIZE });
+        if (messages.size === 0) {
+            await interaction.editReply(
+                UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false)
+            );
+            return [];
+        }
+
+        // Sort messages by creation time (newest first)
+        const sortedMessages = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+        // convert to Message[]
+
+        const messageArray = Array.from(sortedMessages.values());
+        if (messageArray.length > limit) {
+            messageArray.length = limit; // truncate to limit
+        }
+
+        return messageArray;
+    }
+
     /**
      * Updates the message cache with new messages and saves to disk
      * @param channelId Channel ID

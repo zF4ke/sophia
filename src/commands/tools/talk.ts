@@ -21,19 +21,9 @@ module.exports = {
             option.setName("channel")
                 .setDescription("O canal para usar como contexto")
                 .setRequired(false))
-        .addIntegerOption(option =>
-            option.setName("limit")
-                .setDescription("Número máximo de mensagens para buscar (padrão 0 para auto-cache)")
-                .setMinValue(0)
-                .setMaxValue(50000)
-                .setRequired(false))
-        .addBooleanOption(option =>
-            option.setName("include_bots")
-                .setDescription("Incluir mensagens de bots no contexto (padrão: false)")
-                .setRequired(false))
         .addBooleanOption(option =>
             option.setName("ephemeral")
-                .setDescription("Apenas você pode ver a resposta (padrão: false)")
+                .setDescription("Apenas você pode ver a resposta (padrão: true)")
                 .setRequired(false)),
 
     async execute(interaction: ChatInputCommandInteraction) {
@@ -50,8 +40,7 @@ module.exports = {
 
             const channel = interaction.options.getChannel("channel") || interaction.channel;
             const prompt = interaction.options.getString("message");
-            const limit = interaction.options.getInteger("limit") || 0;
-            const includeBots = interaction.options.getBoolean("include_bots") ?? false;
+            const includeBots = interaction.options.getBoolean("include_bots") ?? true;
 
             if (!channel || !prompt) {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.info, "Por favor, forneça um canal e uma pergunta.", false));
@@ -67,7 +56,7 @@ module.exports = {
 
             await interaction.editReply(UIService.formatStatusMessage(EMOJIS.loading, `Buscando contexto em \`**\`${channel.name}\`**\` ...`));
 
-            const messages = await MessageService.fetchMessages(channel, limit, interaction);
+            const messages = await MessageService.fetchMessagesOrdered(channel, 100, interaction);
             //console.log(`Fetched ${messages.length} messages from channel ${channel.name}`);
             if (messages.length === 0) {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false));
