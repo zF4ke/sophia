@@ -73,18 +73,27 @@ module.exports = {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false));
             }
 
-            const filteredMessages = MessageService.filterCommandMessages(messages, interaction);
+            // const filteredMessages = MessageService.filterCommandMessages(messages, interaction);~
+            const filteredMessages = MessageService.filterOwnMessages(messages, interaction.client.user.id);
             const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
-            const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
+            // const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
             
-            if (validConversations.length === 0) {
-                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Não foi possível extrair conversas válidas do canal.", false));
+            // if (validConversations.length === 0) {
+            //     return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Não foi possível extrair conversas válidas do canal.", false));
+            // }
+
+            // await interaction.editReply(UIService.formatStatusMessage(EMOJIS.conversation, `Processando ${validConversations.length} conversas como contexto...`));
+
+            if (conversations.length === 0) {
+                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma conversa válida encontrada no canal.", false));
             }
 
-            await interaction.editReply(UIService.formatStatusMessage(EMOJIS.conversation, `Processando ${validConversations.length} conversas como contexto...`));
+            await interaction.editReply(UIService.formatStatusMessage(EMOJIS.conversation, `Processando ${conversations.length} conversas como contexto...`));
             
-            const selectedConversations = AIService.selectConversationsForContext(validConversations, prompt);
-            const contextText = AIService.formatConversationsAsContext(selectedConversations);
+            // const selectedConversations = AIService.selectConversationsForContext(validConversations, prompt);
+            // const contextText = AIService.formatConversationsAsContext(selectedConversations);
+
+            const contextText = AIService.formatConversationsAsContext(conversations);
             
             const promptWithAuthor = TextProcessingService.addAuthorToQuestion(prompt, interaction.user.username);
             const response = await AIService.generateContextualResponse(promptWithAuthor, contextText);

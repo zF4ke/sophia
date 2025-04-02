@@ -610,6 +610,18 @@ export class MessageService {
     }
 
     /**
+     * * Filters out messages that are from the bot itself or are bot messages.
+     * @param messages - The messages to filter.
+     * * @param botId - The bot's ID to filter out its own messages.
+     * @returns An array of messages that are not from the bot or are not bot messages.
+     */
+    public static filterOwnMessages(messages: Message[], botId: string): Message[] {
+        return messages.filter(message => {
+            return message.author.id !== botId;
+        });
+    }
+
+    /**
      * Clears the message cache for a specific channel or all channels
      * @param channelId Optional channel ID to clear cache for. If not provided, clears all message caches.
      */

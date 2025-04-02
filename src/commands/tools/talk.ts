@@ -57,8 +57,9 @@ module.exports = {
             await interaction.editReply(UIService.formatStatusMessage(EMOJIS.loading, `Buscando contexto em \`**\`${channel.name}\`**\` ...`));
 
             const messages = await MessageService.fetchMessagesOrdered(channel, 100, interaction);
+            const filteredMessages = MessageService.filterOwnMessages(messages, interaction.client.user.id);
             //console.log(`Fetched ${messages.length} messages from channel ${channel.name}`);
-            if (messages.length === 0) {
+            if (filteredMessages.length === 0) {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false));
             }
 
@@ -75,7 +76,7 @@ module.exports = {
             // const selectedConversations = AIService.selectConversationsForContext(validConversations, prompt);
             // const contextText = AIService.formatConversationsAsContext(selectedConversations);
             //const contextText = AIService.formatConversationsAsContext(conversations);
-            const contextText = AIService.formatMessagesAsContext(messages, includeBots);
+            const contextText = AIService.formatMessagesAsContext(filteredMessages, includeBots);
             
             const promptWithAuthor = TextProcessingService.addAuthorToQuestion(prompt, interaction.user.username);
             const response = await AIService.generateConversationResponse(promptWithAuthor, contextText);
