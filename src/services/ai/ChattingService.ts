@@ -39,6 +39,9 @@ export class ChattingService {
             TextProcessingService.addAuthorToQuestion(convertedPrompt, userName) : 
             convertedPrompt
 
-        return await AIService.generateConversationResponse(processedPrompt, contextText);
+        const response = await AIService.generateConversationResponse(processedPrompt, contextText);
+        const finalResponse = TextProcessingService.removeTrailingQuotes(response).trim();
+
+        return finalResponse;
     }
 }

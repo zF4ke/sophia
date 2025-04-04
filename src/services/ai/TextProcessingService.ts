@@ -160,4 +160,14 @@ export class TextProcessingService extends AIBaseService {
         const headerRegex = /`✨.*?`/g;
         return message.replace(headerRegex, '').trim();
     }
+
+    public static removeTrailingQuotes(message: string): string {
+        // example of a trailing quote: """\ntext\n""". remove the """ at the start and end of the message, but keep the text inside.
+        // Using [\s\S] instead of . with s flag to match any character including newlines
+        const quoteRegex = /"""([\s\S]*?)"""/g;
+        const matches = message.match(quoteRegex);
+        if (!matches) return message;
+        const cleanedMessage = message.replace(quoteRegex, '$1').trim();
+        return cleanedMessage;
+    }
 }

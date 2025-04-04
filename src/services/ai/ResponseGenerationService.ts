@@ -84,6 +84,9 @@ export class ResponseGenerationService extends AIBaseService {
             - Não inclua prefixos como "Baseado no contexto" ou "Resposta:"
             - Evite repetir o que já foi dito anteriormente
             - Se o usuário mudar de assunto, adapte sua resposta para o novo tópico
+            - Avoid repeating the same phrases or sentences
+            - Don't always end with a question
+            - Resposta mais curta é melhor
       `;
 
       const finalPrompt = PersonalityService.adjustPromptForPersonality(basePrompt, style);
