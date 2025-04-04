@@ -30,13 +30,15 @@ export class MessageService {
     private static readonly SERVICE_NAME = 'message';
     
     private static readonly MAX_BATCH_SIZE = 100; // Discord's max
-    private static readonly UPDATE_INTERVAL = 5000;
-    private static readonly MIN_MESSAGES_FOR_CHANNEL_END = 25; // If we get less than this, we're near channel end
+    private static readonly MAX_TRIES = 3; // Max retries for fetching messages
+    private static PAUSE_INTERVAL = 2000;
+    private static MAX_CONSECUTIVE_REQUESTS = 20;
+    private static readonly MIN_MESSAGES_FOR_CHANNEL_END = 25; 
 
-    private static readonly USE_CACHE = true; // Use cache to avoid hitting API limits
-    private static readonly CACHE_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 days cache expiry
-    private static readonly DEFAULT_MAX_LIMIT = 1000; // Default maximum limit
-    private static readonly DEFAULT_MAX_CACHE_LIMIT = 10000; // read at most 10k messages from cache unless specified 
+    private static readonly USE_CACHE = true;
+    private static readonly CACHE_EXPIRY = 30 * 24 * 60 * 60 * 1000; // 30 days
+    private static readonly DEFAULT_LIMIT = 1000;
+    private static readonly DEFAULT_CACHE_LIMIT = 10000; // read at most 10k messages from cache unless specified 
     private static readonly CACHE_MEMORY_TTL = 5 * 60 * 1000; // Time to keep cache in memory (5 minutes)
     private static readonly MAX_CACHE_SIZE = 50 * 1024 * 1024; // 50MB em bytes
     private static readonly CACHE_CLEANUP_THRESHOLD = 0.7; // Limpar até 70% do tamanho máximo
@@ -207,6 +209,19 @@ export class MessageService {
         return cachedData.messages.length;
     }
 
+    private static async updateStatus(
+        interaction: ChatInputCommandInteraction | undefined, 
+        message: string,
+        emoji: string = EMOJIS.search,
+        useBackticks: boolean = true
+    ): Promise<void> {
+        if (interaction) {
+            await interaction.editReply(UIService.formatStatusMessage(emoji, message, useBackticks));
+        } else {
+            // console.log(`${emoji} ${message}`);
+        }
+    }
+
     /**
      * Fetches messages from a Discord channel with progress updates
      * Uses smart caching to minimize API calls
@@ -218,279 +233,320 @@ export class MessageService {
     public static async fetchMessages(
         channel: TextChannel, 
         limit: number, 
-        interaction: ChatInputCommandInteraction,
+        interaction?: ChatInputCommandInteraction,
         useCache: boolean = this.USE_CACHE
+    ): Promise<Message[]> {        
+        let messages: Message[] = [];
+        
+        if (useCache) {
+            messages = await this.fetchMessagesWithCache(channel, limit, interaction);
+        } else {
+            messages = await this.fetchMessagesWithoutCache(channel, limit, interaction);
+        }
+
+        if (messages.length === 0) {
+            await this.updateStatus(interaction, "Nenhuma mensagem encontrada no canal.", EMOJIS.warning, false);
+            return [];
+        }
+
+        return this.sortMessages(messages, true);
+    }
+
+    /**
+     * Fetches messages from a Discord channel without using cache
+     * @param channel The Discord text channel to fetch messages from
+     * @param limit Maximum number of messages to fetch
+     * @param interaction Discord interaction for progress updates
+     * @returns Array of Discord messages
+     */
+    private static async fetchMessagesWithoutCache(
+        channel: TextChannel,
+        limit: number,
+        interaction?: ChatInputCommandInteraction,
+        options?: {
+            lastMessageId?: string;
+        }
     ): Promise<Message[]> {
         const channelId = channel.id;
+        const amountOfMessagesToFetch = limit && limit != 0 ? limit : this.DEFAULT_LIMIT;
+        const batchSize = Math.min(this.MAX_BATCH_SIZE, amountOfMessagesToFetch);
+        const amountOfBatches = Math.ceil(limit / batchSize);
+
         let messages: Message[] = [];
-        let lastId: string | undefined;
-        let lastProgressUpdate = Date.now();
-        let lastBatchSize = this.MAX_BATCH_SIZE;
-        let cacheChecksEnabled = useCache && this.USE_CACHE;
-        
-        // Load channel cache if needed
-        let cachedData = cacheChecksEnabled ? this.loadChannelCache(channelId) : null;
+        let lastMessageId: string | undefined = options?.lastMessageId;
+        let messagesLeft = amountOfMessagesToFetch;
+        let batchCountSincePause = 0;
 
-        // Clean up old caches from memory periodically
-        this.cleanupMemoryCache();
-        
-        // Adjust limit based on cache size if not explicitly provided
-        if (limit === 0 && cachedData && cachedData.messages.length > 0) {
-            // When we have cache, use DEFAULT_MAX_CACHE_LIMIT (10000)
-            limit = Math.min(
-                cachedData.messages.length,
-                this.DEFAULT_MAX_CACHE_LIMIT
-            );
-            await interaction.editReply(
-                UIService.formatStatusMessage(
-                    EMOJIS.cache,
-                    `Cache encontrado! Usando ${limit} mensagens do cache como limite.`
-                )
-            );
-        } else if (limit === 0) {
-            // If no cache and no explicit limit, use the default max limit (1000)
-            limit = this.DEFAULT_MAX_LIMIT;
-        }
-        
-        // Check if we have a valid cache to use
-        const hasCachedData = cachedData && (Date.now() - cachedData.timestamp) < this.CACHE_EXPIRY;
+        let batchCount = 0;
 
-        // Initialize cache lookup for repeated checks
-        const cachedIds = hasCachedData ? new Set(cachedData.messages.map(msg => msg.id)) : new Set();
-        const cachedMessagesMap = hasCachedData ? new Map(
-            cachedData.messages.map(msg => [msg.id, msg])
-        ) : new Map();
+        // fetch all batches
+        while (messagesLeft > 0) {
+            if (messagesLeft <= 0) break; // No more messages to fetch
 
-        // Try to use cache for initial fetch if enabled
-        if (hasCachedData) {
-            await interaction.editReply(
-                UIService.formatStatusMessage(EMOJIS.cache, `Cache encontrado com ${cachedData.messages.length} mensagens. Verificando mensagens novas...`)
-            );
-            
-            // First fetch newest messages and see if they match cache
-            try {
-                const newestBatch = await channel.messages.fetch({ 
-                    limit: Math.min(this.MAX_BATCH_SIZE, limit) 
-                });
-                
-                // Check if we've found any messages that are already cached
-                const newestMessages = Array.from(newestBatch.values());
-                
-                // Add new messages to our results
-                const newMessages = newestMessages.filter(msg => !cachedIds.has(msg.id));
-                messages.push(...newMessages);
-                
-                // If we found cached messages in this batch, we can start using the cache
-                const overlappingMessages = newestMessages.filter(msg => cachedIds.has(msg.id));
-                if (overlappingMessages.length > 0) {
-                    // We found an overlap, so we can use cache for older messages
-                    const oldestNewMessageTimestamp = Math.min(...overlappingMessages.map(m => m.createdTimestamp));
-                    
-                    // Get older cached messages up to the limit
-                    const olderCachedMessages = cachedData.messages
-                        .filter(msg => msg.createdTimestamp < oldestNewMessageTimestamp)
-                        .slice(0, limit - messages.length);
-                    
-                    // Add reconstructed messages to our results
-                    if (olderCachedMessages.length > 0) {
-                        const reconstructedOldMessages = this.reconstructMessages(channel, olderCachedMessages);
-                        messages.push(...reconstructedOldMessages);
-                        
-                        await interaction.editReply(
-                            UIService.formatStatusMessage(
-                                EMOJIS.merge,
-                                `Combinando ${newMessages.length} mensagens novas com ${olderCachedMessages.length} mensagens em cache`
-                            )
-                        );
-                    }
-                    
-                    // If we have enough messages, we're done
-                    if (messages.length >= limit) {
-                        // Sort and return the messages
-                        messages.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
-                        this.updateCache(channelId, messages);
-                        return messages.slice(0, limit);
-                    }
-                }
-                
-                // Set lastId for continued fetching
-                if (newestBatch.size > 0) {
-                    lastId = newestBatch.last()?.id;
-                }
-                
-            } catch (error) {
-                console.error('Error fetching newest messages:', error);
-                // If we can't fetch new messages, try using cache directly
-                if (cachedData.messages.length >= limit) {
-                    await interaction.editReply(
-                        UIService.formatStatusMessage(
-                            EMOJIS.cache,
-                            `Usando mensagens em cache (${Math.min(limit, cachedData.messages.length)}/${limit})`
-                        )
-                    );
-                    return this.reconstructMessages(channel, cachedData.messages.slice(0, limit));
-                } else {
-                    // Fallback to using whatever we have in cache and continue fetching
-                    await interaction.editReply(
-                        UIService.formatStatusMessage(
-                            EMOJIS.cache,
-                            `Reconstruindo ${cachedData.messages.length} mensagens a partir do cache...`
-                        )
-                    );
-                    messages = this.reconstructMessages(channel, cachedData.messages);
-                }
+            if (batchCount % 5 === 0) {
+                await this.updateStatus(interaction, `Buscando mensagens... (${messages.length}/${amountOfMessagesToFetch})`, EMOJIS.search, true);
             }
-        } else if (cacheChecksEnabled) {
-            // Inform the user that no cache was found
-            await interaction.editReply(
-                UIService.formatStatusMessage(EMOJIS.cache, `Nenhum cache encontrado para este canal. Buscando do zero...`)
-            );
+
+            const size = Math.min(batchSize, messagesLeft);
+            const { 
+                messages: fetchedMessages, 
+                numberFetches, 
+            } = await this.fetchBatch(interaction, channel, size, lastMessageId, batchCountSincePause);
+            batchCountSincePause = numberFetches;
+
+            messages.push(...fetchedMessages);
+
+            // remove duplicates
+            const uniqueMessages = new Map(messages.map(msg => [msg.id, msg]));
+            messages = Array.from(uniqueMessages.values());
+
+            lastMessageId = fetchedMessages.length > 0 ? fetchedMessages[fetchedMessages.length - 1].id : undefined;
+            messagesLeft -= fetchedMessages.length;
+
+            if (fetchedMessages && fetchedMessages.length > 0 && fetchedMessages.length < size) {
+                // If less messages were fetched than requested, we reached the end of the channel
+                messagesLeft = 0; // No more messages to fetch
+                break;
+            }
+            if (messagesLeft <= 0) break; // No more messages to fetch
+
+            batchCount++;
         }
 
-        // Fetch remaining messages if needed
-        while (messages.length < limit) {
-            // Check if we're likely at channel end based on last batch size
-            if (lastBatchSize < this.MIN_MESSAGES_FOR_CHANNEL_END && messages.length > 0) {
+        // update cache with new messages
+        this.updateCache(channelId, messages);
+
+        const orderedMessages = this.sortMessages(messages); 
+        messages = orderedMessages.slice(0, amountOfMessagesToFetch); // Limit to the requested amount
+
+        return messages;
+    }
+
+    /**
+     * Fetches a batch of messages from a Discord channel
+     * @param channel The Discord text channel to fetch messages from
+     * @param limit Maximum number of messages to fetch in this batch
+     * @param lastMessageId ID of the last message fetched in the previous batch (for pagination)
+     * @param batchCount Current batch count for progress updates
+     * @returns Array of Discord messages
+     */
+    private static async fetchBatch(
+        interaction: ChatInputCommandInteraction | undefined,
+        channel: TextChannel,
+        limit: number,
+        lastMessageId?: string,
+        batchCountSincePause: number = 0,
+        tries: number = 0,
+    ): Promise<{ messages: Message[]; numberFetches: number }> {
+        try {
+            if (tries >= this.MAX_TRIES) {
+                await this.updateStatus(interaction, "Excedeu o número máximo de tentativas para buscar mensagens.", EMOJIS.error, false);
+            }
+
+            // check rate limit
+            if (batchCountSincePause >= this.MAX_CONSECUTIVE_REQUESTS) {
+                // console.log(`Atingido o limite de requisições consecutivas. Aguardando ${this.PAUSE_INTERVAL/1000}s...`);
+                //await this.updateStatus(interaction, `Aguardando ${this.PAUSE_INTERVAL/1000}s...`, EMOJIS.network, true);
+                await new Promise(resolve => setTimeout(resolve, this.PAUSE_INTERVAL));
+                batchCountSincePause = 0; // Reset the counter after waiting
+            }
+
+            // fetch messages from Discord
+            const fetchedMessages = await channel.messages.fetch({
+                limit: limit,
+                before: lastMessageId,
+            });
+
+            batchCountSincePause++;
+    
+            return {
+                messages: Array.from(fetchedMessages.values()),
+                numberFetches: batchCountSincePause,
+            }
+        } catch (error: any) {
+            // check if the error is a rate limit error
+            if (error?.code === 429) {
+                const retryAfter = error.retry_after * 1000 || 1000;
+                await this.updateStatus(
+                    interaction,
+                    `Limite de API atingido. Aguardando ${retryAfter/1000}s...`,
+                    EMOJIS.network,
+                    true
+                );
+                //console.log(`Limite de API atingido depois de ${batchCountSincePause} requisições. Aguardando ${retryAfter}ms...`);
+                await new Promise(resolve => setTimeout(resolve, retryAfter));
+
+                // update MAX_CONSECUTIVE_REQUESTS to avoid hitting the rate limit again
+                this.MAX_CONSECUTIVE_REQUESTS--;
+                // increase the pause interval by 50%
+                this.PAUSE_INTERVAL *= 1.5;
+                batchCountSincePause = 0; // Reset the counter after waiting
+
+                return this.fetchBatch(interaction, channel, limit, lastMessageId, batchCountSincePause, tries + 1);
+            }
+        }
+
+        return { messages: [], numberFetches: batchCountSincePause };
+    }
+
+    /**
+     * Fetches messages from a Discord channel using cache if available
+     * @param channel The Discord text channel to fetch messages from
+     * @param limit Maximum number of messages to fetch
+     * @param interaction Discord interaction for progress updates
+     * @returns Array of Discord messages
+     */
+    private static async fetchMessagesWithCache(
+        channel: TextChannel,
+        limit: number,
+        interaction?: ChatInputCommandInteraction,
+    ): Promise<Message[]> {
+        const channelId = channel.id;
+        const amountOfMessagesToFetch = limit && limit != 0 ? limit : Math.min(this.getCacheSize(channelId), this.DEFAULT_CACHE_LIMIT);
+        const batchSize = Math.min(this.MAX_BATCH_SIZE, amountOfMessagesToFetch);
+        const amountOfBatches = Math.ceil(limit / batchSize);
+
+        let messages: Message[] = [];
+        let lastMessageId: string | undefined = undefined;
+        let messagesLeft = amountOfMessagesToFetch;
+        let batchCountSincePause = 0;
+
+        const cachedData = this.loadChannelCache(channelId);
+        if (!cachedData) {
+            await this.updateStatus(interaction, "Nenhum cache encontrado. Buscando mensagens do Discord...", EMOJIS.cache, true);
+            const amount = limit && limit != 0 ? limit : this.DEFAULT_LIMIT;
+            // No cache available, fetch messages from Discord
+            return this.fetchMessagesWithoutCache(channel, amount, interaction);
+        }
+
+        // Check if cache is expired
+        if (Date.now() - cachedData.timestamp >= this.CACHE_EXPIRY) {
+            await this.updateStatus(interaction, "Cache expirado. Buscando mensagens do Discord...", EMOJIS.cache, true);
+            const amount = limit && limit != 0 ? limit : this.DEFAULT_LIMIT;
+            // Cache expired, fetch messages from Discord
+            return this.fetchMessagesWithoutCache(channel, amount, interaction);
+        }
+
+        // Cache is valid, use it
+        const messagesOnCache = this.reconstructMessages(channel, cachedData.messages);
+
+        let cacheHit = false;
+        let batchCount = 0;
+
+        // Start fetching fresh batches from Discord until we find matching messages that are in cache
+        while (messagesLeft > 0) {
+            if (messagesLeft <= 0) break; // No more messages to fetch
+
+            if (batchCount % 5 === 0) {
+                await this.updateStatus(interaction, `Buscando mensagens... (${messages.length}/${amountOfMessagesToFetch})`, EMOJIS.search, true);
+            }
+
+            const size = Math.min(batchSize, messagesLeft);
+            const { 
+                messages: fetchedMessages, 
+                numberFetches, 
+            } = await this.fetchBatch(interaction, channel, size, lastMessageId, batchCountSincePause);
+            batchCountSincePause = numberFetches;
+
+            messages.push(...fetchedMessages);
+            lastMessageId = fetchedMessages.length > 0 ? fetchedMessages[fetchedMessages.length - 1].id : undefined;
+            messagesLeft -= fetchedMessages.length;
+
+            if (fetchedMessages && fetchedMessages.length > 0 && fetchedMessages.length < size) {
+                // If less messages were fetched than requested, we reached the end of the channel
+                messagesLeft = 0; // No more messages to fetch
+                break;
+            }
+            if (messagesLeft <= 0) break; // No more messages to fetch
+
+            if (this.matchedCacheMessages(messagesOnCache, fetchedMessages)) {
+                // We found matching messages in cache, stop fetching
+                cacheHit = true;
                 break;
             }
 
-            try {
-                const fetchLimit = Math.min(this.MAX_BATCH_SIZE, limit - messages.length);
-                const response = await channel.messages.fetch({ 
-                    limit: fetchLimit,
-                    ...(lastId && { before: lastId }),
-                });
-
-                // Store batch size for early exit detection
-                lastBatchSize = response.size;
-                if (response.size === 0) break;
-
-                // Get messages from this batch
-                const batchMessages = Array.from(response.values());
-                
-                // Check for cached messages in this batch, if we have valid cache
-                if (hasCachedData && batchMessages.length > 0) {
-                    // Check if any of these messages are in our cache
-                    const overlappingMessages = batchMessages.filter(msg => cachedIds.has(msg.id));
-                    
-                    if (overlappingMessages.length > 0) {
-                        // We found more overlap! Let's use cache for any older messages we need
-                        const oldestOverlapTimestamp = Math.min(...overlappingMessages.map(m => m.createdTimestamp));
-                        
-                        // Add only non-cached messages from this batch
-                        const newMessages = batchMessages.filter(msg => !cachedIds.has(msg.id));
-                        messages.push(...newMessages);
-                        
-                        // Find cached messages older than our overlap point
-                        const olderCachedMessages = cachedData.messages
-                            .filter(msg => msg.createdTimestamp < oldestOverlapTimestamp)
-                            .slice(0, limit - messages.length);
-                        
-                        if (olderCachedMessages.length > 0) {
-                            // We found older messages in cache, add them
-                            const reconstructedOldMessages = this.reconstructMessages(channel, olderCachedMessages);
-                            messages.push(...reconstructedOldMessages);
-                            
-                            await interaction.editReply(
-                                UIService.formatStatusMessage(
-                                    EMOJIS.found,
-                                    `Encontradas ${reconstructedOldMessages.length} mensagens no cache! Total: ${messages.length}`
-                                )
-                            );
-                            
-                            // If we have enough messages now, we're done
-                            if (messages.length >= limit) {
-                                // Sort and return the messages
-                                messages.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
-                                this.updateCache(channelId, messages);
-                                return messages.slice(0, limit);
-                            }
-                            
-                            // Update lastId to continue after the oldest cached message
-                            if (olderCachedMessages.length > 0) {
-                                const oldestCachedMessage = olderCachedMessages[olderCachedMessages.length - 1];
-                                lastId = oldestCachedMessage.id;
-                                continue;
-                            }
-                        }
-                    } else {
-                        // No overlap in this batch, add them all and continue
-                        messages.push(...batchMessages);
-                    }
-                } else {
-                    // No cache check needed, just add all messages
-                    messages.push(...batchMessages);
-                }
-
-                // Update lastId for the next fetch
-                lastId = response.last()?.id;
-
-                // Update the progress periodically
-                if (Date.now() - lastProgressUpdate > this.UPDATE_INTERVAL) {
-                    await interaction.editReply(
-                        UIService.formatStatusMessage(
-                            EMOJIS.loading,
-                            `Carregando mensagens... (${messages.length}/${limit})`
-                        )
-                    );
-                    lastProgressUpdate = Date.now();
-                }
-
-            } catch (error: any) {
-                if (error?.code === 50001) {
-                    throw new Error('Não tenho permissão para ler mensagens neste canal.');
-                }
-
-                if (error?.code === 429) {
-                    const retryAfter = error.retry_after * 1000 || 1000;
-                    await interaction.editReply(
-                        UIService.formatStatusMessage(
-                            EMOJIS.network,
-                            `Limite de API atingido. Aguardando ${retryAfter/1000}s...`
-                        )
-                    );
-                    await new Promise(resolve => setTimeout(resolve, retryAfter));
-                    continue;
-                }
-
-                // For non-rate-limit errors, wait a short time and retry once
-                await new Promise(resolve => setTimeout(resolve, 100));
-                try {
-                    const retryResponse = await channel.messages.fetch({ 
-                        limit: Math.min(this.MAX_BATCH_SIZE, limit - messages.length),
-                        ...(lastId && { before: lastId }),
-                    });
-                    lastBatchSize = retryResponse.size;
-                    if (retryResponse.size > 0) {
-                        messages.push(...retryResponse.values());
-                        lastId = retryResponse.last()?.id;
-                    }
-                } catch {
-                    console.error('Failed retry, continuing with next batch');
-                    lastBatchSize = 0;
-                }
-            }
+            batchCount++;
         }
 
-        // Final update
-        if (messages.length > 0) {
-            await interaction.editReply(
-                UIService.formatStatusMessage(
-                    EMOJIS.complete,
-                    `Busca completa! ${messages.length} mensagens carregadas.`,
-                )
-            );
+        if (cacheHit) {
+            // We found matching messages in cache, merge them with fetched messages, prioritizing discord messages
+            const cacheMessages = messagesOnCache.filter(msg => !messages.some(fetchedMsg => fetchedMsg.id === msg.id));
+            messages = [...messages, ...cacheMessages];
+
+            messages = this.sortMessages(messages); // Sort by creation time
+
+            // remove duplicates
+            const uniqueMessages = new Map(messages.map(msg => [msg.id, msg]));
+            messages = Array.from(uniqueMessages.values());
+
+            await this.updateStatus(interaction, `Encontradas ${messages.length} mensagens no cache.`, EMOJIS.cache, true);
+            // update cache timestamp
+            cachedData.timestamp = Date.now();
+            cachedData.lastAccessed = Date.now();
         }
 
-        // Sort messages by creation time (newest first)
-        messages.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+        messagesLeft = amountOfMessagesToFetch - messages.length;
 
-        // Update cache if caching is enabled
-        this.updateCache(channelId, messages);
+        // check if we have enough messages
+        if (amountOfMessagesToFetch <= messages.length) {
+            messages = messages.slice(0, amountOfMessagesToFetch);
+            return messages;
+        }
+        
+        await this.updateStatus(interaction, `Buscando ${messagesLeft} mensagens restantes...`, EMOJIS.search, true);
 
-        return messages.slice(0, limit);
+        // We need to fetch more messages from Discord
+        lastMessageId = messages[messages.length - 1].id; // Get the last message ID from cache
+
+        const restOfMessages = await this.fetchMessagesWithoutCache(channel, messagesLeft, interaction, { lastMessageId });
+        messages.push(...restOfMessages);
+
+        const orderedMessages = this.sortMessages(messages); // Sort by creation time (oldest first)
+        messages = orderedMessages.slice(0, amountOfMessagesToFetch); // Limit to the requested amount
+
+        return messages;
     }
 
+    /**
+     * Checks if there are matching messages in cache
+     * @param cachedMessages Messages from cache
+     * @param fetchedMessages Messages fetched from Discord
+     * @returns true if there are matching messages, false otherwise
+     */
+    private static matchedCacheMessages(cachedMessages: Message[], fetchedMessages: Message[]): boolean {
+        const cachedIds = new Set(cachedMessages.map(msg => msg.id));
+        for (const message of fetchedMessages) {
+            if (cachedIds.has(message.id)) {
+                return true; // Found a matching message in cache
+            }
+        }
+        return false; // No matching messages found
+    }
+
+    /**
+     * Sorts messages by creation time
+     * @param messages Array of Discord messages to sort
+     * @param oldestFirst If true, sorts from oldest to newest. Otherwise, sorts from newest to oldest.
+     * @returns Sorted array of Discord messages
+     */
+    public static sortMessages(
+        messages: Message[],
+        oldestFirst: boolean = false
+    ): Message[] {
+        if (oldestFirst) {
+            return messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+        } else {
+            return messages.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+        }
+    }
+
+    /**
+     * Fetches messages from a Discord channel in a specific order (oldest first)
+     * @param channel The Discord text channel to fetch messages from
+     * @param limit Maximum number of messages to fetch
+     * @param interaction Discord interaction for progress updates
+     * @returns Array of Discord messages in the specified order
+     */
     public static async fetchMessagesOrdered(
         channel: TextChannel,
         limit: number,
@@ -528,7 +584,7 @@ export class MessageService {
 
         try {
             // Convert messages to cache format
-            const cacheItems = messages.map(msg => this.messageToCache(msg));
+            const newCacheMessages = messages.map(msg => this.messageToCache(msg));
             
             // Get existing cache or create new one
             const existing = this.loadChannelCache(channelId);
@@ -537,9 +593,9 @@ export class MessageService {
                 const existingIds = new Set(existing.messages.map(msg => msg.id));
                 
                 // Add only new messages to cache
-                for (const item of cacheItems) {
-                    if (!existingIds.has(item.id)) {
-                        existing.messages.push(item);
+                for (const message of newCacheMessages) {
+                    if (!existingIds.has(message.id)) {
+                        existing.messages.push(message);
                     }
                 }
                 
@@ -550,7 +606,7 @@ export class MessageService {
             } else {
                 // Create new cache entry
                 const newCache: MessageCache = {
-                    messages: cacheItems,
+                    messages: newCacheMessages,
                     timestamp: Date.now(),
                     lastAccessed: Date.now()
                 };

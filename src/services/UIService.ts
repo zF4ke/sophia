@@ -6,7 +6,8 @@ import {
     ButtonStyle,
     ComponentType,
     Message,
-    MessageFlags
+    MessageFlags,
+    TextChannel
 } from "discord.js";
 import { MessageGroup } from "../types/conversation";
 import { EMOJIS, DISCORD } from "../utils/constants";
@@ -127,7 +128,7 @@ export class UIService {
 
     protected static groupMessagesByAuthor(messages: Message[]): MessageGroup[] {
         const groups = new Map<string, MessageGroup>();
-
+        
         for (const msg of messages) {
             const authorId = msg.author.id;
             const content = msg.content || "*Sem conteúdo*";
@@ -139,7 +140,11 @@ export class UIService {
                     timestamp: msg.createdTimestamp
                 });
             } else {
-                groups.get(authorId)!.content.push(content);
+                const group = groups.get(authorId)!;
+                // Check if this exact content already exists in the group to prevent duplicates
+                if (!group.content.includes(content)) {
+                    group.content.push(content);
+                }
             }
         }
 
@@ -251,7 +256,12 @@ export class UIService {
         response: string,
         ephemeral: boolean = false
     ): Promise<void> {
-        const fullContent = messageHeader + "\n\n" + response;
+        let fullContent ;
+        if (messageHeader) {
+            fullContent = messageHeader + "\n\n" + response;
+        } else {
+            fullContent = response;
+        }
         
         if (fullContent.length <= DISCORD.MESSAGE_LIMIT) {
             // If the message fits in a single Discord message
@@ -270,6 +280,43 @@ export class UIService {
                 await interaction.followUp({ 
                     content: chunk,
                     flags: ephemeral ? MessageFlags.Ephemeral : undefined
+                });
+            }
+        }
+    }
+
+    public static async sendLongMessage(
+        message: Message,
+        response: string,
+    ): Promise<void> {
+        const channel = message.channel;
+        if (!channel.isTextBased()) return;
+        if (!(channel instanceof TextChannel)) return;
+        
+        if (response.length <= DISCORD.MESSAGE_LIMIT) {
+            // If the message fits in a single Discord message
+            await message.reply({ content: response });
+        } else {
+            const chunks = TextProcessingService.splitLongMessage(response);
+            let lastMessage: Message | null = null;
+
+            // send the header and a chunk in the first message
+            const firstChunk = chunks.shift() || "";
+            lastMessage = await message.reply({ 
+                content: firstChunk
+            });
+
+            // send the rest of the chunks as follow-up messages
+            for (const chunk of chunks) {
+                // await channel.send({ 
+                //     content: chunk,
+                // });
+                lastMessage = await lastMessage?.reply({ 
+                    content: chunk,
+                    allowedMentions: {
+                        parse: ["users"],
+                        repliedUser: false
+                    }
                 });
             }
         }

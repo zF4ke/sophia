@@ -132,7 +132,7 @@ export class ResponseGenerationService extends AIBaseService {
             - Cite partes específicas do contexto para justificar sua resposta quando relevante
             - Seja concisa mas completa
             - Formate sua resposta de forma clara e organizada
-            - Não inclua prefixos como "Baseado no contexto" ou "Resposta:"
+            - Não inclua prefixos como "Baseado no contexto" ou "Resposta:" ou "Sophia: ", etc. Apenas responda diretamente à pergunta ou instrução do usuário
       `;
 
       const finalPrompt = PersonalityService.adjustPromptForPersonality(basePrompt, style);

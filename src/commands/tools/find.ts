@@ -9,7 +9,7 @@ import { UIService } from "../../services/UIService";
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName("search")
+        .setName("find")
         .setContexts(0, 1, 2)
         .setIntegrationTypes(0, 1)
         .setDescription("Buscar mensagens em um canal sobre um tópico específico")
@@ -86,18 +86,18 @@ module.exports = {
 
                 // Group messages into conversations
                 const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
-                const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
+                //const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
 
-                await interaction.editReply(UIService.formatStatusMessage(EMOJIS.found, `Analisando ${validConversations.length} conversas sobre **"${topic}"**...`));
+                await interaction.editReply(UIService.formatStatusMessage(EMOJIS.found, `Analisando ${conversations.length} conversas sobre **"${topic}"**...`));
 
                 // Analyze conversations with AI
                 let relevantConversations;
                 try {
-                    relevantConversations = await AIService.analyzeConversations(validConversations, topic, interaction);
+                    relevantConversations = await AIService.analyzeConversations(conversations, topic, interaction);
                 } catch (error) {
                     console.error('AI analysis failed, falling back to keyword search:', error);
                     await interaction.editReply(UIService.formatStatusMessage(EMOJIS.sync, "Usando busca alternativa por palavras-chave..."));
-                    relevantConversations = AIService.fallbackKeywordSearch(validConversations, topic);
+                    relevantConversations = AIService.fallbackKeywordSearch(conversations, topic);
                 }
 
                 if (relevantConversations.length === 0) {

@@ -53,14 +53,14 @@ module.exports = {
                 return;
             }
 
-            await safeReply(interaction, UIService.formatStatusMessage(EMOJIS.loading, `Buscando a mensagem ${messageNumber} em ${channel.toString()}...`));
+            await safeReply(interaction, UIService.formatStatusMessage(EMOJIS.loading, `Buscando a mensagem ${messageNumber} em \`**\`${channel.name}\`**\` ...`));
 
             try {
                 // Fetch messages from start
                 const messages = await MessageService.fetchMessages(channel, messageNumber, interaction);
-                
+
                 // Get the last message (which will be the nth message)
-                const targetMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+                const targetMessage = messages.length > 0 ? messages[0] : null;
 
                 if (!targetMessage) {
                     await safeReply(interaction,

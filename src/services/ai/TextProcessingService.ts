@@ -1,6 +1,7 @@
 import { DISCORD } from "@/utils/constants";
 import { AIBaseService } from "./AIBaseService";
 import dedent from "dedent";
+import { Client } from "discord.js";
 
 /**
  * Service for text processing operations like keyword extraction and text cleaning
@@ -128,5 +129,35 @@ export class TextProcessingService extends AIBaseService {
         }
 
         return chunks;
+    }
+
+    /**
+     * Converts mentions in a message to usernames
+     * @param message - The message containing mentions
+     * @param client - The Discord client instance to fetch user information
+     * @returns The message with mentions replaced by usernames
+     */
+    public static async convertMentionsToNames(message: string, client: Client): Promise<string> {
+        const mentionRegex = /<@!?(\d+)>/g;
+        const mentions = message.match(mentionRegex);
+        if (!mentions) return message;
+
+        for (const mention of mentions) {
+            const userId = mention.replace(/<@!?/, '').replace(/>/, '');
+            const user = await client.users.fetch(userId).catch(() => null);
+            if (!user) continue;
+
+            if (user) {
+                message = message.replace(mention, user.username);
+            }
+        }
+
+        return message;
+    }
+
+    public static removeMessageHeader(message: string): string {
+        // example of a header: `✨ Resposta com conhecimento próprio`. it needs to have the emoji ✨ at the start of the line, but the text "Resposta com conhecimento próprio" could be anything. also the backticks are also part of the header.
+        const headerRegex = /`✨.*?`/g;
+        return message.replace(headerRegex, '').trim();
     }
 }

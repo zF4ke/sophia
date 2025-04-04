@@ -100,15 +100,28 @@ export class ContextManagementService extends AIBaseService {
    */
   public static formatMessagesAsContext(
     messages: Message[], 
-    includeBots: boolean = false
+    includeBots: boolean = false,
+    reverse: boolean = false
   ): string {
     const filteredMessages = messages.filter(msg => 
       includeBots || !msg.author.bot
     );
     
-    return filteredMessages.map(msg => 
-      `${msg.author.username}: ${msg.content.trim()}`
-    ).join('\n');
+    // return filteredMessages.map(msg => 
+    //   `${msg.author.username}: ${msg.content.trim()}`
+    // ).join('\n');
+    messages = reverse ? filteredMessages.reverse() : filteredMessages;
+
+    // if a message has more than one line, add """ around it """
+    const formattedMessages = messages.map(msg => {
+      const content = msg.content.trim();
+      return content.includes('\n') ? 
+        `Mensagem enviada por ${msg.author.username}: """\n${content}\n"""` : 
+        `Mensagem enviada por ${msg.author.username}: ${content}`;
+    }).join('\n');
+
+    // add separator at the end
+    return `${formattedMessages}\n\n---------------\n\n`;
   }
   
   /**

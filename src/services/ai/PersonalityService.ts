@@ -22,7 +22,7 @@ export class PersonalityService extends AIBaseService {
     ],
     preferences: {
       communication: "Claro e direto",
-      humor: "Clever and subtle",
+      // humor: "Clever and subtle",
       approach: "Analytical but friendly",
       formality: "Casual but professional"
     }
@@ -75,17 +75,17 @@ export class PersonalityService extends AIBaseService {
       science: 0.85,
       arts: 0.6,
       philosophy: 0.75,
-      humor: 0.4
+      // humor: 0.4
     },
     mood: {
-      enthusiasm: 0.7,
+      // enthusiasm: 0.7,
       patience: 0.8,
-      curiosity: 0.9,
-      playfulness: 0.6
+      // curiosity: 0.9,
+      // playfulness: 0.6
     },
     intellectual: {
       analytical: 0.9,
-      creative: 0.7,
+      // creative: 0.7,
       methodical: 0.85,
       intuitive: 0.75
     }
@@ -105,7 +105,7 @@ export class PersonalityService extends AIBaseService {
     social: {
       conversationStyle: "Engaging but focused",
       //humorUse: "Clever wordplay and situational humor",
-      humorUse: "Clever wordplay and situational humor",
+      // humorUse: "Clever wordplay and situational humor",
       empathyLevel: "Understanding but not overly emotional",
       boundaries: "Professional yet approachable"
     },
@@ -124,9 +124,9 @@ export class PersonalityService extends AIBaseService {
   private static readonly RESPONSE_STYLES = {
     casual: {
       formality: 0.5,
-      humor: 0.7,
+      // humor: 0.2,
       conciseness: 0.6,
-      enthusiasm: 0.7
+      enthusiasm: 0.2
     },
     technical: {
       formality: 0.7,
@@ -193,7 +193,6 @@ export class PersonalityService extends AIBaseService {
       Traços de personalidade ativos:
       - Demonstre confiança (${traits.confidence * 100}%) em suas respostas
       - Use sua inteligência (${traits.intelligence * 100}%) e perspicácia (${traits.cleverness * 100}%)
-      - Um toque de arrogância (${traits.arrogance * 100}%) e quase nada de sarcasmo (${traits.sarcasm * 100}%)
       - Seja decidida (${traits.decisiveness * 100}%) e confiável (${traits.reliability * 100}%)
       - Mantenha-se realista (${traits.groundedness * 100}%) e prática
 
@@ -209,18 +208,22 @@ export class PersonalityService extends AIBaseService {
       - Demonstre empatia quando necessário
       - Seja sucinta e direta em suas respostas
       - Mantenha sua abordagem ${identity.preferences.communication}
-      - Use humor ${identity.preferences.humor} quando apropriado, mas não force
       - Mantenha-se ${identity.preferences.approach} e ${identity.preferences.formality}
       - Demonstre seus interesses naturalmente nas conversas
       - Mantenha consistência com seu histórico e experiências
       - NÃO USAR EMOJI
     `;
 
-    console.log(`Prompt ajustado para ${identity.name}:\n${personalityInstructions}`);
-    console.log(`Base Prompt:\n${basePrompt}`);
-    console.log(`Estilo de Resposta:\n${context}`);
+    // - Um toque de arrogância (${traits.arrogance * 100}%) e quase nada de sarcasmo (${traits.sarcasm * 100}%)
 
-    return `${personalityInstructions}\n\nPrompt original:\n${basePrompt}`;
+    // - Use humor ${identity.preferences.humor} quando apropriado, mas não force
+
+    console.log(`Prompt ajustado para ${identity.name}:\n${personalityInstructions}`);
+    console.log(`Base Prompt:\n${this.emojiRemover(basePrompt)}`);
+    //console.log(`Estilo de Resposta:\n${context}`);
+
+    // return `${personalityInstructions}\n\nPrompt original:\n${basePrompt}`;
+    return `${personalityInstructions}\n\nPrompt original:\n${this.emojiRemover(basePrompt)}`;
   }
 
   /**
@@ -336,5 +339,14 @@ export class PersonalityService extends AIBaseService {
     }
 
     return 'casual';
+  }
+
+  public static emojiRemover(content: string): string {
+    return content
+        .replace(
+          /([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF])/g,
+          ''
+        )
+        .trim();
   }
 }

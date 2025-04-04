@@ -21,7 +21,14 @@ export const EMOJIS = {
     complete: "✨",
     memory: "💾",
     check: "✅",
-    sync: "🔄"
+    sync: "🔄",
+    filter: "🔧",
+    settings: "⚙️",
+    help: "❓",
+    edit: "✏️",
+    add: "➕",
+    remove: "➖",
+    share: "🔗"
 } as const;
 
 // Remove the 'as const' to allow string comparison

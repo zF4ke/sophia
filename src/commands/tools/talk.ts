@@ -6,6 +6,7 @@ import { EMOJIS, DISCORD } from "../../utils/constants";
 import { SecurityService } from "../../services/SecurityService";
 import { UIService } from "../../services/UIService";
 import { TextProcessingService } from "@/services/ai/TextProcessingService";
+import { ChattingService } from "@/services/ai/ChattingService";
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -20,6 +21,12 @@ module.exports = {
         .addChannelOption(option => 
             option.setName("channel")
                 .setDescription("O canal para usar como contexto")
+                .setRequired(false))
+        .addIntegerOption(option =>
+            option.setName("limit")
+                .setDescription("Número máximo de mensagens para buscar (padrão 0 para auto-cache)")
+                .setMinValue(0)
+                .setMaxValue(50000)
                 .setRequired(false))
         .addBooleanOption(option =>
             option.setName("ephemeral")
@@ -40,6 +47,7 @@ module.exports = {
 
             const channel = interaction.options.getChannel("channel") || interaction.channel;
             const prompt = interaction.options.getString("message");
+            const limit = interaction.options.getInteger("limit") ?? 100; // Get the limit if provided
             const includeBots = interaction.options.getBoolean("include_bots") ?? true;
 
             if (!channel || !prompt) {
@@ -54,41 +62,22 @@ module.exports = {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.error, "Eu não tenho permissão para ver esse canal.", false));
             }
 
-            await interaction.editReply(UIService.formatStatusMessage(EMOJIS.loading, `Buscando contexto em \`**\`${channel.name}\`**\` ...`));
-
-            const messages = await MessageService.fetchMessagesOrdered(channel, 100, interaction);
-            const filteredMessages = MessageService.filterOwnMessages(messages, interaction.client.user.id);
-            //console.log(`Fetched ${messages.length} messages from channel ${channel.name}`);
-            if (filteredMessages.length === 0) {
-                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false));
-            }
-
-            //const filteredMessages = MessageService.filterCommandMessages(messages, interaction);
-            //const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
-            // const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
+            const response = await ChattingService.generateChatResponse(
+                channel,
+                prompt,
+                {
+                    limit,
+                    includeBots,
+                    userName: interaction.user.username,
+                }
+            );
             
-            // if (validConversations.length === 0) {
-            //     return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Não foi possível extrair conversas válidas do canal.", false));
-            // }
-
-            // await interaction.editReply(UIService.formatStatusMessage(EMOJIS.conversation, `Processando ${validConversations.length} conversas como contexto...`));
-            
-            // const selectedConversations = AIService.selectConversationsForContext(validConversations, prompt);
-            // const contextText = AIService.formatConversationsAsContext(selectedConversations);
-            //const contextText = AIService.formatConversationsAsContext(conversations);
-            const contextText = AIService.formatMessagesAsContext(filteredMessages, includeBots);
-            
-            const promptWithAuthor = TextProcessingService.addAuthorToQuestion(prompt, interaction.user.username);
-            const response = await AIService.generateConversationResponse(promptWithAuthor, contextText);
-            const messageHeader = UIService.formatStatusMessage(EMOJIS.complete, `Resposta baseada no contexto`);
-            
-            await UIService.sendLongResponse(interaction, messageHeader, response, ephemeral);
-
-            // console.log(`Context text length: ${contextText.length}`);
-            // // token estimator, to estimate the number of tokens in the context text
-            // // code it here
-            // const tokenCount = Math.ceil(contextText.length / 4); // Assuming 4 characters per token
-            // console.log(`Estimated token count: ${tokenCount}`);
+            await UIService.sendLongResponse(
+                interaction, 
+                "", 
+                response || "‎",
+                ephemeral
+            );
         } catch (error) {
             console.error('Error in context command:', error);
             await interaction.editReply(

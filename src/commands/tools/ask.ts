@@ -12,7 +12,7 @@ module.exports = {
         .setName("ask")
         .setContexts(0, 1, 2)
         .setIntegrationTypes(0, 1)
-        .setDescription("Faça uma pergunta ao bot com acesso à informações externas (pesquisa web)")
+        .setDescription("Faça uma pergunta ao bot sobre qualquer coisa")
         .addStringOption(option => 
             option.setName("question")
                 .setDescription("A pergunta que você deseja fazer")
@@ -58,7 +58,7 @@ module.exports = {
             if (contextChannel && contextChannel instanceof TextChannel) {
                 await interaction.editReply(UIService.formatStatusMessage(
                     EMOJIS.search, 
-                    `Buscando contexto em \`**\`${contextChannel.name}\`**\` e informações na web sobre: "${question}"...`
+                    `Buscando contexto em \`**\`${contextChannel.name}\`**\` e informações sobre: "${question}"...`
                 ));
 
                 // Check channel access
@@ -70,27 +70,20 @@ module.exports = {
                     const messages = await MessageService.fetchMessages(contextChannel, contextLimit, interaction);
                     
                     if (messages.length > 0) {
-                        // Filter and process messages
-                        const filteredMessages = MessageService.filterCommandMessages(messages, interaction);
-                        const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
-                        const validConversations = ConversationService.filterValidConversations(conversations, true);
+                        chatContext = AIService.formatMessagesAsContext(messages, false);
                         
-                        if (validConversations.length > 0) {
-                            // Select relevant conversations and format as context
-                            const selectedConversations = AIService.selectConversationsForContext(validConversations, question, 5000);
-                            chatContext = AIService.formatConversationsAsContext(selectedConversations);
-                            
-                            await interaction.editReply(UIService.formatStatusMessage(
-                                EMOJIS.merge, 
-                                `Combinando ${selectedConversations.length} conversas relevantes com informações da web...`
-                            ));
-                        }
+                        await interaction.editReply(UIService.formatStatusMessage(
+                            EMOJIS.merge, 
+                            `Combinando ${messages.length} mensagens relevantes com o conhecimento próprio...`
+                        ));
+                    } else {
+                        return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal de contexto. Continuando apenas com conhecimento próprio..."));
                     }
                 } catch (error) {
                     console.error('Error fetching context:', error);
                     await interaction.editReply(UIService.formatStatusMessage(
                         EMOJIS.warning, 
-                        `Não foi possível obter contexto do canal. Continuando apenas com pesquisa web...`
+                        `Não foi possível obter contexto do canal. Continuando apenas com conhecimento próprio...`
                     ));
                 }
             } else {
@@ -104,7 +97,7 @@ module.exports = {
             // Format the response
             const messageHeader = UIService.formatStatusMessage(
                 EMOJIS.complete, 
-                chatContext ? `Resposta com informações da web e contexto do canal` : `Resposta com informações da web`
+                chatContext ? `Resposta com conhecimento próprio e contexto do canal` : `Resposta com conhecimento próprio`
             );
 
             await UIService.sendLongResponse(interaction, messageHeader, response, ephemeral);

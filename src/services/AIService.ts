@@ -87,9 +87,10 @@ export class AIService extends AIBaseService {
    */
   public static formatMessagesAsContext(
     messages: Message[], 
-    includeBots: boolean = false
+    includeBots: boolean = false,
+    reverse: boolean = false
   ): string {
-    return ContextManagementService.formatMessagesAsContext(messages, includeBots);
+    return ContextManagementService.formatMessagesAsContext(messages, includeBots, reverse);
   }
 
   /**

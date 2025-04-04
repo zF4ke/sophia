@@ -41,7 +41,7 @@ module.exports = {
             if (!SecurityService.isAdmin(interaction.user.id)) {
                 return await interaction.reply({
                     content: `${EMOJIS.error} Este comando está disponível apenas para administradores.`,
-                    flags: MessageFlags.Ephemeral
+                    flags: MessageFlags.Ephemeral,
                 });
             }
 
@@ -73,33 +73,34 @@ module.exports = {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma mensagem encontrada no canal.", false));
             }
 
-            // const filteredMessages = MessageService.filterCommandMessages(messages, interaction);~
-            const filteredMessages = MessageService.filterOwnMessages(messages, interaction.client.user.id);
-            const conversations = ConversationService.groupMessagesByConversation(filteredMessages);
-            // const validConversations = ConversationService.filterValidConversations(conversations, includeBots);
-            
-            // if (validConversations.length === 0) {
-            //     return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Não foi possível extrair conversas válidas do canal.", false));
-            // }
+            await interaction.editReply(UIService.formatStatusMessage(EMOJIS.check, `Encontradas ${messages.length} mensagens...`));
 
-            // await interaction.editReply(UIService.formatStatusMessage(EMOJIS.conversation, `Processando ${validConversations.length} conversas como contexto...`));
+            // const filteredMessages = MessageService.filterCommandMessages(messages, interaction);
+            // const filteredMessages = MessageService.filterOwnMessages(messages, interaction.client.user.id);
 
-            if (conversations.length === 0) {
-                return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.warning, "Nenhuma conversa válida encontrada no canal.", false));
-            }
-
-            await interaction.editReply(UIService.formatStatusMessage(EMOJIS.conversation, `Processando ${conversations.length} conversas como contexto...`));
-            
-            // const selectedConversations = AIService.selectConversationsForContext(validConversations, prompt);
-            // const contextText = AIService.formatConversationsAsContext(selectedConversations);
-
-            const contextText = AIService.formatConversationsAsContext(conversations);
+            const contextText = AIService.formatMessagesAsContext(messages, includeBots);
             
             const promptWithAuthor = TextProcessingService.addAuthorToQuestion(prompt, interaction.user.username);
             const response = await AIService.generateContextualResponse(promptWithAuthor, contextText);
             const messageHeader = UIService.formatStatusMessage(EMOJIS.complete, `Resposta baseada no contexto`);
             
             await UIService.sendLongResponse(interaction, messageHeader, response, ephemeral);
+
+            console.log(`===========================================================================`);
+
+            console.log(`Context text last 100 lines: ${contextText.split('\n').slice(-100).join('\n')}`);
+
+            // Print this:
+            // first 5 messages
+            // ...
+            // last 5 messages
+            // console.table(reverseMessages.slice(0, 30).map(m => ({ id: m.id, content: m.content.slice(0, 20), author: m.author.username })));
+
+            // // last 5 messages
+            // console.table(reverseMessages.slice(-30).map(m => ({ id: m.id, content: m.content.slice(0, 20), author: m.author.username })));
+
+            // // total messages
+            // console.log(`Total messages: ${reverseMessages.length}`);
 
             // console.log(`Context text length: ${contextText.length}`);
             // // token estimator, to estimate the number of tokens in the context text
