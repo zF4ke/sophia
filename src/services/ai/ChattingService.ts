@@ -23,7 +23,7 @@ export class ChattingService {
         } = {}
     ): Promise<string> {
         const {
-            limit = 20,
+            limit = 100,
             includeBots = true,
             userName,
             interaction
