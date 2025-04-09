@@ -28,6 +28,10 @@ module.exports = {
                 .setMaxValue(50000)
                 .setRequired(false))
         .addBooleanOption(option =>
+            option.setName("extremely_long_answer")
+                .setDescription("Usar resposta longa (padrão: false)")
+                .setRequired(false))
+        .addBooleanOption(option =>
             option.setName("include_bots")
                 .setDescription("Incluir mensagens de bots no contexto (padrão: false)")
                 .setRequired(false))
@@ -52,6 +56,7 @@ module.exports = {
             const prompt = interaction.options.getString("prompt");
             const limit = interaction.options.getInteger("limit") || 0;
             const includeBots = interaction.options.getBoolean("include_bots") ?? false;
+            const extremelyLongAnswer = interaction.options.getBoolean("extremely_long_answer") ?? false;
 
             if (!channel || !prompt) {
                 return await interaction.editReply(UIService.formatStatusMessage(EMOJIS.info, "Por favor, forneça um canal e uma pergunta.", false));
@@ -81,7 +86,9 @@ module.exports = {
             const contextText = AIService.formatMessagesAsContext(messages, includeBots);
             
             const promptWithAuthor = TextProcessingService.addAuthorToQuestion(prompt, interaction.user.username);
-            const response = await AIService.generateContextualResponse(promptWithAuthor, contextText);
+            const response = await AIService.generateContextualResponse(promptWithAuthor, contextText, {
+                extremelyLongAnswer,
+            });
             const messageHeader = UIService.formatStatusMessage(EMOJIS.complete, `Resposta baseada no contexto`);
             
             await UIService.sendLongResponse(interaction, messageHeader, response, ephemeral);

@@ -30,6 +30,20 @@ export class AIBaseService {
       maxOutputTokens: 1024,
     }
   });
+
+  /**
+   * Model configured for long responses with specific generation parameters
+   * @protected
+   */
+  protected static longResponseModel = this.genAI.getGenerativeModel({
+    model: "gemini-2.0-flash",
+    generationConfig: {
+      temperature: 0.4,
+      topP: 0.8,
+      topK: 40,
+      maxOutputTokens: 8192,
+    }
+  });
   
   /**
    * Creates a model with custom generation configuration

@@ -159,15 +159,18 @@ export class AIService extends AIBaseService {
    * Generates a contextual response to a user prompt using conversation context
    * @param prompt - User query or instruction
    * @param context - Conversation context to inform the response
-   * @param additionalInstructions - Additional instructions for the AI
+   * @param options - Options for response generation
    * @returns Promise with the generated response
    */
   public static async generateContextualResponse(
     question: string, 
     context: string,
-    additionalInstructions: string = "",
+    options: {
+      additionalInstructions?: string,
+      extremelyLongAnswer?: boolean,
+    } = {},
   ): Promise<string> {
-    return ResponseGenerationService.generateContextualResponse(question, context, additionalInstructions);
+    return ResponseGenerationService.generateContextualResponse(question, context, options);
   }
 
   /**

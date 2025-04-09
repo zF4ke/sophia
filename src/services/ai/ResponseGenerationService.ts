@@ -107,14 +107,15 @@ export class ResponseGenerationService extends AIBaseService {
    * Generates a contextual response to a user prompt using provided conversation context
    * @param prompt - User query or instruction
    * @param context - Conversation context to inform the response
-   * @param additionalInstructions - Optional additional instructions for the AI
-   * @param maxLength - Maximum target length for response (default: 1000 characters)
    * @returns Promise with the generated response
    */
   public static async generateContextualResponse(
     question: string, 
     context: string,
-    additionalInstructions: string = "",
+    options: {
+      additionalInstructions?: string,
+      extremelyLongAnswer?: boolean,
+    } = { additionalInstructions: "", extremelyLongAnswer: false }
   ): Promise<string> {
     try {
       const style = PersonalityService.determineResponseStyle(question, context);
@@ -125,7 +126,7 @@ export class ResponseGenerationService extends AIBaseService {
             Contexto das conversas:
             ${context}
             
-            ${additionalInstructions ? additionalInstructions + "\n\n" : ""}
+            ${options.additionalInstructions ? options.additionalInstructions + "\n\n" : ""}
             Pergunta/instrução do usuário:
             ${question}
             
@@ -141,7 +142,8 @@ export class ResponseGenerationService extends AIBaseService {
       const finalPrompt = PersonalityService.adjustPromptForPersonality(basePrompt, style);
       
       // Generate AI response
-      const result = await this.contextModel.generateContent(finalPrompt);
+      const model = options.extremelyLongAnswer ? this.longResponseModel : this.contextModel;
+      const result = await model.generateContent(finalPrompt);
       const response = result.response.text();
       
       return response;
