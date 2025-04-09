@@ -85,8 +85,9 @@ export class ResponseGenerationService extends AIBaseService {
             - Evite repetir o que já foi dito anteriormente
             - Se o usuário mudar de assunto, adapte sua resposta para o novo tópico
             - Avoid repeating the same phrases or sentences
-            - Don't always end with a question
             - Resposta mais curta é melhor
+            - Evite mandar pergunta de volta para o usuário
+            - Use o contexto para justificar sua resposta quando relevante
       `;
 
       const finalPrompt = PersonalityService.adjustPromptForPersonality(basePrompt, style);
