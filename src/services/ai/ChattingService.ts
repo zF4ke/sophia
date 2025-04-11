@@ -30,8 +30,8 @@ export class ChattingService {
         } = options;
 
         const messages = await MessageService.fetchMessages(channel, limit);
+        console.log("messages.length", messages.length);        
         const contextText = AIService.formatMessagesAsContext(messages, includeBots) + "\n" + (options.additionalContext || "");
-            
         const promptContentWithoutMention = prompt.replace(/<@!?[0-9]+>/, "").trim();
         const convertedPrompt = await TextProcessingService.convertMentionsToNames(promptContentWithoutMention, interaction?.user.client!);
         

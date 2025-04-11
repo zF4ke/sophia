@@ -239,6 +239,7 @@ export class MessageService {
         let messages: Message[] = [];
         
         if (useCache) {
+            //console.log("Fetching messages with cache...");
             messages = await this.fetchMessagesWithCache(channel, limit, interaction);
         } else {
             messages = await this.fetchMessagesWithoutCache(channel, limit, interaction);
@@ -533,6 +534,10 @@ export class MessageService {
         messages: Message[],
         oldestFirst: boolean = false
     ): Message[] {
+        // remove duplicates
+        const uniqueMessages = new Map(messages.map(msg => [msg.id, msg]));
+        messages = Array.from(uniqueMessages.values());
+
         if (oldestFirst) {
             return messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
         } else {
