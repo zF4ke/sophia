@@ -218,9 +218,11 @@ export class PersonalityService extends AIBaseService {
     `;
 
     console.log(`Prompt ajustado para ${identity.name}:\n${personalityInstructions}`);
-    console.log(`Base Prompt:\n${this.emojiRemover(basePrompt)}`);
+    //console.log(`Base Prompt:\n${this.emojiRemover(basePrompt)}`);
+    console.log(`Base Prompt:\n${basePrompt}`);
 
-    return `${personalityInstructions}\n\nPrompt original:\n${this.emojiRemover(basePrompt)}`;
+    //return `${personalityInstructions}\n\nPrompt original:\n${this.emojiRemover(basePrompt)}`;
+    return `${personalityInstructions}\n\nPrompt original:\n${basePrompt}`;
   }
 
   /**
