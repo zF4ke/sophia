@@ -15,6 +15,10 @@ type ModelTraceEntry = {
     traceLabel: string;
     questionPreview: string | null;
     durationMs: number;
+    webMode?: string;
+    webContext?: string;
+    webStatus?: string;
+    webSearchRequests?: number;
     messages: ChatMessage[];
     rawOutput: string;
     normalizedOutput?: string;

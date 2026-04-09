@@ -2,7 +2,12 @@ import OpenAI from "openai";
 import { EmptyModelOutputError } from "@/ai/EmptyModelOutputError";
 import { ModelTraceLogger } from "@/ai/ModelTraceLogger";
 import { getAppConfig } from "@/app/AppConfig";
-import type { ModelProfile, ModelTraceContext } from "@/shared/appTypes";
+import type {
+    ModelProfile,
+    ModelTraceContext,
+    WebMode,
+    WebStatus,
+} from "@/shared/appTypes";
 
 type ChatMessage = {
     role: "system" | "user" | "assistant";
@@ -14,6 +19,11 @@ type ChatOptions = {
     temperature?: number;
     maxOutputTokens?: number;
     traceContext?: ModelTraceContext;
+    webMode?: WebMode;
+    onComplete?: (meta: {
+        webStatus: WebStatus;
+        webSearchRequests: number;
+    }) => void | Promise<void>;
 };
 
 export class ModelGateway {
@@ -39,7 +49,8 @@ export class ModelGateway {
         messages: ChatMessage[],
         options: ChatOptions = {}
     ): Promise<string> {
-        const { model, rawOutput, durationMs } = await this.runChatCompletion(messages, options);
+        const { model, rawOutput, durationMs, webStatus, webSearchRequests } =
+            await this.runChatCompletion(messages, options);
         const normalizedOutput = rawOutput.trim();
         const traceLabel = options.traceContext?.traceLabel || "unlabeled_text_generation";
 
@@ -50,10 +61,19 @@ export class ModelGateway {
             traceLabel,
             questionPreview: this.getQuestionPreview(messages, options.traceContext),
             durationMs,
+            webMode: options.webMode || "off",
+            webContext: options.traceContext?.webContext,
+            webStatus,
+            webSearchRequests,
             messages,
             rawOutput,
             normalizedOutput,
             blankOutput: !normalizedOutput,
+        });
+
+        await options.onComplete?.({
+            webStatus,
+            webSearchRequests,
         });
 
         if (!normalizedOutput) {
@@ -68,7 +88,8 @@ export class ModelGateway {
         fallback: T,
         options: ChatOptions = {}
     ): Promise<T> {
-        const { model, rawOutput, durationMs } = await this.runChatCompletion(messages, options);
+        const { model, rawOutput, durationMs, webStatus, webSearchRequests } =
+            await this.runChatCompletion(messages, options);
         const traceLabel = options.traceContext?.traceLabel || "unlabeled_json_generation";
         const extracted = this.extractJson(rawOutput);
         let parsedJson: T | undefined;
@@ -94,12 +115,21 @@ export class ModelGateway {
             traceLabel,
             questionPreview: this.getQuestionPreview(messages, options.traceContext),
             durationMs,
+            webMode: options.webMode || "off",
+            webContext: options.traceContext?.webContext,
+            webStatus,
+            webSearchRequests,
             messages,
             rawOutput,
             normalizedOutput: rawOutput.trim(),
             blankOutput: !rawOutput.trim(),
             parsedJson,
             parseError,
+        });
+
+        await options.onComplete?.({
+            webStatus,
+            webSearchRequests,
         });
 
         if (parsedJson !== undefined) {
@@ -137,22 +167,52 @@ export class ModelGateway {
     private static async runChatCompletion(
         messages: ChatMessage[],
         options: ChatOptions
-    ): Promise<{ model: string; rawOutput: string; durationMs: number }> {
+    ): Promise<{
+        model: string;
+        rawOutput: string;
+        durationMs: number;
+        webStatus: WebStatus;
+        webSearchRequests: number;
+    }> {
         const config = getAppConfig();
         const profile = options.profile || config.modelProfile;
         const client = this.getClient();
         const startedAt = Date.now();
-        const completion = await client.chat.completions.create({
+        const webMode = options.webMode || "off";
+        const request: Record<string, unknown> = {
             model: profile.chatModel,
             temperature: options.temperature ?? profile.temperature,
             max_tokens: options.maxOutputTokens ?? profile.maxOutputTokens,
             messages,
-        });
+        };
+
+        if (webMode !== "off") {
+            request.tools = [
+                {
+                    type: "openrouter:web_search",
+                    parameters: {
+                        engine: "auto",
+                        max_results: 5,
+                        search_context_size: "medium",
+                    },
+                },
+            ];
+        }
+
+        const completion = await client.chat.completions.create(request as any);
+        const webSearchRequests = Math.max(
+            0,
+            Number((completion as any)?.usage?.server_tool_use?.web_search_requests ?? 0)
+        );
+        const webStatus: WebStatus =
+            webMode === "off" ? "off" : webSearchRequests > 0 ? "used" : "enabled";
 
         return {
             model: profile.chatModel,
             rawOutput: completion.choices[0]?.message?.content || "",
             durationMs: Math.max(0, Date.now() - startedAt),
+            webStatus,
+            webSearchRequests,
         };
     }
 

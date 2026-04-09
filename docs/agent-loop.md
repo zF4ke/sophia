@@ -13,6 +13,8 @@ The agent loop is intentionally short and bounded.
 7. The controller may choose channel discovery, live crawl, and local retry when local memory is weak.
 8. Grounded answers use a graded outcome: `confident`, `best_effort`, or `insufficient`.
 9. The synthesis prompt builds the final grounded answer from compact evidence only.
+10. Conversational surfaces (`/talk`, mentions, replies to Sophia) may enable OpenRouter web search automatically for clearly external/current questions.
+11. Discord-grounded conversational requests still try Discord memory/live tools first; selective web fallback is only allowed when the remaining need appears external/current rather than purely Discord-local.
 
 ## Available Tools
 
@@ -41,6 +43,7 @@ The agent loop is intentionally short and bounded.
 - Reusable grounded contexts are guild-wide by default, but same-channel matches should win when available.
 - Tool-result caching uses TTL plus a short per-guild response-age limit in v1.
 - Final answers should not append visible source lists or citation blocks.
+- Conversational web search is a `ModelGateway` capability, not a Discord retrieval tool, and it should stay off for `/ask` and `/context` unless intentionally expanded later.
 
 If a tool is changed, the runtime and prompt contract must change together. The most important synchronization points are:
 

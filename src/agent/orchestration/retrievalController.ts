@@ -794,12 +794,17 @@ function normalizeNextAction(
         "list_relevant_channels",
         "crawl_channel_messages",
     ]);
-    if (raw && allowed.has(raw)) {
-        return raw;
+    if (
+        forcedFinal &&
+        raw &&
+        raw !== "answer" &&
+        raw !== "best_effort_answer"
+    ) {
+        return fallback;
     }
 
-    if (forcedFinal && !fallback) {
-        return "answer";
+    if (raw && allowed.has(raw)) {
+        return raw;
     }
 
     return fallback;
@@ -810,12 +815,16 @@ function normalizeAnswerConfidence(
     fallback: GroundedAnswerMode,
     nextAction: RetrievalControllerDecision["nextAction"]
 ): GroundedAnswerMode {
-    if (raw === "confident" || raw === "best_effort" || raw === "insufficient") {
-        return raw;
-    }
-
     if (nextAction === "best_effort_answer") {
         return "best_effort";
+    }
+
+    if (nextAction === "answer" && raw === "insufficient") {
+        return fallback;
+    }
+
+    if (raw === "confident" || raw === "best_effort" || raw === "insufficient") {
+        return raw;
     }
 
     return fallback;

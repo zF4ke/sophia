@@ -63,6 +63,11 @@ describe("ModelGateway", () => {
     it("logs text generations to disk", async () => {
         const create = vi.fn().mockResolvedValue({
             choices: [{ message: { content: "Resposta final" } }],
+            usage: {
+                server_tool_use: {
+                    web_search_requests: 0,
+                },
+            },
         });
         (ModelGateway as any).client.chat.completions.create = create;
 
@@ -86,12 +91,19 @@ describe("ModelGateway", () => {
             rawOutput: "Resposta final",
             normalizedOutput: "Resposta final",
             questionPreview: "Pergunta de teste",
+            webMode: "off",
+            webStatus: "off",
         });
     });
 
     it("logs json generations with parsed output", async () => {
         (ModelGateway as any).client.chat.completions.create = vi.fn().mockResolvedValue({
             choices: [{ message: { content: '{"mode":"direct_answer","reason":"ok"}' } }],
+            usage: {
+                server_tool_use: {
+                    web_search_requests: 0,
+                },
+            },
         });
 
         const result = await ModelGateway.generateJson(
@@ -124,6 +136,11 @@ describe("ModelGateway", () => {
                     },
                 },
             ],
+            usage: {
+                server_tool_use: {
+                    web_search_requests: 0,
+                },
+            },
         });
 
         await ModelGateway.generateJson(
@@ -148,6 +165,11 @@ describe("ModelGateway", () => {
     it("throws on blank text output and logs the failure", async () => {
         (ModelGateway as any).client.chat.completions.create = vi.fn().mockResolvedValue({
             choices: [{ message: { content: "   " } }],
+            usage: {
+                server_tool_use: {
+                    web_search_requests: 0,
+                },
+            },
         });
 
         await expect(
@@ -164,6 +186,56 @@ describe("ModelGateway", () => {
             callKind: "text",
             traceLabel: "blank_text_test",
             blankOutput: true,
+        });
+    });
+
+    it("sends the OpenRouter web search tool when web mode is enabled", async () => {
+        const create = vi.fn().mockResolvedValue({
+            choices: [{ message: { content: "Resposta com web" } }],
+            usage: {
+                server_tool_use: {
+                    web_search_requests: 2,
+                },
+            },
+        });
+        (ModelGateway as any).client.chat.completions.create = create;
+
+        await ModelGateway.generateText(
+            [{ role: "user", content: "Quais foram as noticias de IA hoje?" }],
+            {
+                webMode: "auto",
+                traceContext: {
+                    traceLabel: "web_text_test",
+                    questionPreview: "Quais foram as noticias de IA hoje?",
+                    webMode: "auto",
+                    webContext: "talk_direct_answer",
+                },
+            }
+        );
+
+        expect(create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tools: [
+                    {
+                        type: "openrouter:web_search",
+                        parameters: {
+                            engine: "auto",
+                            max_results: 5,
+                            search_context_size: "medium",
+                        },
+                    },
+                ],
+            })
+        );
+
+        const entries = readLogEntries();
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+            traceLabel: "web_text_test",
+            webMode: "auto",
+            webContext: "talk_direct_answer",
+            webStatus: "used",
+            webSearchRequests: 2,
         });
     });
 });

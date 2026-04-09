@@ -6,6 +6,7 @@ import type {
     GroundingDecisionMode,
     GroundingSummary,
     RetrievalControllerDecision,
+    WebStatus,
 } from "@/shared/appTypes";
 
 const MAX_EVENTS = 6;
@@ -46,10 +47,12 @@ export class DebugSession implements DebugSessionReporter {
             mode: null,
             controllerDecision: null,
             toolNames: [],
+            toolCallCount: 0,
             groundingSummary: null,
             groundingDecisionMode: null,
             groundedAnswerMode: null,
             contextCacheStatus: "none",
+            webStatus: null,
             recentEvents: ["Iniciado"],
             startedAt: Date.now(),
         };
@@ -109,6 +112,22 @@ export class DebugSession implements DebugSessionReporter {
         );
     }
 
+    public async setWebStatus(status: WebStatus): Promise<void> {
+        const labels = {
+            off: "Web: desativada",
+            enabled: "Web: habilitada",
+            used: "Web: usada",
+        };
+
+        await this.mutate(
+            "Ajustando busca na web",
+            labels[status],
+            (state) => {
+                state.webStatus = status;
+            }
+        );
+    }
+
     public async setToolRunning(toolName: string, details: string[] = []): Promise<void> {
         await this.mutate(
             `Usando ${toolName}`,
@@ -129,6 +148,7 @@ export class DebugSession implements DebugSessionReporter {
                 ? `${toolName}: ${summary}`
                 : `${toolName}: ${summary} (${itemCount})`,
             (state) => {
+                state.toolCallCount += 1;
                 if (!state.toolNames.includes(toolName)) {
                     state.toolNames.push(toolName);
                 }

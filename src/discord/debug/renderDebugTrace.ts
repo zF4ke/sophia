@@ -84,6 +84,22 @@ function formatContextCacheStatus(state: DebugTraceState): string {
     return "não";
 }
 
+function formatWebStatus(state: DebugTraceState): string {
+    if (!state.webStatus) {
+        return "";
+    }
+
+    if (state.webStatus === "used") {
+        return "usada";
+    }
+
+    if (state.webStatus === "enabled") {
+        return "habilitada";
+    }
+
+    return "desativada";
+}
+
 function formatControllerDecision(state: DebugTraceState): string {
     if (!state.controllerDecision) {
         return "";
@@ -114,8 +130,14 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder {
             details.push(`**Controle:** ${route}`);
         }
 
+        const webStatus = formatWebStatus(state);
+        if (webStatus) {
+            details.push(`**Web:** ${webStatus}`);
+        }
+
         details.push(`**Cache de contexto:** ${formatContextCacheStatus(state)}`);
         details.push(`**Ferramentas:** ${tools}`);
+        details.push(`**Chamadas de ferramenta:** ${state.toolCallCount}`);
 
         if (state.groundingSummary) {
             details.push(`**Base útil:** ${formatGroundingSummary(state)}`);
@@ -131,7 +153,13 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder {
             details.push(`**Decisão:** ${formatGroundingDecisionMode(state)}`);
         }
     } else {
+        const webStatus = formatWebStatus(state);
+        if (webStatus) {
+            details.push(`**Web:** ${webStatus}`);
+        }
+
         details.push(`**Ferramentas:** ${tools}`);
+        details.push(`**Chamadas de ferramenta:** ${state.toolCallCount}`);
     }
 
     details.push(`**Tempo:** ${formatDuration(state.startedAt)}`);

@@ -4,8 +4,10 @@ import type { DebugSessionReporter } from "@/discord/debug/types";
 import { RequestClassifier } from "@/agent/RequestClassifier";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type {
+    ConversationSurface,
     DiscordToolResult,
     RequestClassification,
+    WebMode,
 } from "@/shared/appTypes";
 import {
     EMPTY_OUTPUT_FALLBACK,
@@ -25,6 +27,7 @@ import {
 import { runWithRequestCacheContext } from "@/agent/orchestration/requestCacheContext";
 import { runDiscordToolLoop } from "@/agent/orchestration/toolLoop";
 import { assessGrounding } from "@/agent/orchestration/grounding";
+import { decideConversationWebMode } from "@/agent/orchestration/conversationWebDecision";
 import { PromptRegistry } from "@/agent/prompts/PromptRegistry";
 import { isReferentialFollowUp } from "@/agent/orchestration/questionAnalysis";
 import type { SearchContext } from "@/agent/orchestration/types";
@@ -36,6 +39,8 @@ export class AgentOrchestrator {
         guild: Guild | null;
         currentChannelId?: string | null;
         debugSession?: DebugSessionReporter | null;
+        conversationWebMode?: WebMode;
+        conversationSurface?: ConversationSurface | null;
     }): Promise<{
         answer: string;
         citations: Array<{ label: string; jumpLink: string }>;
@@ -58,11 +63,17 @@ export class AgentOrchestrator {
                     const classification = await RequestClassifier.classify(options.question);
                     await options.debugSession?.setClassification(classification.mode);
 
+                    if (options.conversationWebMode === "auto" && options.conversationSurface) {
+                        await options.debugSession?.setWebStatus?.("off");
+                    }
+
                     if (classification.mode === "direct_answer") {
                         return await this.answerDirectQuestion(
                             options.question,
                             classification,
-                            options.debugSession
+                            options.debugSession,
+                            options.conversationWebMode,
+                            options.conversationSurface
                         );
                     }
 
@@ -93,10 +104,29 @@ export class AgentOrchestrator {
     private static async answerDirectQuestion(
         question: string,
         classification: RequestClassification,
-        debugSession?: DebugSessionReporter | null
+        debugSession?: DebugSessionReporter | null,
+        conversationWebMode: WebMode = "off",
+        conversationSurface?: ConversationSurface | null
     ) {
+        const webDecision = decideConversationWebMode({
+            question,
+            classification,
+            conversationWebMode,
+            conversationSurface,
+        });
+        if (webDecision.webMode !== "off") {
+            await debugSession?.setWebStatus?.("enabled");
+        }
         await debugSession?.setGenerating();
-        const answer = await generateDirectAnswer(question);
+        const answer = await generateDirectAnswer(question, {
+            webMode: webDecision.webMode,
+            webContext: conversationSurface ? `${conversationSurface}_direct_answer` : undefined,
+            onComplete: async (meta) => {
+                if (meta.webStatus !== "off") {
+                    await debugSession?.setWebStatus?.(meta.webStatus);
+                }
+            },
+        });
         await debugSession?.finishSuccess("Resposta direta concluída.");
 
         return {
@@ -114,6 +144,8 @@ export class AgentOrchestrator {
             guild: Guild | null;
             currentChannelId?: string | null;
             debugSession?: DebugSessionReporter | null;
+            conversationWebMode?: WebMode;
+            conversationSurface?: ConversationSurface | null;
         },
         classification: RequestClassification
     ) {
@@ -173,6 +205,37 @@ export class AgentOrchestrator {
             );
 
             if (cachedDecision.answerConfidence === "insufficient") {
+                const webDecision = decideConversationWebMode({
+                    question: options.question,
+                    classification,
+                    conversationSurface: options.conversationSurface,
+                    conversationWebMode: options.conversationWebMode || "off",
+                    groundedAnswerMode: cachedDecision.answerConfidence,
+                });
+
+                if (webDecision.webMode !== "off") {
+                    await options.debugSession?.setWebStatus?.("enabled");
+                    await options.debugSession?.setGenerating();
+                    const answer = await generateDirectAnswer(options.question, {
+                        webMode: webDecision.webMode,
+                        webContext: options.conversationSurface
+                            ? `${options.conversationSurface}_grounded_fallback`
+                            : "grounded_fallback",
+                        onComplete: async (meta) => {
+                            if (meta.webStatus !== "off") {
+                                await options.debugSession?.setWebStatus?.(meta.webStatus);
+                            }
+                        },
+                    });
+                    await options.debugSession?.finishSuccess("Resposta concluída.");
+                    return {
+                        answer,
+                        citations: [],
+                        classification,
+                        toolRuns: reusableContext.toolRuns,
+                    };
+                }
+
                 await options.debugSession?.finishSuccess("Concluído sem evidência suficiente.");
                 return {
                     answer: PromptRegistry.load("guards/insufficient_evidence"),
@@ -269,6 +332,38 @@ export class AgentOrchestrator {
         });
 
         if (finalDecision.answerConfidence === "insufficient") {
+            const webDecision = decideConversationWebMode({
+                question: options.question,
+                classification,
+                conversationSurface: options.conversationSurface,
+                conversationWebMode: options.conversationWebMode || "off",
+                groundedAnswerMode: finalDecision.answerConfidence,
+            });
+
+            if (webDecision.webMode !== "off") {
+                await options.debugSession?.setWebStatus?.("enabled");
+                await options.debugSession?.setGenerating();
+                const answer = await generateDirectAnswer(options.question, {
+                    webMode: webDecision.webMode,
+                    webContext: options.conversationSurface
+                        ? `${options.conversationSurface}_grounded_fallback`
+                        : "grounded_fallback",
+                    onComplete: async (meta) => {
+                        if (meta.webStatus !== "off") {
+                            await options.debugSession?.setWebStatus?.(meta.webStatus);
+                        }
+                    },
+                });
+                this.recordToolRuns(options, toolRuns.slice(initialToolRuns.length));
+                await options.debugSession?.finishSuccess("Resposta concluída.");
+                return {
+                    answer,
+                    citations: [],
+                    classification,
+                    toolRuns,
+                };
+            }
+
             await options.debugSession?.finishSuccess("Concluído sem evidência suficiente.");
             return {
                 answer: PromptRegistry.load("guards/insufficient_evidence"),

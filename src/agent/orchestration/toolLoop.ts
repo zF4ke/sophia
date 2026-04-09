@@ -7,7 +7,7 @@ import type {
     RetrievalControllerDecision,
     SearchPlan,
 } from "@/shared/appTypes";
-import { collectMemberEvidence } from "@/agent/orchestration/grounding";
+import { assessGrounding, collectMemberEvidence } from "@/agent/orchestration/grounding";
 import { getDebugItemCount } from "@/agent/orchestration/evidenceFormatting";
 import { describePlannedTool } from "@/agent/orchestration/debugPlanningDetails";
 import { executeTool } from "@/agent/orchestration/toolExecution";
@@ -45,6 +45,9 @@ export async function runDiscordToolLoop(options: {
 
     for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
         await options.debugSession?.setPlanning(step + 1);
+        const shouldForceFinal =
+            toolRuns.length > 0 &&
+            assessGrounding(options.question, toolRuns).summary.sufficient;
         const decision = await decideRetrievalAction({
             question: options.question,
             guild: options.guild,
@@ -52,6 +55,7 @@ export async function runDiscordToolLoop(options: {
             toolRuns,
             priorContext: options.priorContext,
             context,
+            forcedFinal: shouldForceFinal,
         });
         context.latestControllerDecision = decision;
         await options.debugSession?.setRouting?.(decision);

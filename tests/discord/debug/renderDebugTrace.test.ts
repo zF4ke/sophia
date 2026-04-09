@@ -20,6 +20,7 @@ describe("renderDebugTrace", () => {
                 reason: "Canal parece ser o alvo.",
             },
             toolNames: ["search_messages", "read_message_thread"],
+            toolCallCount: 2,
             groundingSummary: {
                 messageEvidenceCount: 4,
                 liveEvidenceCount: 0,
@@ -28,6 +29,7 @@ describe("renderDebugTrace", () => {
             groundingDecisionMode: "judge",
             groundedAnswerMode: "best_effort",
             contextCacheStatus: "seeded",
+            webStatus: "enabled",
             recentEvents: ["Executando search_messages", "Modo escolhido: Com grounding do Discord"],
             startedAt: Date.now() - 1_000,
         }).toJSON();
@@ -39,6 +41,9 @@ describe("renderDebugTrace", () => {
         expect(JSON.stringify(json)).toContain("Base útil");
         expect(JSON.stringify(json)).toContain("mensagens 4");
         expect(JSON.stringify(json)).toContain("Cache de contexto");
+        expect(JSON.stringify(json)).toContain("Chamadas de ferramenta");
+        expect(JSON.stringify(json)).toContain("Web");
+        expect(JSON.stringify(json)).toContain("habilitada");
         expect(JSON.stringify(json)).toContain("juiz");
     });
 
@@ -50,6 +55,7 @@ describe("renderDebugTrace", () => {
             mode: "Resposta direta",
             controllerDecision: null,
             toolNames: [],
+            toolCallCount: 0,
             groundingSummary: {
                 messageEvidenceCount: 0,
                 liveEvidenceCount: 0,
@@ -58,6 +64,7 @@ describe("renderDebugTrace", () => {
             groundingDecisionMode: "heuristic",
             groundedAnswerMode: null,
             contextCacheStatus: "none",
+            webStatus: null,
             recentEvents: ["Erro: timeout"],
             startedAt: Date.now() - 1_000,
         }).toJSON();

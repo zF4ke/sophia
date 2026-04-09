@@ -59,6 +59,8 @@ export = {
                 guild: interaction.guild,
                 currentChannelId: interaction.channelId,
                 debugSession,
+                conversationWebMode: "auto",
+                conversationSurface: "talk",
             });
 
             await UIService.sendLongResponse(

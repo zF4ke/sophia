@@ -18,10 +18,12 @@ function buildInitialState(question: string): DebugTraceState {
         mode: null,
         controllerDecision: null,
         toolNames: [],
+        toolCallCount: 0,
         groundingSummary: null,
         groundingDecisionMode: null,
         groundedAnswerMode: null,
         contextCacheStatus: "none",
+        webStatus: null,
         recentEvents: ["Iniciado"],
         startedAt: Date.now(),
     };

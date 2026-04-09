@@ -29,6 +29,8 @@ This file is the canonical engineering and operator handoff for the runtime. `RE
 8. Keep citations internal for grounding, cache, and debug, but do not show source lists in the final user-facing answer.
 9. Identity questions may answer from resolved member/profile evidence alone.
 10. Message-history questions should continue searching for message evidence; if some evidence exists but the budget ends, return a best-effort grounded answer instead of the generic guard.
+11. Conversational surfaces (`/talk`, mentions, and replies to Sophia) may enable OpenRouter web search automatically for clearly external or current questions, but Discord-grounded retrieval should stay first for server-specific requests.
+12. Web fallback is selective: if Discord evidence is weak and the unresolved need still looks external/current, Sophia may answer through the web-enabled direct path; otherwise she should keep the response Discord-only.
 
 The main orchestration files are:
 

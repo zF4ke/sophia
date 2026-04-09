@@ -40,6 +40,7 @@ describe("AgentOrchestrator debug reporting", () => {
         const debugSession = {
             setClassifying: vi.fn().mockResolvedValue(undefined),
             setClassification: vi.fn().mockResolvedValue(undefined),
+            setWebStatus: vi.fn().mockResolvedValue(undefined),
             setPlanning: vi.fn().mockResolvedValue(undefined),
             setToolRunning: vi.fn().mockResolvedValue(undefined),
             setToolResult: vi.fn().mockResolvedValue(undefined),
@@ -64,6 +65,52 @@ describe("AgentOrchestrator debug reporting", () => {
             "Resposta direta concluída."
         );
         expect(debugSession.setToolRunning).not.toHaveBeenCalled();
+        expect(debugSession.setWebStatus).not.toHaveBeenCalled();
+    });
+
+    it("enables web for conversational direct answers when the question is external/current", async () => {
+        vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
+            mode: "direct_answer",
+            reason: "current external question",
+        });
+        const generateTextSpy = vi
+            .spyOn(ModelGateway, "generateText")
+            .mockResolvedValue("Te conto as noticias de IA.");
+
+        const debugSession = {
+            setClassifying: vi.fn().mockResolvedValue(undefined),
+            setClassification: vi.fn().mockResolvedValue(undefined),
+            setWebStatus: vi.fn().mockResolvedValue(undefined),
+            setPlanning: vi.fn().mockResolvedValue(undefined),
+            setToolRunning: vi.fn().mockResolvedValue(undefined),
+            setToolResult: vi.fn().mockResolvedValue(undefined),
+            setGroundingSummary: vi.fn().mockResolvedValue(undefined),
+            setGenerating: vi.fn().mockResolvedValue(undefined),
+            finishSuccess: vi.fn().mockResolvedValue(undefined),
+            finishError: vi.fn().mockResolvedValue(undefined),
+        };
+
+        await AgentOrchestrator.answerQuestion({
+            question: "quais foram as noticias de IA hoje?",
+            user: { id: "u1" } as any,
+            guild: null,
+            currentChannelId: "c1",
+            debugSession,
+            conversationWebMode: "auto",
+            conversationSurface: "talk",
+        });
+
+        expect(debugSession.setWebStatus).toHaveBeenCalledWith("off");
+        expect(debugSession.setWebStatus).toHaveBeenCalledWith("enabled");
+        expect(generateTextSpy).toHaveBeenCalledWith(
+            expect.any(Array),
+            expect.objectContaining({
+                webMode: "auto",
+                traceContext: expect.objectContaining({
+                    webContext: "talk_direct_answer",
+                }),
+            })
+        );
     });
 
     it("reports grounded tool steps and insufficient evidence", async () => {
@@ -649,6 +696,94 @@ describe("AgentOrchestrator debug reporting", () => {
         ).toBe(true);
     });
 
+    it("stops early once sufficient evidence exists instead of spending extra tool calls", async () => {
+        vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
+            mode: "discord_grounded",
+            reason: "needs discord evidence",
+        });
+        vi.spyOn(ModelGateway, "generateJson")
+            .mockResolvedValueOnce({
+                questionIntent: "channel_or_topic_search",
+                nextAction: "search_messages",
+                targetText: "comandos",
+                searchQuery: "OP Sylphiette batalha",
+                needsMessageEvidence: true,
+                answerConfidence: "best_effort",
+                confidence: 0.9,
+                reason: "Search memory first.",
+            } as any)
+            .mockResolvedValueOnce({
+                questionIntent: "channel_or_topic_search",
+                nextAction: "search_messages",
+                targetText: "comandos",
+                searchQuery: "OP Sylphiette batalha",
+                needsMessageEvidence: true,
+                answerConfidence: "best_effort",
+                confidence: 0.9,
+                reason: "Search memory first.",
+            } as any)
+            .mockResolvedValueOnce({
+                questionIntent: "channel_or_topic_search",
+                nextAction: "list_relevant_channels",
+                targetText: "comandos",
+                searchQuery: "OP Sylphiette batalha",
+                needsMessageEvidence: true,
+                answerConfidence: "insufficient",
+                confidence: 0.9,
+                reason: "Try another tool.",
+            } as any);
+        const searchSpy = vi.spyOn(DiscordToolService, "searchMessages").mockResolvedValue({
+            tool: "search_messages",
+            summary: "Found 20 relevant message chunks.",
+            data: Array.from({ length: 20 }, (_, index) => ({
+                totalScore: 0.52 - index * 0.005,
+                channelId: "c-cmd",
+                channelName: "comandos",
+                authorId: "u1",
+                authorName: "zF4ke",
+                jumpLink: `https://example.com/${index}`,
+                content: `OP versus Sylphiette parte ${index + 1}`,
+            })),
+        } as any);
+        const listRelevantChannelsSpy = vi
+            .spyOn(DiscordToolService, "listRelevantChannels")
+            .mockResolvedValue({
+                tool: "list_relevant_channels",
+                summary: "Found 3 potentially relevant channels.",
+                data: [],
+            } as any);
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
+            "Foi um confronto entre OP e Sylphiette no canal comandos."
+        );
+
+        const debugSession = {
+            setClassifying: vi.fn().mockResolvedValue(undefined),
+            setClassification: vi.fn().mockResolvedValue(undefined),
+            setRouting: vi.fn().mockResolvedValue(undefined),
+            setContextCacheStatus: vi.fn().mockResolvedValue(undefined),
+            setPlanning: vi.fn().mockResolvedValue(undefined),
+            setToolRunning: vi.fn().mockResolvedValue(undefined),
+            setToolResult: vi.fn().mockResolvedValue(undefined),
+            setGroundingSummary: vi.fn().mockResolvedValue(undefined),
+            setGenerating: vi.fn().mockResolvedValue(undefined),
+            finishSuccess: vi.fn().mockResolvedValue(undefined),
+            finishError: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const result = await AgentOrchestrator.answerQuestion({
+            question: "me relembra a batalha entre OP e Sylphiette",
+            user: { id: "u1" } as any,
+            guild: { id: "g1", name: "Oz Synthesis" } as any,
+            currentChannelId: "c-now",
+            debugSession,
+        });
+
+        expect(result.answer).toContain("OP e Sylphiette");
+        expect(searchSpy).toHaveBeenCalledTimes(1);
+        expect(listRelevantChannelsSpy).not.toHaveBeenCalled();
+        expect(debugSession.setToolResult).toHaveBeenCalledTimes(1);
+    });
+
     it("prioritizes a mentioned channel before member lookup", async () => {
         vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
             mode: "discord_grounded",
@@ -786,6 +921,98 @@ describe("AgentOrchestrator debug reporting", () => {
             "confident"
         );
         expect(generateTextSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses conversational web fallback when grounded evidence stays insufficient for an external/current request", async () => {
+        vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
+            mode: "discord_grounded",
+            reason: "mixed Discord + external context",
+        });
+        DiscordMemoryService.saveReusableGroundedContext({
+            guildId: "g1",
+            channelId: "c-now",
+            channelScopeKey: "c-now",
+            questionFingerprint: "qual foi o anuncio de ia de hoje",
+            routeIntent: "broad_search",
+            evidenceText: "Tool: search_messages\nSummary: No relevant stored messages found.",
+            citations: [],
+            toolRuns: [
+                {
+                    tool: "search_messages",
+                    summary: "No relevant stored messages found.",
+                    data: [],
+                },
+            ],
+            sufficient: true,
+            groundingDecisionMode: "heuristic",
+            createdTimestamp: Date.now(),
+            expiryTimestamp: Date.now() + 60_000,
+            createdResponseOrdinal: 1,
+        });
+        vi.spyOn(ModelGateway, "generateJson")
+            .mockResolvedValueOnce({
+                source: "ai",
+                questionIntent: "broad_search",
+                routeIntent: "broad_search",
+                nextAction: "search_messages",
+                targetText: null,
+                needsMessageEvidence: false,
+                answerConfidence: "insufficient",
+                confidence: 0.7,
+                reason: "Check broad Discord memory first.",
+            } as any)
+            .mockResolvedValueOnce({
+                source: "ai",
+                questionIntent: "broad_search",
+                routeIntent: "broad_search",
+                nextAction: "best_effort_answer",
+                targetText: null,
+                needsMessageEvidence: false,
+                answerConfidence: "insufficient",
+                confidence: 0.7,
+                reason: "Discord evidence is still insufficient.",
+            } as any);
+        const generateTextSpy = vi
+            .spyOn(ModelGateway, "generateText")
+            .mockResolvedValue("Hoje a principal noticia de IA foi X.");
+
+        const debugSession = {
+            setClassifying: vi.fn().mockResolvedValue(undefined),
+            setClassification: vi.fn().mockResolvedValue(undefined),
+            setRouting: vi.fn().mockResolvedValue(undefined),
+            setContextCacheStatus: vi.fn().mockResolvedValue(undefined),
+            setWebStatus: vi.fn().mockResolvedValue(undefined),
+            setPlanning: vi.fn().mockResolvedValue(undefined),
+            setToolRunning: vi.fn().mockResolvedValue(undefined),
+            setToolResult: vi.fn().mockResolvedValue(undefined),
+            setGroundingSummary: vi.fn().mockResolvedValue(undefined),
+            setGenerating: vi.fn().mockResolvedValue(undefined),
+            finishSuccess: vi.fn().mockResolvedValue(undefined),
+            finishError: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const result = await AgentOrchestrator.answerQuestion({
+            question: "qual foi o anuncio de IA de hoje?",
+            user: { id: "u1" } as any,
+            guild: { id: "g1", name: "Oz Synthesis" } as any,
+            currentChannelId: "c-now",
+            debugSession,
+            conversationWebMode: "auto",
+            conversationSurface: "talk",
+        });
+
+        expect(result.answer).toContain("noticia de IA");
+        expect(debugSession.setWebStatus).toHaveBeenCalledWith("off");
+        expect(debugSession.setWebStatus).toHaveBeenCalledWith("enabled");
+        expect(generateTextSpy).toHaveBeenCalledWith(
+            expect.any(Array),
+            expect.objectContaining({
+                webMode: "auto",
+                traceContext: expect.objectContaining({
+                    webContext: "talk_grounded_fallback",
+                }),
+            })
+        );
     });
 
     it("seeds the tool loop from a prior insufficient grounded context", async () => {

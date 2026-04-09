@@ -3,6 +3,7 @@ import type {
     GroundingDecisionMode,
     GroundingSummary,
     RetrievalControllerDecision,
+    WebStatus,
 } from "@/shared/appTypes";
 
 export interface DebugTraceState {
@@ -12,10 +13,12 @@ export interface DebugTraceState {
     mode: string | null;
     controllerDecision: RetrievalControllerDecision | null;
     toolNames: string[];
+    toolCallCount: number;
     groundingSummary: GroundingSummary | null;
     groundingDecisionMode: GroundingDecisionMode | null;
     groundedAnswerMode: GroundedAnswerMode | null;
     contextCacheStatus: "none" | "seeded" | "reused";
+    webStatus: WebStatus | null;
     recentEvents: string[];
     startedAt: number;
 }
@@ -25,6 +28,7 @@ export interface DebugSessionReporter {
     setClassification(mode: "direct_answer" | "discord_grounded"): Promise<void>;
     setRouting?(decision: RetrievalControllerDecision): Promise<void>;
     setContextCacheStatus?(status: "none" | "seeded" | "reused"): Promise<void>;
+    setWebStatus?(status: WebStatus): Promise<void>;
     setPlanning(step: number): Promise<void>;
     setToolRunning(toolName: string, details?: string[]): Promise<void>;
     setToolProgress?(toolName: string, summary: string): Promise<void>;

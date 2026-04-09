@@ -72,6 +72,8 @@ async function talk(message: Message) {
             guild: message.guild,
             currentChannelId: channel.id,
             debugSession,
+            conversationWebMode: "auto",
+            conversationSurface: "mention",
         });
 
         await UIService.sendLongMessage(message, UIService.formatAnswer(response.answer, response.citations));
@@ -118,6 +120,8 @@ async function talkReference(message: Message, referencedMessage: Message) {
             guild: message.guild,
             currentChannelId: channel.id,
             debugSession,
+            conversationWebMode: "auto",
+            conversationSurface: "reply",
         });
 
         await UIService.sendLongMessage(message, UIService.formatAnswer(response.answer, response.citations));

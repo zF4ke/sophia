@@ -1,5 +1,5 @@
 {
-  "defaultProfile": "balanced",
+  "defaultProfile": "fast",
   "profiles": {
     "balanced": {
       "chatModel": "minimax/minimax-m2.5",
@@ -15,6 +15,14 @@
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
       "maxOutputTokens": 800,
+      "webEnabled": false
+    },
+    "test": {
+      "chatModel": "x-ai/grok-4-fast:online",
+      "analysisModel": "x-ai/grok-4-fast:online",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.2,
+      "maxOutputTokens": 1200,
       "webEnabled": false
     }
   }

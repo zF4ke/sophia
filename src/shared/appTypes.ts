@@ -25,6 +25,10 @@ export interface ModelProfile {
     webEnabled?: boolean;
 }
 
+export type WebMode = "off" | "auto" | "required";
+export type WebStatus = "off" | "enabled" | "used";
+export type ConversationSurface = "talk" | "mention" | "reply";
+
 export interface ModelProfileConfig {
     defaultProfile: string;
     profiles: Record<string, ModelProfile>;
@@ -155,6 +159,8 @@ export interface RetrievalControllerDecision {
 export interface ModelTraceContext {
     traceLabel: string;
     questionPreview?: string;
+    webMode?: WebMode;
+    webContext?: string;
 }
 
 export type MemberListSort = "joined_at";
