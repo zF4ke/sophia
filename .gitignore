@@ -122,4 +122,5 @@ dist
 
 # ignore data/message/cache/
 
-data/*
+storage/*
+!storage/.gitkeep
