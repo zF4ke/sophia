@@ -1,6 +1,5 @@
 import { DISCORD } from "@/utils/constants";
 import { AIBaseService } from "./AIBaseService";
-import dedent from "dedent";
 import { Client } from "discord.js";
 
 /**
@@ -137,10 +136,10 @@ export class TextProcessingService extends AIBaseService {
      * @param client - The Discord client instance to fetch user information
      * @returns The message with mentions replaced by usernames
      */
-    public static async convertMentionsToNames(message: string, client: Client): Promise<string> {
+    public static async convertMentionsToNames(message: string, client?: Client): Promise<string> {
         const mentionRegex = /<@!?(\d+)>/g;
         const mentions = message.match(mentionRegex);
-        if (!mentions) return message;
+        if (!mentions || !client) return message;
 
         for (const mention of mentions) {
             const userId = mention.replace(/<@!?/, '').replace(/>/, '');

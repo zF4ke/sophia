@@ -1,12 +1,19 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionFlagsBits, MessageFlags } from "discord.js";
+import {
+    AutocompleteInteraction,
+    ChatInputCommandInteraction,
+    MessageFlags,
+    PermissionFlagsBits,
+    SlashCommandBuilder,
+} from "discord.js";
 import { SecurityService } from "../../services/SecurityService";
+import type { BotClient } from "@/types/app";
 
 const DEFAULT_EPHEMERAL = false; // Change this to false if you want to disable ephemeral responses globally
 const DEFAULT_LIMIT = 5;
 const DEFAULT_ADMIN_LIMIT = 10;
 const DEFAULT_MODERATOR_LIMIT = 7;
 
-module.exports = {
+export = {
     data: new SlashCommandBuilder()
         .setName('access') // Renamed from 'admin' to 'access'
         .setContexts(0, 1, 2) // Keep setContexts
@@ -132,6 +139,15 @@ module.exports = {
                         .setDescription('Listar todos os comandos')
                 )
         ),
+    async autocomplete(interaction: AutocompleteInteraction, client: BotClient) {
+        const focused = interaction.options.getFocused().toLowerCase();
+        const commandNames = [...client.commands.keys()]
+            .filter((name) => name.startsWith(focused))
+            .slice(0, 25)
+            .map((name) => ({ name, value: name }));
+
+        await interaction.respond(commandNames);
+    },
     async execute(interaction: ChatInputCommandInteraction) {
         // Inicializar serviço de segurança
         await SecurityService.initialize();

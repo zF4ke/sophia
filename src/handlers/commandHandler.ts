@@ -1,50 +1,40 @@
-import { TDiscordClient } from "..";
-import { SecurityService } from "../services/SecurityService";
-
-const ascii = require("ascii-table");
 import fs from "fs";
-const table = new ascii().setHeading("Commands", "Status");
+import path from "path";
+import type { BotClient, BotCommand } from "@/types/app";
 
-/**
- * Load all commands from the commands directory
- */
-function loadCommands(client: TDiscordClient) {
-    let commandsArray: any[] = [];
+export async function loadCommands(client: BotClient): Promise<void> {
+    const commandsRoot = path.join(process.cwd(), "src", "commands");
+    const loadedCommands: string[] = [];
+    const commandPayloads: unknown[] = [];
 
-    const commandsFolder = fs.readdirSync("./src/commands");
-    for (const folder of commandsFolder) {
-        const commandFiles = fs
-            .readdirSync(`./src/commands/${folder}`)
-            .filter((file: string) => file.endsWith(".js") || file.endsWith(".ts"));
+    const folders = fs.readdirSync(commandsRoot, { withFileTypes: true });
+    for (const folder of folders) {
+        if (!folder.isDirectory()) {
+            continue;
+        }
 
-        for (const file of commandFiles) {
-            const commandFile = require(`../commands/${folder}/${file}`);
+        const folderPath = path.join(commandsRoot, folder.name);
+        const files = fs
+            .readdirSync(folderPath)
+            .filter((file) => file.endsWith(".ts") || file.endsWith(".js"));
 
-            const properties = { folder, ...commandFile };
+        for (const file of files) {
+            const loaded = require(path.join(folderPath, file));
+            const command = (loaded.default || loaded) as BotCommand;
 
-            // Validate command file data and name
-            if (!commandFile.data || !commandFile.data.name) {
-                console.warn(`Command file ${file} is missing a valid 'data' or 'name' property.`);
-                table.addRow(file, "invalid");
+            if (!command?.data?.name || typeof command.execute !== "function") {
                 continue;
             }
 
-            // Check command visibility and rate limit using SecurityService
-            // if (SecurityService.isCommandVisible(commandFile.data.name) && SecurityService.isRateLimitAllowed(commandFile.data.name)) {
-                client.commands.set(commandFile.data.name, properties);
-                commandsArray.push(commandFile.data.toJSON());
-                table.addRow(file, "loaded");
-            // } else {
-            //     table.addRow(file, "skipped");
-            // }
+            client.commands.set(command.data.name, command);
+            commandPayloads.push(command.data.toJSON());
+            loadedCommands.push(command.data.name);
         }
     }
 
     if (client.application) {
-        client.application.commands.set(commandsArray);
+        await client.application.commands.set(commandPayloads as any[]);
     }
 
-    return console.log(table.toString(), "\nLoaded Commands");
+    console.log(`Loaded Commands: ${loadedCommands.join(", ")}`);
 }
-
-export { loadCommands };

@@ -1,11 +1,12 @@
 import { SecurityService } from "@/services/SecurityService";
-import { TDiscordClient } from "../..";
+import { getAppConfig } from "@/config/AppConfig";
+import type { BotClient } from "@/types/app";
 import app from "@/api/app";
 
-module.exports = {
+export = {
     name: "ready",
     once: true,
-    async execute(client: TDiscordClient) {
+    async execute(client: BotClient) {
         if (!client.user) return;
     
         console.log(`${client.user.username} está online.`);
@@ -14,10 +15,10 @@ module.exports = {
         await SecurityService.initialize();
 
         // Run API
-        const port = process.env.PORT || 3002;
+        const { port } = getAppConfig();
 
         app.listen(port, () => {
             console.log(`API rodando em http://localhost:${port}`); 
         });
     }
-}
+};

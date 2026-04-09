@@ -7,12 +7,13 @@ export class ConversationService {
     private static readonly REPLY_GAP = 10 * 60 * 1000;             // 10 minutes
 
     public static groupMessagesByConversation(messages: Message[]): Message[][] {
+        const orderedMessages = [...messages].sort(
+            (a, b) => a.createdTimestamp - b.createdTimestamp
+        );
         const conversations: Message[][] = [];
         let currentConversation: Message[] = [];
-        
-        // Messages come in reverse chronological order, process them backwards
-        for (let i = messages.length - 1; i >= 0; i--) {
-            const message = messages[i];
+
+        for (const message of orderedMessages) {
             if (!message.content.trim()) continue;
 
             if (!this.isRelatedToLastMessage(message, currentConversation)) {
@@ -36,7 +37,7 @@ export class ConversationService {
         if (!currentConversation.length) return true;
         
         const lastMessage = currentConversation[currentConversation.length - 1];
-        const timeDiff = message.createdTimestamp - lastMessage.createdTimestamp;
+        const timeDiff = Math.abs(message.createdTimestamp - lastMessage.createdTimestamp);
         
         // Check for direct replies
         if (message.reference?.messageId && 

@@ -4,8 +4,11 @@
   "main": "index.js",
   "scripts": {
     "devold": "tsx watch ./src/index.ts",
-    "dev": "nodemon --watch \"src/**/*\" --ext ts,js,json --exec \"tsx src/index.ts\"",
-    "start": "tsx ./src/index.ts"
+    "dev": "nodemon --watch \"src/**/*\" --watch \"prompts/**/*\" --watch \"config/**/*\" --ext ts,js,json,md --exec \"tsx src/index.ts\"",
+    "start": "tsx ./src/index.ts",
+    "check": "npm run typecheck && npm run test",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
@@ -13,22 +16,25 @@
   "type": "commonjs",
   "description": "",
   "dependencies": {
-    "@google/generative-ai": "^0.24.0",
     "@leodog896/vigenere-cipher": "^0.0.1",
     "ascii-table": "^0.0.9",
+    "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
     "dedent": "^1.5.3",
-    "discord.js": "^14.18.0",
-    "dotenv": "^16.4.7",
+    "discord.js": "^14.26.2",
+    "dotenv": "^17.4.1",
     "express": "^5.1.0",
+    "openai": "^4.104.0",
     "vigenere": "^1.0.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^5.0.1",
     "nodemon": "^3.1.9",
     "ts-node": "^10.9.2",
-    "tsx": "^4.19.3",
-    "typescript": "^5.8.2"
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.1.1"
   }
 }

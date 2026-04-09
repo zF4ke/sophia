@@ -3,26 +3,24 @@ require("dotenv").config();
 import { Client, GatewayIntentBits, Collection, Partials } from "discord.js";
 import { loadEvents } from "./handlers/eventHandler";
 import { loadCommands } from "./handlers/commandHandler";
-import { MessageService } from "./services/MessageService";
+import { getAppConfig } from "@/config/AppConfig";
+import type { BotClient } from "@/types/app";
 
 const { Guilds, GuildMembers, GuildMessages, MessageContent } =
     GatewayIntentBits;
 const { User, Message, GuildMember, ThreadMember, Channel } = Partials;
 
-type TDiscordClient = Client & {
-    commands: Collection<string, any>;
-};
-
 const client = new Client({
     intents: [Guilds, GuildMembers, GuildMessages, MessageContent],
     partials: [User, Message, GuildMember, ThreadMember, Channel],
-}) as TDiscordClient;
+}) as BotClient;
 
 client.commands = new Collection();
 
-client.login(process.env.CLIENT_TOKEN).then(() => {    
-    loadEvents(client);
-    loadCommands(client);
+const config = getAppConfig();
+loadEvents(client);
+client.login(config.discordToken).then(async () => {
+    await loadCommands(client);
 });
 
 //antiCrash
@@ -31,5 +29,4 @@ process.on("uncaughtException", function (error) {
 });
 
 export default client;
-
-export type { TDiscordClient };
+export type { BotClient };

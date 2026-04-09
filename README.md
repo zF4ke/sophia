@@ -1,22 +1,23 @@
 # Sophia3
 
-A powerful Discord bot leveraging Google's Gemini AI for intelligent message searching, conversation analysis, and context-aware responses.
+An agentic Discord assistant backed by local Discord memory, OpenRouter models, and bounded retrieval tools.
 
 ## Features
 
-- **AI-Powered Search**: Find relevant conversations using semantic search and context analysis
-- **Conversation Analysis**: Analyze chat context and relevance using Google's Gemini AI
-- **Message Management**: Efficient caching and smart message grouping
-- **Interactive UI**: Rich embeds with pagination and interactive controls
-- **Security**: Role-based access control and command restrictions
+- **Agentic Answers**: Sophia decides when to answer directly and when to retrieve Discord evidence.
+- **Local Discord Memory**: Messages are stored locally in SQLite and searched with lexical plus embedding retrieval.
+- **Grounded Search**: Evidence search works across readable channels and returns clickable citations.
+- **Live Discord Tools**: Member and guild metadata are fetched live instead of being blindly persisted.
+- **Modern Interactions**: Current `discord.js` components with buttons and select menus for evidence browsing.
 
 ## Tech Stack
 
 - TypeScript
 - Discord.js
-- Google Gemini AI
-- Express (API Server)
-- Node.js
+- OpenRouter via the `openai` SDK
+- SQLite (`better-sqlite3`)
+- Express
+- Vitest
 
 ## Project Structure
 
@@ -35,16 +36,17 @@ src/
 
 ## Services
 
-### AI Services
-- `AIService`: Primary interface for AI operations
-- `ConversationAnalysisService`: Analyzes chat relevance and context
-- `ContextManagementService`: Manages conversation context
-- `ResponseGenerationService`: Generates AI responses
-- `TextProcessingService`: Text preprocessing and analysis
+### AI and Agent Services
+- `ModelGateway`: OpenRouter-backed model access
+- `PromptRegistry`: Filesystem-based prompt loading
+- `AgentOrchestrator`: Bounded tool loop and grounded answering
+- `RequestClassifier`: Direct-answer vs Discord-grounded routing
 
 ### Core Services
+- `DiscordMemoryService`: Message ingestion, indexing, and retrieval
+- `DiscordBackfillService`: Historical indexing for channels and categories
+- `DiscordToolService`: Internal Discord tools for the agent
 - `ConversationService`: Message grouping and threading
-- `MessageService`: Message operations and caching
 - `SecurityService`: Access control and permissions
 - `FileSystemService`: Data persistence and cache management
 - `UIService`: User interface components
@@ -59,7 +61,8 @@ npm install
 2. Configure environment variables:
 ```env
 DISCORD_TOKEN=your_discord_token
-GOOGLE_AI_KEY=your_gemini_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
+MODEL_PROFILE=balanced
 ```
 
 3. Start development server:
@@ -76,10 +79,13 @@ npm start
 ## Commands
 
 ### Core Commands
-- `/search`: Search through conversations
-- `/context`: Get AI-powered responses
-- `/getmessage`: Retrieve specific messages
+- `/ask`: Ask Sophia a question
+- `/find`: Search stored Discord evidence
+- `/context`: Ask for a context-aware answer
+- `/talk`: Talk to Sophia directly
+- `/getmessage`: Retrieve the Nth indexed historical message
+- `/index`: Backfill, inspect, repair, or clear the local memory index
 
 ### System Commands
 - `/access`: Manage user permissions
-- `/cache`: Manage message cache
+- `/cache`: Show local memory statistics

@@ -1,19 +1,20 @@
-import { ChattingService } from "@/services/ai/ChattingService";
-import { TextProcessingService } from "@/services/ai/TextProcessingService";
+import { AgentOrchestrator } from "@/services/agent/AgentOrchestrator";
 import { SecurityService } from "@/services/SecurityService";
+import { DiscordMemoryService } from "@/services/memory/DiscordMemoryService";
 import { UIService } from "@/services/UIService";
 import dedent from "dedent";
-import { Message, PermissionFlagsBits, TextChannel } from "discord.js";
+import { Message, PermissionFlagsBits, TextChannel, ThreadChannel } from "discord.js";
 
-module.exports = {
+export = {
     name: "messageCreate",
     async execute(message: Message) {
         try {
             const channel = message.channel;
             if (!channel.isTextBased()) return;
-            if (!(channel instanceof TextChannel)) return;
+            if (!(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
 
             if (message.author.id === message.client.user!.id) return; // Ignore messages from the bot itself
+            await DiscordMemoryService.ingestMessage(message);
 
             // if it's a reply to a message from the bot, check if the user is an admin
             if (message.reference && message.reference.messageId) {
@@ -44,12 +45,11 @@ module.exports = {
 
 async function talk(message: Message) {
     try {
-        // Check if the message is from a bot
         if (message.author.bot) return;
 
         const channel = message.channel;
         if (!channel.isTextBased()) return;
-        if (!(channel instanceof TextChannel)) return;
+        if (!(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
 
         // Check if the bot has permission  to read messages in the channel
         const permissions = channel.permissionsFor(message.client.user!);
@@ -58,17 +58,15 @@ async function talk(message: Message) {
         if (!permissions.has(PermissionFlagsBits.ReadMessageHistory)) return;
         if (!permissions.has(PermissionFlagsBits.SendMessages)) return;
 
-        const prompt = message.content;
-        const response = await ChattingService.generateChatResponse(
-            channel,
-            prompt,
-            {
-                userName: message.author.username,
-            }
-        );
+        const prompt = message.content.replace(/<@!?[0-9]+>/g, "").trim();
+        const response = await AgentOrchestrator.answerQuestion({
+            question: prompt,
+            user: message.author,
+            guild: message.guild,
+            currentChannelId: channel.id,
+        });
 
-        // Send the response back to the channel
-        await UIService.sendLongMessage(message, response);
+        await UIService.sendLongMessage(message, UIService.formatAnswer(response.answer, response.citations));
     } catch (error) {
         console.error(error);
     }
@@ -76,12 +74,11 @@ async function talk(message: Message) {
 
 async function talkReference(message: Message, referencedMessage: Message) {
     try {
-        // Check if the message is from a bot
         if (message.author.bot) return;
 
         const channel = message.channel;
         if (!channel.isTextBased()) return;
-        if (!(channel instanceof TextChannel)) return;
+        if (!(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
 
         // Check if the bot has permission  to read messages in the channel
         const permissions = channel.permissionsFor(message.client.user!);
@@ -92,22 +89,18 @@ async function talkReference(message: Message, referencedMessage: Message) {
 
         const additionalContext = dedent`
             ${message.author.username} está respondendo a uma mensagem que você enviou. Aqui está o que você disse: """
-            ${TextProcessingService.removeMessageHeader(referencedMessage.content).trim()}
+            ${referencedMessage.content.trim()}
             """ Use isso para responder à mensagem dele.
         `;
 
-        const prompt = message.content;
-        const response = await ChattingService.generateChatResponse(
-            channel,
-            prompt,
-            {
-                userName: message.author.username,
-                additionalContext,
-            }
-        );
+        const response = await AgentOrchestrator.answerQuestion({
+            question: `${message.content}\n\n${additionalContext}`,
+            user: message.author,
+            guild: message.guild,
+            currentChannelId: channel.id,
+        });
 
-        // Send the response back to the channel
-        await UIService.sendLongMessage(message, response);
+        await UIService.sendLongMessage(message, UIService.formatAnswer(response.answer, response.citations));
     } catch (error) {
         console.error(error);
     }

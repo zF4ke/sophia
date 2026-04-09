@@ -7,12 +7,13 @@ import {
     ComponentType,
     Message,
     MessageFlags,
-    TextChannel
+    TextChannel,
+    ThreadChannel
 } from "discord.js";
 import { MessageGroup } from "../types/conversation";
+import type { AnswerCitation } from "@/types/app";
 import { EMOJIS, DISCORD } from "../utils/constants";
 import { SecurityService } from "./SecurityService";
-import { TextProcessingService } from "./ai/TextProcessingService";
 
 export interface NavigationButton {
     customId: string;
@@ -42,6 +43,18 @@ export class UIService {
      */
     public static formatStatusMessage(emoji: string, message: string, useBackticks = true): string {
         return useBackticks ? `\`${emoji} ${message}\`` : `${emoji} ${message}`;
+    }
+
+    public static formatAnswer(answer: string, citations: AnswerCitation[] = []): string {
+        if (!citations.length) {
+            return answer.trim();
+        }
+
+        const evidence = citations
+            .map((citation, index) => `${index + 1}. [${citation.label}](${citation.jumpLink})`)
+            .join("\n");
+
+        return `${answer.trim()}\n\nFontes:\n${evidence}`;
     }
 
     protected static createNavigationRow(buttons: NavigationButton[]): ActionRowBuilder<ButtonBuilder> {
@@ -264,18 +277,15 @@ export class UIService {
         }
         
         if (fullContent.length <= DISCORD.MESSAGE_LIMIT) {
-            // If the message fits in a single Discord message
             await interaction.editReply({ content: fullContent });
         } else {
-            const chunks = TextProcessingService.splitLongMessage(fullContent);
+            const chunks = this.splitLongMessage(fullContent);
 
-            // send the header and a chunk in the first message
             const firstChunk = chunks.shift() || "";
             await interaction.editReply({ 
                 content: firstChunk
             });
 
-            // send the rest of the chunks as follow-up messages
             for (const chunk of chunks) {
                 await interaction.followUp({ 
                     content: chunk,
@@ -291,26 +301,20 @@ export class UIService {
     ): Promise<void> {
         const channel = message.channel;
         if (!channel.isTextBased()) return;
-        if (!(channel instanceof TextChannel)) return;
+        if (!(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
         
         if (response.length <= DISCORD.MESSAGE_LIMIT) {
-            // If the message fits in a single Discord message
             await message.reply({ content: response });
         } else {
-            const chunks = TextProcessingService.splitLongMessage(response);
+            const chunks = this.splitLongMessage(response);
             let lastMessage: Message | null = null;
 
-            // send the header and a chunk in the first message
             const firstChunk = chunks.shift() || "";
             lastMessage = await message.reply({ 
                 content: firstChunk
             });
 
-            // send the rest of the chunks as follow-up messages
             for (const chunk of chunks) {
-                // await channel.send({ 
-                //     content: chunk,
-                // });
                 lastMessage = await lastMessage?.reply({ 
                     content: chunk,
                     allowedMentions: {
@@ -320,5 +324,45 @@ export class UIService {
                 });
             }
         }
+    }
+
+    private static splitLongMessage(message: string, limit: number = DISCORD.MESSAGE_LIMIT): string[] {
+        if (message.length <= limit) {
+            return [message];
+        }
+
+        const chunks: string[] = [];
+        let current = "";
+        const paragraphs = message.split("\n\n");
+
+        for (const paragraph of paragraphs) {
+            const next = current ? `${current}\n\n${paragraph}` : paragraph;
+            if (next.length <= limit) {
+                current = next;
+                continue;
+            }
+
+            if (current) {
+                chunks.push(current);
+            }
+
+            if (paragraph.length <= limit) {
+                current = paragraph;
+                continue;
+            }
+
+            let offset = 0;
+            while (offset < paragraph.length) {
+                chunks.push(paragraph.slice(offset, offset + limit));
+                offset += limit;
+            }
+            current = "";
+        }
+
+        if (current) {
+            chunks.push(current);
+        }
+
+        return chunks;
     }
 }
