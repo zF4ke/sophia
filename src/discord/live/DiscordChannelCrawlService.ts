@@ -4,9 +4,18 @@ import type { ChannelCrawlResult } from "@/shared/appTypes";
 
 type CrawlableChannel = TextChannel | ThreadChannel;
 
+function normalizeLookupValue(value: string): string {
+    return value
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, " ")
+        .trim();
+}
+
 export class DiscordChannelCrawlService {
     public static listReadableChannels(guild: Guild | null): CrawlableChannel[] {
-        if (!guild) {
+        if (!guild || !guild.channels?.cache) {
             return [];
         }
 
@@ -73,6 +82,49 @@ export class DiscordChannelCrawlService {
                 return left.channelName.localeCompare(right.channelName);
             })
             .map(({ score, ...channel }) => channel);
+    }
+
+    public static resolveChannelIdsByName(
+        guild: Guild | null,
+        targetText: string,
+        currentChannelId?: string | null
+    ): string[] {
+        const normalizedTarget = normalizeLookupValue(targetText);
+        if (!normalizedTarget) {
+            return [];
+        }
+
+        const candidates = this.listReadableChannels(guild)
+            .map((channel) => {
+                const normalizedName = normalizeLookupValue(channel.name);
+                let score = 0;
+                let matchedByName = false;
+
+                if (normalizedName === normalizedTarget) {
+                    score += 5;
+                    matchedByName = true;
+                }
+                if (normalizedName.includes(normalizedTarget)) {
+                    score += 3;
+                    matchedByName = true;
+                }
+                if (normalizedTarget.includes(normalizedName)) {
+                    score += 2;
+                    matchedByName = true;
+                }
+                if (matchedByName && currentChannelId && channel.id === currentChannelId) {
+                    score += 1;
+                }
+
+                return {
+                    channelId: channel.id,
+                    score,
+                };
+            })
+            .filter((candidate) => candidate.score > 0)
+            .sort((left, right) => right.score - left.score);
+
+        return candidates.slice(0, 3).map((candidate) => candidate.channelId);
     }
 
     public static async crawlChannelMessages(

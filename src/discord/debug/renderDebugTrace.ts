@@ -40,6 +40,46 @@ function formatGroundingState(state: DebugTraceState): string {
     return state.groundingSummary.sufficient ? "suficiente" : "insuficiente";
 }
 
+function formatGroundingDecisionMode(state: DebugTraceState): string {
+    if (!state.groundingDecisionMode) {
+        return "ainda avaliando";
+    }
+
+    if (state.groundingDecisionMode === "judge") {
+        return "juiz";
+    }
+
+    if (state.groundingDecisionMode === "reused") {
+        return "contexto reutilizado";
+    }
+
+    return "heurística";
+}
+
+function formatContextCacheStatus(state: DebugTraceState): string {
+    if (state.contextCacheStatus === "reused") {
+        return "reutilizado";
+    }
+
+    if (state.contextCacheStatus === "seeded") {
+        return "semeado";
+    }
+
+    return "não";
+}
+
+function formatRouteDecision(state: DebugTraceState): string {
+    if (!state.routeDecision) {
+        return "a decidir";
+    }
+
+    const source = state.routeDecision.source === "ai" ? "IA" : "determinística";
+    const target = state.routeDecision.targetText
+        ? ` · alvo ${state.routeDecision.targetText}`
+        : "";
+    return `${source} · ${state.routeDecision.intent}${target}`;
+}
+
 export function renderDebugTrace(state: DebugTraceState): ContainerBuilder {
     const tools = state.toolNames.length ? state.toolNames.join(", ") : "nenhuma";
     const recentEvents = state.recentEvents.length
@@ -62,9 +102,12 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder {
                     `**Estado:** ${formatStatus(state.status)}`,
                     `**Etapa:** ${state.stage}`,
                     `**Modo:** ${state.mode ?? "a decidir"}`,
+                    `**Rota:** ${formatRouteDecision(state)}`,
+                    `**Cache de contexto:** ${formatContextCacheStatus(state)}`,
                     `**Ferramentas:** ${tools}`,
                     `**Base útil:** ${formatGroundingSummary(state)}`,
                     `**Grounding:** ${formatGroundingState(state)}`,
+                    `**Decisão:** ${formatGroundingDecisionMode(state)}`,
                     `**Tempo:** ${formatDuration(state.startedAt)}`,
                 ].join("\n")
             )

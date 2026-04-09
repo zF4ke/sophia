@@ -1,7 +1,11 @@
 import { Message, MessageFlags } from "discord.js";
 import { renderDebugTrace } from "@/discord/debug/renderDebugTrace";
 import type { DebugSessionReporter, DebugTraceState } from "@/discord/debug/types";
-import type { GroundingSummary } from "@/shared/appTypes";
+import type {
+    GroundingDecisionMode,
+    GroundingSummary,
+    RouteDecision,
+} from "@/shared/appTypes";
 
 const MAX_EVENTS = 6;
 const MAX_PREVIEW_LENGTH = 140;
@@ -39,8 +43,11 @@ export class DebugSession implements DebugSessionReporter {
             status: "running",
             stage: "Iniciando",
             mode: null,
+            routeDecision: null,
             toolNames: [],
             groundingSummary: null,
+            groundingDecisionMode: null,
+            contextCacheStatus: "none",
             recentEvents: ["Iniciado"],
             startedAt: Date.now(),
         };
@@ -67,6 +74,36 @@ export class DebugSession implements DebugSessionReporter {
         await this.mutate(
             "Planejando próxima ação",
             `Planejando passo ${step}`
+        );
+    }
+
+    public async setRouting(decision: RouteDecision): Promise<void> {
+        const source = decision.source === "ai" ? "IA" : "determinística";
+        const target = decision.targetText ? ` · alvo ${decision.targetText}` : "";
+        await this.mutate(
+            "Roteando pedido",
+            `Rota escolhida: ${source} · ${decision.intent}${target}`,
+            (state) => {
+                state.routeDecision = decision;
+            }
+        );
+    }
+
+    public async setContextCacheStatus(
+        status: "none" | "seeded" | "reused"
+    ): Promise<void> {
+        const labels = {
+            none: "Cache de contexto: não",
+            seeded: "Cache de contexto: semeado",
+            reused: "Cache de contexto: reutilizado",
+        };
+
+        await this.mutate(
+            "Verificando cache de contexto",
+            labels[status],
+            (state) => {
+                state.contextCacheStatus = status;
+            }
         );
     }
 
@@ -97,14 +134,19 @@ export class DebugSession implements DebugSessionReporter {
         );
     }
 
-    public async setGroundingSummary(summary: GroundingSummary): Promise<void> {
+    public async setGroundingSummary(
+        summary: GroundingSummary,
+        decisionMode?: GroundingDecisionMode
+    ): Promise<void> {
+        const cacheAwareEvent = summary.sufficient
+            ? `Base suficiente: mensagens ${summary.messageEvidenceCount} · contexto ao vivo ${summary.liveEvidenceCount}`
+            : `Base insuficiente: mensagens ${summary.messageEvidenceCount} · contexto ao vivo ${summary.liveEvidenceCount}`;
         await this.mutate(
             "Avaliando evidências",
-            summary.sufficient
-                ? `Base suficiente: mensagens ${summary.messageEvidenceCount} · contexto ao vivo ${summary.liveEvidenceCount}`
-                : `Base insuficiente: mensagens ${summary.messageEvidenceCount} · contexto ao vivo ${summary.liveEvidenceCount}`,
+            cacheAwareEvent,
             (state) => {
                 state.groundingSummary = summary;
+                state.groundingDecisionMode = decisionMode || null;
             }
         );
     }

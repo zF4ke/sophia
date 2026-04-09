@@ -5,6 +5,7 @@ import {
 } from "discord.js";
 import { AgentOrchestrator } from "@/agent/AgentOrchestrator";
 import { DebugService } from "@/discord/debug/DebugService";
+import { ResponseActivityService } from "@/discord/responding/ResponseActivityIndicator";
 import { SecurityService } from "@/security/SecurityService";
 import { UIService } from "@/discord/ui/UIService";
 import { EMOJIS } from "@/discord/constants";
@@ -30,6 +31,7 @@ export = {
         ),
     async execute(interaction: ChatInputCommandInteraction, _client: BotClient) {
         let debugSession = null;
+        let activityIndicator = null;
 
         try {
             if (!SecurityService.isAdmin(interaction.user.id)) {
@@ -45,6 +47,7 @@ export = {
             await interaction.deferReply({
                 flags: ephemeral ? MessageFlags.Ephemeral : undefined,
             });
+            activityIndicator = await ResponseActivityService.startForInteraction(interaction);
             debugSession = await DebugService.startForInteraction(interaction, prompt);
 
             const result = await AgentOrchestrator.answerQuestion({
@@ -71,6 +74,8 @@ export = {
                     false
                 )
             );
+        } finally {
+            activityIndicator?.stop();
         }
     },
 };

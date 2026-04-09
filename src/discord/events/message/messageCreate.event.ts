@@ -1,5 +1,6 @@
 import { AgentOrchestrator } from "@/agent/AgentOrchestrator";
 import { DebugService } from "@/discord/debug/DebugService";
+import { ResponseActivityService } from "@/discord/responding/ResponseActivityIndicator";
 import { SecurityService } from "@/security/SecurityService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { UIService } from "@/discord/ui/UIService";
@@ -46,6 +47,7 @@ export = {
 
 async function talk(message: Message) {
     let debugSession = null;
+    let activityIndicator = null;
 
     try {
         if (message.author.bot) return;
@@ -63,6 +65,7 @@ async function talk(message: Message) {
 
         const prompt = message.content.replace(/<@!?[0-9]+>/g, "").trim();
         debugSession = await DebugService.startForMessage(message, prompt);
+        activityIndicator = await ResponseActivityService.startForChannel(channel);
         const response = await AgentOrchestrator.answerQuestion({
             question: prompt,
             user: message.author,
@@ -75,11 +78,14 @@ async function talk(message: Message) {
     } catch (error) {
         console.error(error);
         await debugSession?.finishError(error);
+    } finally {
+        activityIndicator?.stop();
     }
 }
 
 async function talkReference(message: Message, referencedMessage: Message) {
     let debugSession = null;
+    let activityIndicator = null;
 
     try {
         if (message.author.bot) return;
@@ -104,6 +110,7 @@ async function talkReference(message: Message, referencedMessage: Message) {
             message,
             message.content
         );
+        activityIndicator = await ResponseActivityService.startForChannel(channel);
 
         const response = await AgentOrchestrator.answerQuestion({
             question: `${message.content}\n\n${additionalContext}`,
@@ -117,5 +124,7 @@ async function talkReference(message: Message, referencedMessage: Message) {
     } catch (error) {
         console.error(error);
         await debugSession?.finishError(error);
+    } finally {
+        activityIndicator?.stop();
     }
 }

@@ -117,6 +117,10 @@ export class MemoryWriteRepository {
             DELETE FROM index_state;
             DELETE FROM channel_crawl_state;
             DELETE FROM tool_runs;
+            DELETE FROM reusable_grounded_contexts;
+            DELETE FROM tool_result_cache;
+            DELETE FROM conversation_resolution_contexts;
+            DELETE FROM guild_response_counters;
         `);
     }
 

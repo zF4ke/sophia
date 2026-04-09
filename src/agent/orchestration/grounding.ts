@@ -16,6 +16,7 @@ import {
 import {
     extractRequestedOrdinal,
     isMemberDiscoveryQuestion,
+    isPersonMessageQuestion,
     requestsAllMembers,
 } from "@/agent/orchestration/questionAnalysis";
 import type {
@@ -86,6 +87,20 @@ export function isGroundingSufficient(
         return false;
     }
 
+    const messageEvidenceCount = toolRuns
+        .filter(
+            (run) =>
+                DISCORD_TOOL_EVIDENCE_ROLES[run.tool as DiscordToolName] ===
+                "message_evidence"
+        )
+        .reduce((total, run) => total + getToolEvidenceCount(run), 0);
+    const liveEvidenceCount = toolRuns
+        .filter(
+            (run) =>
+                DISCORD_TOOL_EVIDENCE_ROLES[run.tool as DiscordToolName] === "live_evidence"
+        )
+        .reduce((total, run) => total + getToolEvidenceCount(run), 0);
+
     if (isMemberDiscoveryQuestion(question)) {
         const memberEvidence = collectMemberEvidence(toolRuns);
         if (!memberEvidence) {
@@ -99,7 +114,11 @@ export function isGroundingSufficient(
         );
     }
 
-    return true;
+    if (isPersonMessageQuestion(question)) {
+        return messageEvidenceCount > 0;
+    }
+
+    return messageEvidenceCount > 0 || liveEvidenceCount > 0;
 }
 
 export function collectMemberEvidence(

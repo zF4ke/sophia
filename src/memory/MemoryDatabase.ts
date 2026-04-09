@@ -108,6 +108,87 @@ export class MemoryDatabase {
                 summary TEXT NOT NULL,
                 created_timestamp INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS reusable_grounded_contexts (
+                guild_id TEXT,
+                channel_id TEXT,
+                channel_scope_key TEXT NOT NULL,
+                question_fingerprint TEXT NOT NULL,
+                route_intent TEXT NOT NULL,
+                evidence_text TEXT NOT NULL,
+                citations_json TEXT NOT NULL,
+                tool_runs_json TEXT NOT NULL,
+                sufficient INTEGER NOT NULL DEFAULT 0,
+                grounding_decision_mode TEXT NOT NULL,
+                created_timestamp INTEGER NOT NULL,
+                expiry_timestamp INTEGER NOT NULL,
+                created_response_ordinal INTEGER,
+                PRIMARY KEY (guild_id, channel_scope_key, question_fingerprint, route_intent)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reusable_grounded_context_lookup
+            ON reusable_grounded_contexts(guild_id, question_fingerprint, route_intent, expiry_timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS tool_result_cache (
+                cache_key TEXT PRIMARY KEY,
+                tool_name TEXT NOT NULL,
+                guild_id TEXT,
+                arguments_json TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                created_timestamp INTEGER NOT NULL,
+                expiry_timestamp INTEGER NOT NULL,
+                created_response_ordinal INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tool_result_cache_expiry
+            ON tool_result_cache(expiry_timestamp);
+
+            CREATE TABLE IF NOT EXISTS guild_response_counters (
+                guild_id TEXT PRIMARY KEY,
+                response_ordinal INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_resolution_contexts (
+                guild_id TEXT,
+                channel_scope_key TEXT NOT NULL,
+                channel_id TEXT,
+                route_intent TEXT NOT NULL,
+                target_text TEXT,
+                author_id TEXT,
+                author_query TEXT,
+                channel_ids_json TEXT NOT NULL,
+                topic_text TEXT,
+                channel_hint_text TEXT,
+                resolved_person_json TEXT,
+                created_timestamp INTEGER NOT NULL,
+                expiry_timestamp INTEGER NOT NULL,
+                created_response_ordinal INTEGER,
+                PRIMARY KEY (guild_id, channel_scope_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_conversation_resolution_lookup
+            ON conversation_resolution_contexts(guild_id, expiry_timestamp DESC);
         `);
+
+        this.ensureOptionalColumn(db, "reusable_grounded_contexts", "created_response_ordinal", "INTEGER");
+        this.ensureOptionalColumn(db, "tool_result_cache", "created_response_ordinal", "INTEGER");
+        this.ensureOptionalColumn(db, "conversation_resolution_contexts", "created_response_ordinal", "INTEGER");
+    }
+
+    private static ensureOptionalColumn(
+        db: Database.Database,
+        tableName: string,
+        columnName: string,
+        columnDefinition: string
+    ): void {
+        const columns = db
+            .prepare(`PRAGMA table_info(${tableName})`)
+            .all() as Array<{ name: string }>;
+
+        if (!columns.some((column) => column.name === columnName)) {
+            db.exec(
+                `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`
+            );
+        }
     }
 }

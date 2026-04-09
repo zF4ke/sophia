@@ -5,11 +5,110 @@ import type {
     GuildMember,
     GuildTextBasedChannel,
 } from "discord.js";
+import { withDiscordRateLimitRetry } from "@/discord/live/discordRateLimitRetry";
 import type {
     LiveMemberListResult,
     MemberListSort,
     MemberProfileResult,
 } from "@/shared/appTypes";
+
+function normalizeMemberLookupValue(value: string): string {
+    return value
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "");
+}
+
+function getMemberSearchFields(member: GuildMember): string[] {
+    return [
+        member.user.username,
+        member.displayName,
+        member.user.globalName ?? "",
+        member.nickname ?? "",
+    ].filter(Boolean);
+}
+
+function memberMatchesQuery(member: GuildMember, query: string): boolean {
+    const compactQuery = normalizeMemberLookupValue(query);
+    const loweredWords = query
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .split(/\s+/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+    const fields = getMemberSearchFields(member);
+    const compactFields = fields.map((field) => normalizeMemberLookupValue(field));
+    if (compactFields.some((field) => field.includes(compactQuery))) {
+        return true;
+    }
+
+    if (!loweredWords.length) {
+        return false;
+    }
+
+    const normalizedFields = fields.map((field) =>
+        field
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+    );
+
+    return loweredWords.every((word) =>
+        normalizedFields.some((field) => field.includes(word))
+    );
+}
+
+async function fetchAllMembers(guild: Guild): Promise<void> {
+    await withDiscordRateLimitRetry(() => guild.members.fetch());
+}
+
+async function searchMembers(guild: Guild, query: string): Promise<GuildMember[]> {
+    const search = guild.members.search;
+    if (typeof search !== "function") {
+        return [];
+    }
+
+    const firstToken = query
+        .trim()
+        .split(/\s+/)
+        .map((part) => part.trim())
+        .find(Boolean);
+    if (!firstToken) {
+        return [];
+    }
+
+    const results = await withDiscordRateLimitRetry(() =>
+        search.call(guild.members, {
+            query: firstToken,
+            limit: 20,
+        })
+    );
+
+    return [...results.values()].filter((member) => memberMatchesQuery(member, query));
+}
+
+async function resolveMemberCandidates(
+    guild: Guild,
+    query: string
+): Promise<GuildMember[]> {
+    const direct = guild.members.cache.get(query);
+    if (direct) {
+        return [direct];
+    }
+
+    const searched = await searchMembers(guild, query);
+    if (searched.length) {
+        return searched;
+    }
+
+    await fetchAllMembers(guild);
+    return guild.members.cache
+        .filter((candidate) => memberMatchesQuery(candidate, query))
+        .toJSON();
+}
 
 export class DiscordLiveService {
     public static async getGuildContext(guild: Guild | null): Promise<{
@@ -38,17 +137,19 @@ export class DiscordLiveService {
             return null;
         }
 
-        const normalized = nameOrId.trim().toLowerCase();
         let member = guild.members.cache.get(nameOrId) || null;
         if (!member) {
-            await guild.members.fetch();
+            const candidates = await resolveMemberCandidates(guild, nameOrId);
             member =
-                guild.members.cache.get(nameOrId) ||
-                guild.members.cache.find((candidate) => {
-                    const username = candidate.user.username.toLowerCase();
-                    const displayName = candidate.displayName.toLowerCase();
-                    return username.includes(normalized) || displayName.includes(normalized);
-                }) ||
+                candidates.find((candidate) =>
+                    normalizeMemberLookupValue(candidate.user.username) ===
+                        normalizeMemberLookupValue(nameOrId) ||
+                    normalizeMemberLookupValue(candidate.displayName) ===
+                        normalizeMemberLookupValue(nameOrId) ||
+                    normalizeMemberLookupValue(candidate.nickname ?? "") ===
+                        normalizeMemberLookupValue(nameOrId)
+                ) ||
+                candidates[0] ||
                 null;
         }
 
@@ -96,8 +197,17 @@ export class DiscordLiveService {
             };
         }
 
-        await guild.members.fetch();
-        const normalized = options.filters?.trim().toLowerCase();
+        const normalized = options.filters?.trim() || "";
+        if (normalized) {
+            const searched = await searchMembers(guild, normalized);
+            searched.forEach((member) => {
+                if (!guild.members.cache.has(member.id)) {
+                    guild.members.cache.set(member.id, member);
+                }
+            });
+        } else {
+            await fetchAllMembers(guild);
+        }
         const limit = Math.max(1, Math.min(250, options.limit ?? 100));
         const offset = Math.max(0, options.offset ?? 0);
         const sort = options.sort ?? "joined_at";
@@ -108,10 +218,7 @@ export class DiscordLiveService {
                     return true;
                 }
 
-                return (
-                    member.user.username.toLowerCase().includes(normalized) ||
-                    member.displayName.toLowerCase().includes(normalized)
-                );
+                return memberMatchesQuery(member, normalized);
             })
             .toJSON()
             .sort((left, right) => {
@@ -152,7 +259,7 @@ export class DiscordLiveService {
         name: string;
         type: string;
     }> {
-        if (!guild) {
+        if (!guild || !guild.channels?.cache) {
             return [];
         }
 

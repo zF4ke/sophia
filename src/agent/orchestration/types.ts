@@ -1,8 +1,11 @@
 import type {
     AnswerCitation,
+    DiscordToolResult,
+    GroundingDecisionMode,
     GroundingSummary,
     LiveMemberListResult,
 } from "@/shared/appTypes";
+import type { ReusableGroundedContextRecord } from "@/memory/types";
 
 export type StoredMessageEvidence = {
     channelId: string;
@@ -32,6 +35,17 @@ export type GroundingAssessment = {
     citations: AnswerCitation[];
 };
 
+export type GroundingDecision = {
+    sufficient: boolean;
+    mode: GroundingDecisionMode;
+    reason: string;
+    missingInformation: string | null;
+};
+
+export type ReusableGroundedContext = ReusableGroundedContextRecord;
+
 export type SearchContext = {
     crawledChannelIds: Set<string>;
+    seededFromContext: boolean;
+    initialToolRuns: DiscordToolResult[];
 };

@@ -20,13 +20,18 @@ This file is the canonical engineering and operator handoff for the runtime. `RE
 ## Runtime Flow
 
 1. Classify the request as `direct_answer` or `discord_grounded`.
-2. If grounded, run a bounded Discord tool loop.
-3. Treat stored-message evidence and live Discord metadata as separate grounding types.
-4. Stop early when evidence is strong enough or clearly weak.
-5. Synthesize a concise answer only from useful evidence.
-6. Return citations only when stored messages were used.
-7. If both grounding types are weak, say that Sophia does not have enough Discord evidence to answer reliably.
-8. If local memory misses, the agent may crawl readable channels, ingest them, and retry local retrieval within the same bounded loop.
+2. If grounded, apply deterministic routing for explicit Discord entities and clear server/member questions.
+3. For ambiguous grounded questions, run the Discord routing prompt once to choose a target strategy, reusing short-lived same-guild conversation context for referential follow-ups when appropriate.
+4. Run a bounded Discord tool loop from that route.
+5. Treat stored-message evidence and live Discord metadata as separate grounding types.
+6. Reuse a fresh grounded context from the same guild when possible, preferring the current channel over other guild channels.
+7. Run a bounded Discord tool loop with cached tool results when reuse is not enough.
+8. Use the grounding sufficiency judge only for ambiguous middle-ground cases; obvious sufficient and obvious insufficient cases stay heuristic.
+9. Synthesize a concise answer only from useful evidence.
+10. Keep citations internal for grounding and debug, but do not show source lists in the final user-facing answer.
+11. If both grounding types are weak or the evidence judge says the evidence is insufficient, say that Sophia does not have enough Discord evidence to answer reliably.
+12. If local memory misses, the agent may crawl readable channels, ingest them, and retry local retrieval within the same bounded loop.
+13. Person-target follow-ups should preserve the resolved member identity, then search that person’s messages with topic or channel hints instead of falling back to member listing.
 
 The main orchestration files are:
 
@@ -76,7 +81,9 @@ Runtime prompts live in `resources/prompts/` and should remain external to the c
 - `resources/prompts/system/base.md`
 - `resources/prompts/system/grounded.md`
 - `resources/prompts/tasks/classify_request.md`
+- `resources/prompts/tasks/route_discord_intent.md`
 - `resources/prompts/tasks/plan_discord_search.md`
+- `resources/prompts/tasks/judge_grounding_sufficiency.md`
 - `resources/prompts/tasks/synthesize_answer.md`
 - `resources/prompts/guards/insufficient_evidence.md`
 
@@ -84,7 +91,7 @@ The stable prompt catalog is:
 
 - `src/shared/promptCatalog.ts`
 
-If you change the expected JSON shape for classification or tool planning, update:
+If you change the expected JSON shape for classification, routing, tool planning, or grounding sufficiency judgment, update:
 
 - The prompt file
 - The consuming TypeScript types in `src/shared/appTypes.ts`
@@ -109,6 +116,7 @@ Stored Discord messages are the source of truth for search and grounded answers.
 - New messages are ingested from `src/discord/events/message/messageCreate.event.ts`
 - Backfill and repair flows are exposed through `src/discord/commands/system/index.command.ts`
 - Persistence and retrieval live under `src/memory/`
+- Reusable grounded contexts, cached tool results, and short-lived conversation resolution context are stored in the same SQLite runtime database with TTL plus a short per-guild response-age limit
 
 When changing retrieval behavior, update both code and docs:
 

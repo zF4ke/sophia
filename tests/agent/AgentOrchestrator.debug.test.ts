@@ -1,13 +1,33 @@
+import { Collection, TextChannel } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentOrchestrator } from "@/agent/AgentOrchestrator";
 import { EmptyModelOutputError } from "@/ai/EmptyModelOutputError";
 import { RequestClassifier } from "@/agent/RequestClassifier";
 import { ModelGateway } from "@/ai/ModelGateway";
 import { DiscordToolService } from "@/discord/tools/DiscordToolService";
+import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { MemoryDatabase } from "@/memory/MemoryDatabase";
+
+function createReadableChannel(id: string, name: string) {
+    const channel = Object.create(TextChannel.prototype);
+    Object.defineProperty(channel, "viewable", {
+        value: true,
+        configurable: true,
+    });
+    Object.assign(channel, {
+        id,
+        name,
+    });
+    return channel;
+}
 
 describe("AgentOrchestrator debug reporting", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        process.env.SOPHIA_MEMORY_DB_PATH = ":memory:";
+        process.env.DISCORD_TOKEN = "test-token";
+        process.env.OPENROUTER_API_KEY = "test-key";
+        MemoryDatabase.reset();
     });
 
     it("reports direct-answer stages", async () => {
@@ -127,7 +147,7 @@ describe("AgentOrchestrator debug reporting", () => {
             messageEvidenceCount: 0,
             liveEvidenceCount: 0,
             sufficient: false,
-        });
+        }, "heuristic");
         expect(debugSession.finishSuccess).toHaveBeenCalledWith(
             "Concluído sem evidência suficiente."
         );
@@ -192,9 +212,10 @@ describe("AgentOrchestrator debug reporting", () => {
             messageEvidenceCount: 0,
             liveEvidenceCount: 1,
             sufficient: true,
-        });
+        }, "heuristic");
         expect(debugSession.setGenerating).toHaveBeenCalledTimes(1);
         expect(debugSession.finishSuccess).toHaveBeenCalledWith("Resposta concluída.");
+        expect(ModelGateway.generateJson).not.toHaveBeenCalled();
     });
 
     it("uses a fallback answer when the model returns empty output", async () => {
@@ -329,6 +350,12 @@ describe("AgentOrchestrator debug reporting", () => {
             mode: "discord_grounded",
             reason: "needs discord evidence",
         });
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            intent: "channel_target",
+            targetText: "scart",
+            confidence: 0.9,
+            reason: "This looks like a channel-focused request.",
+        } as any);
         const searchMessagesSpy = vi
             .spyOn(DiscordToolService, "searchMessages")
             .mockResolvedValueOnce({
@@ -397,6 +424,104 @@ describe("AgentOrchestrator debug reporting", () => {
         expect(generateTextSpy).toHaveBeenCalledTimes(1);
     });
 
+    it("accepts moderate post-crawl channel results as sufficient grounding", async () => {
+        vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
+            mode: "discord_grounded",
+            reason: "needs discord evidence",
+        });
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            intent: "channel_target",
+            targetText: "scart",
+            confidence: 0.92,
+            reason: "This looks like a channel-focused request.",
+        } as any);
+        vi.spyOn(DiscordToolService, "searchMessages")
+            .mockResolvedValueOnce({
+                tool: "search_messages",
+                summary: "No relevant stored messages found.",
+                data: [],
+            } as any)
+            .mockResolvedValueOnce({
+                tool: "search_messages",
+                summary: "Found 8 relevant message chunks.",
+                data: [
+                    {
+                        totalScore: 0.41,
+                        channelName: "scart",
+                        authorName: "F4zke",
+                        jumpLink: "https://example.com/1",
+                        content: "1. A realidade se transforma\n2. O Caminho Inverso",
+                    },
+                ],
+            } as any);
+        vi.spyOn(DiscordToolService, "listRelevantChannels").mockResolvedValue({
+            tool: "list_relevant_channels",
+            summary: "Found 1 potentially relevant channels.",
+            data: [
+                {
+                    channelId: "c-scart",
+                    channelName: "scart",
+                    hitCount: 0,
+                    isIndexed: false,
+                    matchSource: "live_name",
+                    lastIndexedTimestamp: null,
+                },
+            ],
+        } as any);
+        vi.spyOn(DiscordToolService, "crawlChannelMessages").mockResolvedValue({
+            tool: "crawl_channel_messages",
+            summary: "Fetched 120 messages from scart and stored 120.",
+            data: {
+                channelId: "c-scart",
+                channelName: "scart",
+                messagesFetched: 120,
+                messagesStored: 120,
+                exhausted: false,
+                queryHint: "pega as musicas do canal scart",
+            },
+        } as any);
+        const generateTextSpy = vi
+            .spyOn(ModelGateway, "generateText")
+            .mockResolvedValue("As músicas do canal scart incluem A realidade se transforma e O Caminho Inverso.");
+
+        const debugSession = {
+            setClassifying: vi.fn().mockResolvedValue(undefined),
+            setClassification: vi.fn().mockResolvedValue(undefined),
+            setPlanning: vi.fn().mockResolvedValue(undefined),
+            setToolRunning: vi.fn().mockResolvedValue(undefined),
+            setToolResult: vi.fn().mockResolvedValue(undefined),
+            setGroundingSummary: vi.fn().mockResolvedValue(undefined),
+            setGenerating: vi.fn().mockResolvedValue(undefined),
+            finishSuccess: vi.fn().mockResolvedValue(undefined),
+            finishError: vi.fn().mockResolvedValue(undefined),
+            setRouting: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const result = await AgentOrchestrator.answerQuestion({
+            question: "pega as musicas do canal scart",
+            user: { id: "u1" } as any,
+            guild: { id: "g1", name: "Oz Synthesis" } as any,
+            currentChannelId: "c-now",
+            debugSession,
+        });
+
+        expect(result.answer).toContain("A realidade se transforma");
+        expect(debugSession.setGroundingSummary).toHaveBeenCalledWith({
+            messageEvidenceCount: 1,
+            liveEvidenceCount: 0,
+            sufficient: true,
+        }, "judge");
+        expect(debugSession.setGenerating).toHaveBeenCalledTimes(1);
+        expect(debugSession.finishSuccess).toHaveBeenCalledWith("Resposta concluída.");
+        expect(generateTextSpy).toHaveBeenCalledTimes(1);
+        expect(
+            vi.mocked(ModelGateway.generateJson).mock.calls.some(
+                ([, , options]) =>
+                    options?.traceContext?.traceLabel === "grounding_sufficiency_judgment"
+            )
+        ).toBe(true);
+    });
+
     it("prioritizes a mentioned channel before member lookup", async () => {
         vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
             mode: "discord_grounded",
@@ -460,5 +585,292 @@ describe("AgentOrchestrator debug reporting", () => {
             "escolha uma musica legal ai do <#12345>"
         );
         expect(getMemberProfileSpy).not.toHaveBeenCalled();
+    });
+
+    it("reuses a strong guild-wide grounded context without new tool calls", async () => {
+        vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
+            mode: "discord_grounded",
+            reason: "needs discord evidence",
+        });
+        DiscordMemoryService.saveReusableGroundedContext({
+            guildId: "g1",
+            channelId: "c-old",
+            channelScopeKey: "c-old",
+            questionFingerprint: "que servidor e esse",
+            routeIntent: "server_context",
+            evidenceText: "Tool: get_guild_context\nSummary: Oz Synthesis: 17 membros e 68 canais.\nServer name: Oz Synthesis",
+            citations: [],
+            toolRuns: [
+                {
+                    tool: "get_guild_context",
+                    summary: "Oz Synthesis: 17 membros e 68 canais.",
+                    data: {
+                        id: "g1",
+                        name: "Oz Synthesis",
+                        memberCount: 17,
+                        channelCount: 68,
+                    },
+                },
+            ],
+            sufficient: true,
+            groundingDecisionMode: "judge",
+            createdTimestamp: Date.now(),
+            expiryTimestamp: Date.now() + 60_000,
+            createdResponseOrdinal: 1,
+        });
+        const getGuildContextSpy = vi.spyOn(DiscordToolService, "getGuildContext");
+        const generateTextSpy = vi
+            .spyOn(ModelGateway, "generateText")
+            .mockResolvedValue("Você está no servidor Oz Synthesis.");
+
+        const debugSession = {
+            setClassifying: vi.fn().mockResolvedValue(undefined),
+            setClassification: vi.fn().mockResolvedValue(undefined),
+            setRouting: vi.fn().mockResolvedValue(undefined),
+            setContextCacheStatus: vi.fn().mockResolvedValue(undefined),
+            setPlanning: vi.fn().mockResolvedValue(undefined),
+            setToolRunning: vi.fn().mockResolvedValue(undefined),
+            setToolResult: vi.fn().mockResolvedValue(undefined),
+            setGroundingSummary: vi.fn().mockResolvedValue(undefined),
+            setGenerating: vi.fn().mockResolvedValue(undefined),
+            finishSuccess: vi.fn().mockResolvedValue(undefined),
+            finishError: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const result = await AgentOrchestrator.answerQuestion({
+            question: "Que servidor é esse?",
+            user: { id: "u1" } as any,
+            guild: { id: "g1", name: "Oz Synthesis" } as any,
+            currentChannelId: "c-now",
+            debugSession,
+        });
+
+        expect(result.answer).toBe("Você está no servidor Oz Synthesis.");
+        expect(getGuildContextSpy).not.toHaveBeenCalled();
+        expect(debugSession.setContextCacheStatus).toHaveBeenCalledWith("reused");
+        expect(debugSession.setGroundingSummary).toHaveBeenCalledWith(
+            {
+                messageEvidenceCount: 0,
+                liveEvidenceCount: 1,
+                sufficient: true,
+            },
+            "reused"
+        );
+        expect(generateTextSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("seeds the tool loop from a prior insufficient grounded context", async () => {
+        vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
+            mode: "discord_grounded",
+            reason: "needs discord evidence",
+        });
+        DiscordMemoryService.saveReusableGroundedContext({
+            guildId: "g1",
+            channelId: "c-old",
+            channelScopeKey: "c-old",
+            questionFingerprint: "roadmap release",
+            routeIntent: "broad_search",
+            evidenceText: "Tool: search_messages\nSummary: No relevant stored messages found.",
+            citations: [],
+            toolRuns: [
+                {
+                    tool: "search_messages",
+                    summary: "No relevant stored messages found.",
+                    data: [],
+                },
+            ],
+            sufficient: false,
+            groundingDecisionMode: "heuristic",
+            createdTimestamp: Date.now(),
+            expiryTimestamp: Date.now() + 60_000,
+            createdResponseOrdinal: 1,
+        });
+        const searchMessagesSpy = vi
+            .spyOn(DiscordToolService, "searchMessages")
+            .mockResolvedValue({
+                tool: "search_messages",
+                summary: "Found 1 relevant message chunks.",
+                data: [
+                    {
+                        totalScore: 0.52,
+                        channelName: "produto",
+                        authorName: "Ana",
+                        jumpLink: "https://example.com/roadmap",
+                        content: "Roadmap release confirmed.",
+                    },
+                ],
+            } as any);
+        const listRelevantChannelsSpy = vi
+            .spyOn(DiscordToolService, "listRelevantChannels")
+            .mockResolvedValue({
+                tool: "list_relevant_channels",
+                summary: "Found 1 potentially relevant channels.",
+                data: [
+                    {
+                        channelId: "c-prod",
+                        channelName: "produto",
+                        hitCount: 0,
+                        isIndexed: false,
+                        matchSource: "live_name",
+                        lastIndexedTimestamp: null,
+                    },
+                ],
+            } as any);
+        vi.spyOn(ModelGateway, "generateJson")
+            .mockResolvedValueOnce({
+                action: "crawl_channel_messages",
+                arguments: {
+                    channelId: "c-prod",
+                    limit: 1000,
+                    queryHint: "roadmap release",
+                },
+                reason: "continue from discovered channel",
+            } as any)
+            .mockResolvedValueOnce({
+                sufficient: false,
+                reason: "Still not enough evidence.",
+                missingInformation: "Need actual roadmap details.",
+            } as any);
+        vi.spyOn(DiscordToolService, "crawlChannelMessages").mockResolvedValue({
+            tool: "crawl_channel_messages",
+            summary: "Fetched 20 messages from produto and stored 20.",
+            data: {
+                channelId: "c-prod",
+                channelName: "produto",
+                messagesFetched: 20,
+                messagesStored: 20,
+                exhausted: false,
+                queryHint: "roadmap release",
+            },
+        } as any);
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
+            "Roadmap release confirmed."
+        );
+
+        await AgentOrchestrator.answerQuestion({
+            question: "roadmap release",
+            user: { id: "u1" } as any,
+            guild: { id: "g1", name: "Oz Synthesis" } as any,
+            currentChannelId: "c-now",
+            debugSession: {
+                setClassifying: vi.fn().mockResolvedValue(undefined),
+                setClassification: vi.fn().mockResolvedValue(undefined),
+                setRouting: vi.fn().mockResolvedValue(undefined),
+                setContextCacheStatus: vi.fn().mockResolvedValue(undefined),
+                setPlanning: vi.fn().mockResolvedValue(undefined),
+                setToolRunning: vi.fn().mockResolvedValue(undefined),
+                setToolResult: vi.fn().mockResolvedValue(undefined),
+                setGroundingSummary: vi.fn().mockResolvedValue(undefined),
+                setGenerating: vi.fn().mockResolvedValue(undefined),
+                finishSuccess: vi.fn().mockResolvedValue(undefined),
+                finishError: vi.fn().mockResolvedValue(undefined),
+            },
+        });
+
+        expect(searchMessagesSpy).toHaveBeenCalledTimes(1);
+        expect(listRelevantChannelsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("reuses resolved person context for follow-up person-topic questions", async () => {
+        vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
+            mode: "discord_grounded",
+            reason: "needs discord evidence",
+        });
+        DiscordMemoryService.saveConversationResolutionContext({
+            guildId: "g1",
+            channelId: "c-now",
+            routeIntent: "person_target",
+            targetText: "One Person",
+            authorId: "u-open",
+            authorQuery: "oneperson",
+            channelIds: [],
+            topicText: null,
+            channelHintText: null,
+            resolvedPerson: {
+                id: "u-open",
+                username: "oneperson",
+                displayName: "Openrosen",
+                globalName: null,
+                nickname: "One Person",
+                roles: ["member"],
+            },
+            createdTimestamp: Date.now(),
+            expiryTimestamp: Date.now() + 60_000,
+            createdResponseOrdinal: 1,
+        });
+        const searchMessagesSpy = vi
+            .spyOn(DiscordToolService, "searchMessages")
+            .mockResolvedValueOnce({
+                tool: "search_messages",
+                summary: "No relevant stored messages found.",
+                data: [],
+            } as any)
+            .mockResolvedValueOnce({
+                tool: "search_messages",
+                summary: "Found 1 relevant message chunks.",
+                data: [
+                    {
+                        totalScore: 0.71,
+                        channelName: "silksong",
+                        authorName: "Openrosen",
+                        jumpLink: "https://example.com/silksong",
+                        content: "Silksong ainda vai sair.",
+                    },
+                ],
+            } as any);
+        const crawlSpy = vi
+            .spyOn(DiscordToolService, "crawlChannelMessages")
+            .mockResolvedValue({
+                tool: "crawl_channel_messages",
+                summary: "Fetched 40 messages from silksong and stored 40.",
+                data: {
+                    channelId: "c-silk",
+                    channelName: "silksong",
+                    messagesFetched: 40,
+                    messagesStored: 40,
+                    exhausted: false,
+                    queryHint: "silksong",
+                },
+            } as any);
+        const listMembersSpy = vi.spyOn(DiscordToolService, "listMembers");
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
+            "Openrosen disse que Silksong ainda vai sair."
+        );
+
+        const result = await AgentOrchestrator.answerQuestion({
+            question: "o que é que ele falou sobre silksong",
+            user: { id: "u1" } as any,
+            guild: {
+                id: "g1",
+                name: "Oz Synthesis",
+                channels: {
+                    cache: new Collection([
+                        [
+                            "c-silk",
+                            createReadableChannel("c-silk", "silksong"),
+                        ],
+                    ]),
+                },
+            } as any,
+            currentChannelId: "c-now",
+        });
+
+        expect(result.answer).toContain("Silksong");
+        expect(listMembersSpy).not.toHaveBeenCalled();
+        expect(searchMessagesSpy).toHaveBeenNthCalledWith(
+            1,
+            "silksong",
+            expect.anything(),
+            expect.objectContaining({
+                authorId: "u-open",
+                channelIds: ["c-silk"],
+            })
+        );
+        expect(crawlSpy).toHaveBeenCalledWith(
+            expect.anything(),
+            "c-silk",
+            1000,
+            "silksong"
+        );
     });
 });

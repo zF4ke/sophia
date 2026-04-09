@@ -3,32 +3,37 @@ import type { DebugSessionReporter } from "@/discord/debug/types";
 import type {
     ChannelCrawlResult,
     DiscordToolResult,
-    RetrievedChunk,
+    RouteDecision,
 } from "@/shared/appTypes";
 import { assessGrounding } from "@/agent/orchestration/grounding";
-import {
-    getDebugItemCount,
-    getToolEvidenceCount,
-} from "@/agent/orchestration/evidenceFormatting";
-import { isMemberDiscoveryQuestion } from "@/agent/orchestration/questionAnalysis";
+import { decideGroundingFromAssessment } from "@/agent/orchestration/evidenceJudge";
+import { getDebugItemCount } from "@/agent/orchestration/evidenceFormatting";
 import { describePlannedTool } from "@/agent/orchestration/debugPlanningDetails";
 import { planNextTool } from "@/agent/orchestration/toolPlanning";
 import { executeTool } from "@/agent/orchestration/toolExecution";
-import type { SearchContext } from "@/agent/orchestration/types";
+import type { GroundingDecision, SearchContext } from "@/agent/orchestration/types";
 
 const MAX_TOOL_STEPS = 4;
-const STRONG_SEARCH_SCORE = 0.45;
 
 export async function runDiscordToolLoop(options: {
     question: string;
     user: User;
     guild: Guild | null;
+    routeDecision: RouteDecision;
     currentChannelId?: string | null;
     debugSession?: DebugSessionReporter | null;
-}): Promise<DiscordToolResult[]> {
-    const toolRuns: DiscordToolResult[] = [];
+    initialToolRuns?: DiscordToolResult[];
+    seededFromContext?: boolean;
+}): Promise<{ toolRuns: DiscordToolResult[]; groundingDecision: GroundingDecision | null }> {
+    const toolRuns: DiscordToolResult[] = [...(options.initialToolRuns ?? [])];
     const context: SearchContext = {
-        crawledChannelIds: new Set<string>(),
+        crawledChannelIds: new Set<string>(
+            toolRuns
+                .filter((result) => result.tool === "crawl_channel_messages")
+                .map((result) => (result.data as ChannelCrawlResult).channelId)
+        ),
+        seededFromContext: options.seededFromContext ?? false,
+        initialToolRuns: [...toolRuns],
     };
 
     for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
@@ -38,7 +43,8 @@ export async function runDiscordToolLoop(options: {
             toolRuns,
             options.guild,
             options.currentChannelId,
-            context
+            context,
+            options.routeDecision
         );
         if (next.action === "finish") {
             break;
@@ -54,54 +60,71 @@ export async function runDiscordToolLoop(options: {
             options.question,
             options.currentChannelId
         );
+        const debugSummary = result.cacheStatus
+            ? `cache ${result.cacheStatus} · ${result.summary}`
+            : result.summary;
         await options.debugSession?.setToolResult(
             result.tool,
-            result.summary,
+            debugSummary,
             getDebugItemCount(result)
         );
         toolRuns.push(result);
         updateSearchContext(context, result);
 
-        if (shouldStopAfterTool(options.question, toolRuns, result)) {
-            break;
+        const groundingDecision = await shouldStopAfterTool(
+            options.question,
+            toolRuns,
+            result,
+            options.routeDecision
+        );
+        if (groundingDecision) {
+            return {
+                toolRuns,
+                groundingDecision,
+            };
         }
     }
 
-    return toolRuns;
+    return {
+        toolRuns,
+        groundingDecision: null,
+    };
 }
 
-function shouldStopAfterTool(
+async function shouldStopAfterTool(
     question: string,
     toolRuns: DiscordToolResult[],
-    result: DiscordToolResult
-): boolean {
+    result: DiscordToolResult,
+    routeDecision: RouteDecision
+): Promise<GroundingDecision | null> {
     if (result.tool === "finish") {
-        return true;
+        return {
+            sufficient: false,
+            mode: "heuristic",
+            reason: "Search loop stopped explicitly.",
+            missingInformation: null,
+        };
     }
 
-    if (result.tool === "search_messages") {
-        const chunks = result.data as RetrievedChunk[];
-        return Boolean(chunks.length && chunks[0].totalScore >= STRONG_SEARCH_SCORE);
+    if (result.tool === "crawl_channel_messages" || result.tool === "list_relevant_channels") {
+        return null;
     }
 
-    if (result.tool === "get_member_profile") {
-        return getToolEvidenceCount(result) > 0;
+    const grounding = assessGrounding(question, toolRuns);
+    if (
+        grounding.summary.messageEvidenceCount <= 0 &&
+        grounding.summary.liveEvidenceCount <= 0
+    ) {
+        return null;
     }
 
-    if (result.tool === "get_guild_context") {
-        return getToolEvidenceCount(result) > 0 && !isMemberDiscoveryQuestion(question);
-    }
-
-    if (result.tool === "list_members") {
-        const grounding = assessGrounding(question, toolRuns);
-        return grounding.summary.sufficient;
-    }
-
-    if (result.tool === "crawl_channel_messages") {
-        return false;
-    }
-
-    return false;
+    const decision = await decideGroundingFromAssessment({
+        question,
+        assessment: grounding,
+        toolRuns,
+        routeDecision,
+    });
+    return decision.sufficient ? decision : null;
 }
 
 function updateSearchContext(context: SearchContext, result: DiscordToolResult): void {

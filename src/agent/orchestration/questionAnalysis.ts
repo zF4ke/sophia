@@ -69,6 +69,39 @@ export function isPersonCentricQuestion(question: string): boolean {
     );
 }
 
+export function isIdentityQuestion(question: string): boolean {
+    const normalized = normalizeQuestion(question);
+    return (
+        normalized.includes("quem e ") ||
+        normalized.includes("who is ") ||
+        normalized.includes("que cargo") ||
+        normalized.includes("qual cargo") ||
+        normalized.includes("que papel") ||
+        normalized.includes("qual papel") ||
+        normalized.includes("qual o nick") ||
+        normalized.includes("qual e o nick") ||
+        normalized.includes("qual o username") ||
+        normalized.includes("qual e o username") ||
+        normalized.includes("perfil de ") ||
+        normalized.includes("perfil do ") ||
+        normalized.includes("profile of ")
+    );
+}
+
+export function isPersonMessageQuestion(question: string): boolean {
+    const normalized = normalizeQuestion(question);
+    return (
+        (normalized.includes("o que ") && normalized.includes(" falou")) ||
+        (normalized.includes("o que ") && normalized.includes(" disse")) ||
+        (normalized.includes("what did ") && normalized.includes(" say")) ||
+        normalized.includes("mensagens de ") ||
+        normalized.includes("mensagens do ") ||
+        normalized.includes("messages from ") ||
+        normalized.includes("falou sobre ") ||
+        normalized.includes("disse sobre ")
+    );
+}
+
 export function isGuildContextQuestion(question: string): boolean {
     const normalized = normalizeQuestion(question);
 
@@ -96,8 +129,48 @@ export function extractLikelyPersonName(question: string): string | null {
     return match ? match[1].trim().replace(/^#/, "") : null;
 }
 
+export function extractTopicHint(question: string): string | null {
+    const match = question.match(
+        /\b(?:sobre|about)\s+([^\n?!.,:;]+)$/i
+    );
+    if (match?.[1]) {
+        return match[1].trim();
+    }
+
+    const saidMatch = question.match(
+        /\b(?:falou|disse|said)\s+(?:sobre|about)\s+([^\n?!.,:;]+)$/i
+    );
+    return saidMatch?.[1]?.trim() || null;
+}
+
+export function isReferentialFollowUp(question: string): boolean {
+    const normalized = normalizeQuestion(question);
+    return (
+        /\b(ele|ela|esse|essa|isso|aquele|aquela|tal)\b/.test(normalized) ||
+        normalized.startsWith("e ") ||
+        normalized.startsWith("hm ") ||
+        normalized.startsWith("hmm ")
+    );
+}
+
 export function extractMentionedChannelIds(question: string): string[] {
     return [...question.matchAll(/<#(\d+)>/g)].map((match) => match[1]);
+}
+
+export function extractMentionedUserIds(question: string): string[] {
+    return [...question.matchAll(/<@!?(\d+)>/g)].map((match) => match[1]);
+}
+
+export function needsAiRouting(question: string): boolean {
+    const normalized = normalizeQuestion(question);
+    return (
+        /\b(?:do|da|de|from)\s+\S+/i.test(question) ||
+        normalized.includes("canal ") ||
+        normalized.includes("channel ") ||
+        normalized.includes("perfil ") ||
+        normalized.includes("profile ") ||
+        normalized.includes("bio ")
+    );
 }
 
 export function requestsAllMembers(question: string): boolean {

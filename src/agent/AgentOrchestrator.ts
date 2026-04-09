@@ -12,6 +12,17 @@ import {
     generateDirectAnswer,
     generateGroundedAnswer,
 } from "@/agent/orchestration/answerFlow";
+import { decideGroundingFromAssessment } from "@/agent/orchestration/evidenceJudge";
+import { routeDiscordQuestion } from "@/agent/orchestration/router";
+import {
+    findConversationResolutionContext,
+    saveConversationResolutionContext,
+} from "@/agent/orchestration/conversationContext";
+import {
+    findReusableGroundedContext,
+    saveReusableGroundedContext,
+} from "@/agent/orchestration/reuseCache";
+import { runWithRequestCacheContext } from "@/agent/orchestration/requestCacheContext";
 import { runDiscordToolLoop } from "@/agent/orchestration/toolLoop";
 import { assessGrounding } from "@/agent/orchestration/grounding";
 import { PromptRegistry } from "@/agent/prompts/PromptRegistry";
@@ -29,40 +40,52 @@ export class AgentOrchestrator {
         classification: RequestClassification;
         toolRuns: DiscordToolResult[];
     }> {
-        try {
-            await options.debugSession?.setClassifying();
+        const responseOrdinal = DiscordMemoryService.nextGuildResponseOrdinal(
+            options.guild?.id || null
+        );
 
-            const classification = await RequestClassifier.classify(options.question);
-            await options.debugSession?.setClassification(classification.mode);
+        return runWithRequestCacheContext(
+            {
+                guildId: options.guild?.id || null,
+                responseOrdinal,
+            },
+            async () => {
+                try {
+                    await options.debugSession?.setClassifying();
 
-            if (classification.mode === "direct_answer") {
-                return await this.answerDirectQuestion(
-                    options.question,
-                    classification,
-                    options.debugSession
-                );
+                    const classification = await RequestClassifier.classify(options.question);
+                    await options.debugSession?.setClassification(classification.mode);
+
+                    if (classification.mode === "direct_answer") {
+                        return await this.answerDirectQuestion(
+                            options.question,
+                            classification,
+                            options.debugSession
+                        );
+                    }
+
+                    return await this.answerGroundedQuestion(options, classification);
+                } catch (error) {
+                    if (error instanceof EmptyModelOutputError) {
+                        await options.debugSession?.finishSuccess(
+                            "Modelo devolveu resposta vazia; usei fallback."
+                        );
+                        return {
+                            answer: EMPTY_OUTPUT_FALLBACK,
+                            citations: [],
+                            classification: {
+                                mode: "direct_answer",
+                                reason: "Fallback after empty model output.",
+                            },
+                            toolRuns: [],
+                        };
+                    }
+
+                    await options.debugSession?.finishError(error);
+                    throw error;
+                }
             }
-
-            return await this.answerGroundedQuestion(options, classification);
-        } catch (error) {
-            if (error instanceof EmptyModelOutputError) {
-                await options.debugSession?.finishSuccess(
-                    "Modelo devolveu resposta vazia; usei fallback."
-                );
-                return {
-                    answer: EMPTY_OUTPUT_FALLBACK,
-                    citations: [],
-                    classification: {
-                        mode: "direct_answer",
-                        reason: "Fallback after empty model output.",
-                    },
-                    toolRuns: [],
-                };
-            }
-
-            await options.debugSession?.finishError(error);
-            throw error;
-        }
+        );
     }
 
     private static async answerDirectQuestion(
@@ -92,11 +115,109 @@ export class AgentOrchestrator {
         },
         classification: RequestClassification
     ) {
-        const toolRuns = await runDiscordToolLoop(options);
-        const grounding = assessGrounding(options.question, toolRuns);
-        await options.debugSession?.setGroundingSummary(grounding.summary);
+        const priorConversationContext = findConversationResolutionContext({
+            guildId: options.guild?.id || null,
+            currentChannelId: options.currentChannelId || null,
+        });
+        const routeDecision = await routeDiscordQuestion({
+            question: options.question,
+            guild: options.guild,
+            currentChannelId: options.currentChannelId,
+            priorContext: priorConversationContext,
+        });
+        await options.debugSession?.setRouting?.(routeDecision);
+        await options.debugSession?.setContextCacheStatus?.("none");
 
-        if (!grounding.summary.sufficient) {
+        const reusableContext = findReusableGroundedContext({
+            guildId: options.guild?.id || null,
+            currentChannelId: options.currentChannelId || null,
+            question: options.question,
+            routeDecision,
+            requireSufficient: true,
+        });
+
+        if (reusableContext) {
+            await options.debugSession?.setContextCacheStatus?.("reused");
+            const cachedGrounding = assessGrounding(
+                options.question,
+                reusableContext.toolRuns
+            );
+            await options.debugSession?.setGroundingSummary(
+                {
+                    ...cachedGrounding.summary,
+                    sufficient: true,
+                },
+                "reused"
+            );
+            await options.debugSession?.setGenerating();
+            const answer = await generateGroundedAnswer(
+                options.question,
+                reusableContext.evidenceText
+            );
+            await options.debugSession?.finishSuccess("Resposta concluída.");
+
+            return {
+                answer,
+                citations: [],
+                classification,
+                toolRuns: reusableContext.toolRuns,
+            };
+        }
+
+        const seedContext = findReusableGroundedContext({
+            guildId: options.guild?.id || null,
+            currentChannelId: options.currentChannelId || null,
+            question: options.question,
+            routeDecision,
+            requireSufficient: false,
+        });
+        const initialToolRuns = seedContext?.toolRuns?.length ? seedContext.toolRuns : [];
+        if (initialToolRuns.length) {
+            await options.debugSession?.setContextCacheStatus?.("seeded");
+        }
+
+        const toolLoopResult = await runDiscordToolLoop({
+            ...options,
+            routeDecision,
+            initialToolRuns,
+            seededFromContext: initialToolRuns.length > 0,
+        });
+        const toolRuns = toolLoopResult.toolRuns;
+        const grounding = assessGrounding(options.question, toolRuns);
+        const judgedGrounding =
+            toolLoopResult.groundingDecision ||
+            (await decideGroundingFromAssessment({
+                question: options.question,
+                assessment: grounding,
+                toolRuns,
+                routeDecision,
+            }));
+        const groundingSummary = {
+            ...grounding.summary,
+            sufficient: judgedGrounding.sufficient,
+        };
+        await options.debugSession?.setGroundingSummary(
+            groundingSummary,
+            judgedGrounding.mode
+        );
+
+        saveReusableGroundedContext({
+            guildId: options.guild?.id || null,
+            currentChannelId: options.currentChannelId || null,
+            question: options.question,
+            routeDecision,
+            grounding,
+            groundingDecision: judgedGrounding,
+            toolRuns,
+        });
+        saveConversationResolutionContext({
+            guildId: options.guild?.id || null,
+            currentChannelId: options.currentChannelId || null,
+            routeDecision,
+            toolRuns,
+        });
+
+        if (!groundingSummary.sufficient) {
             await options.debugSession?.finishSuccess("Concluído sem evidência suficiente.");
             return {
                 answer: PromptRegistry.load("guards/insufficient_evidence"),
@@ -108,12 +229,12 @@ export class AgentOrchestrator {
 
         await options.debugSession?.setGenerating();
         const answer = await generateGroundedAnswer(options.question, grounding.evidence);
-        this.recordToolRuns(options, toolRuns);
+        this.recordToolRuns(options, toolRuns.slice(initialToolRuns.length));
         await options.debugSession?.finishSuccess("Resposta concluída.");
 
         return {
             answer,
-            citations: grounding.citations,
+            citations: [],
             classification,
             toolRuns,
         };

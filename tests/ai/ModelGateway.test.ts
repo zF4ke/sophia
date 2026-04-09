@@ -115,6 +115,36 @@ describe("ModelGateway", () => {
         });
     });
 
+    it("logs router json generations with a distinct trace label", async () => {
+        (ModelGateway as any).client.chat.completions.create = vi.fn().mockResolvedValue({
+            choices: [
+                {
+                    message: {
+                        content: '{"intent":"channel_target","targetText":"scart","confidence":0.91,"reason":"channel"}',
+                    },
+                },
+            ],
+        });
+
+        await ModelGateway.generateJson(
+            [{ role: "user", content: "Route this" }],
+            { intent: "broad_search", reason: "fallback" },
+            {
+                traceContext: {
+                    traceLabel: "discord_question_routing",
+                    questionPreview: "Route this",
+                },
+            }
+        );
+
+        const entries = readLogEntries();
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toMatchObject({
+            callKind: "json",
+            traceLabel: "discord_question_routing",
+        });
+    });
+
     it("throws on blank text output and logs the failure", async () => {
         (ModelGateway as any).client.chat.completions.create = vi.fn().mockResolvedValue({
             choices: [{ message: { content: "   " } }],

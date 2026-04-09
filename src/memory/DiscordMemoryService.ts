@@ -4,11 +4,21 @@ import { ModelGateway } from "@/ai/ModelGateway";
 import { MessageEligibility } from "@/memory/ingest/MessageEligibility";
 import { MessageNormalizer } from "@/memory/ingest/MessageNormalizer";
 import { MessageChunker } from "@/memory/index/MessageChunker";
+import { CacheReadRepository } from "@/memory/repositories/CacheReadRepository";
+import { CacheWriteRepository } from "@/memory/repositories/CacheWriteRepository";
 import { MemoryReadRepository } from "@/memory/repositories/MemoryReadRepository";
 import { MemoryWriteRepository } from "@/memory/repositories/MemoryWriteRepository";
+import { ResponseCounterRepository } from "@/memory/repositories/ResponseCounterRepository";
 import { MemorySearchService } from "@/memory/search/MemorySearchService";
 import { SearchScopeClause } from "@/memory/search/SearchScopeClause";
-import type { ChannelCrawlState, SearchMessageScope, StoredMessage } from "@/memory/types";
+import type {
+    CachedToolResultRecord,
+    ChannelCrawlState,
+    ConversationResolutionContextRecord,
+    ReusableGroundedContextRecord,
+    SearchMessageScope,
+    StoredMessage,
+} from "@/memory/types";
 import type { ChannelCandidate, RetrievedChunk } from "@/shared/appTypes";
 
 const EMBEDDING_BATCH_SIZE = 32;
@@ -149,5 +159,62 @@ export class DiscordMemoryService {
 
     public static repairIndexes(): void {
         MemoryWriteRepository.repairIndexes();
+    }
+
+    public static getReusableGroundedContext(options: {
+        guildId: string | null;
+        currentChannelId: string | null;
+        questionFingerprint: string;
+        routeIntent: string;
+        requireSufficient?: boolean;
+        currentResponseOrdinal?: number | null;
+        maxResponsesAgo?: number;
+    }): ReusableGroundedContextRecord | null {
+        return CacheReadRepository.getReusableGroundedContext(options);
+    }
+
+    public static saveReusableGroundedContext(
+        context: ReusableGroundedContextRecord
+    ): void {
+        CacheWriteRepository.upsertReusableGroundedContext(context);
+    }
+
+    public static getCachedToolResult(
+        cacheKey: string,
+        currentResponseOrdinal: number | null,
+        maxResponsesAgo: number
+    ): CachedToolResultRecord | null {
+        return CacheReadRepository.getCachedToolResult(
+            cacheKey,
+            currentResponseOrdinal,
+            maxResponsesAgo
+        );
+    }
+
+    public static saveCachedToolResult(entry: CachedToolResultRecord): void {
+        CacheWriteRepository.upsertCachedToolResult(entry);
+    }
+
+    public static pruneCacheEntries(now = Date.now()): void {
+        CacheWriteRepository.pruneExpired(now);
+    }
+
+    public static nextGuildResponseOrdinal(guildId: string | null): number | null {
+        return ResponseCounterRepository.nextGuildResponseOrdinal(guildId);
+    }
+
+    public static getConversationResolutionContext(options: {
+        guildId: string | null;
+        currentChannelId: string | null;
+        currentResponseOrdinal?: number | null;
+        maxResponsesAgo?: number;
+    }): ConversationResolutionContextRecord | null {
+        return CacheReadRepository.getConversationResolutionContext(options);
+    }
+
+    public static saveConversationResolutionContext(
+        context: ConversationResolutionContextRecord
+    ): void {
+        CacheWriteRepository.upsertConversationResolutionContext(context);
     }
 }

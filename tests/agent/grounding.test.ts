@@ -81,4 +81,50 @@ describe("grounding", () => {
         expect(evidence?.hasMore).toBe(false);
         expect(evidence?.totalCount).toBe(3);
     });
+
+    it("treats post-crawl message hits as sufficient for non-member questions", () => {
+        const grounding = assessGrounding("pega as musicas do canal scart", [
+            {
+                tool: "crawl_channel_messages",
+                summary: "Fetched 120 messages from scart and stored 120.",
+                data: {
+                    channelId: "c-scart",
+                    channelName: "scart",
+                    messagesFetched: 120,
+                    messagesStored: 120,
+                    exhausted: false,
+                    queryHint: "pega as musicas do canal scart",
+                },
+            },
+            {
+                tool: "search_messages",
+                summary: "Found 8 relevant message chunks.",
+                data: [
+                    {
+                        messageId: "m1",
+                        channelId: "c-scart",
+                        channelName: "scart",
+                        guildId: "g1",
+                        authorId: "u1",
+                        authorName: "F4zke",
+                        content: "1. Musica A\n2. Musica B",
+                        createdTimestamp: 1715874381035,
+                        jumpLink: "https://discord.com/channels/g1/c-scart/m1",
+                        lexicalScore: 0.48,
+                        semanticScore: 0.42,
+                        recencyScore: 0.04,
+                        totalScore: 0.41,
+                    },
+                ],
+            },
+        ] as any);
+
+        expect(grounding.summary).toEqual({
+            messageEvidenceCount: 1,
+            liveEvidenceCount: 0,
+            sufficient: true,
+        });
+        expect(grounding.citations).toHaveLength(1);
+        expect(grounding.evidence).toContain("[scart] F4zke: 1. Musica A");
+    });
 });

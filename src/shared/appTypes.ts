@@ -91,6 +91,35 @@ export interface GroundingSummary {
     sufficient: boolean;
 }
 
+export type GroundingDecisionMode = "heuristic" | "judge" | "reused";
+
+export interface EvidenceJudgeResult {
+    sufficient: boolean;
+    reason: string;
+    missingInformation: string | null;
+}
+
+export type RouteIntent =
+    | "channel_target"
+    | "person_target"
+    | "member_lookup"
+    | "server_context"
+    | "broad_search";
+
+export interface RouteDecision {
+    source: "deterministic" | "ai";
+    intent: RouteIntent;
+    targetText: string | null;
+    channelIds?: string[];
+    authorId?: string;
+    authorQuery?: string;
+    topicText?: string | null;
+    channelHintText?: string | null;
+    resolvedPerson?: ResolvedPersonContext | null;
+    confidence: number;
+    reason: string;
+}
+
 export interface ModelTraceContext {
     traceLabel: string;
     questionPreview?: string;
@@ -130,6 +159,31 @@ export interface MemberProfileResult {
     bio: string | null;
 }
 
+export interface ResolvedPersonContext {
+    id: string;
+    username: string;
+    displayName: string;
+    globalName: string | null;
+    nickname: string | null;
+    roles: string[];
+}
+
+export interface ConversationResolutionContext {
+    guildId: string | null;
+    channelId: string | null;
+    routeIntent: RouteIntent;
+    targetText: string | null;
+    authorId: string | null;
+    authorQuery: string | null;
+    channelIds: string[];
+    topicText: string | null;
+    channelHintText: string | null;
+    resolvedPerson: ResolvedPersonContext | null;
+    createdTimestamp: number;
+    expiryTimestamp: number;
+    createdResponseOrdinal: number | null;
+}
+
 export interface ChannelCrawlResult {
     channelId: string;
     channelName: string;
@@ -143,6 +197,7 @@ export interface DiscordToolResult {
     tool: DiscordToolName | "finish";
     summary: string;
     data: unknown;
+    cacheStatus?: "hit" | "miss";
 }
 
 export interface SearchPlan {

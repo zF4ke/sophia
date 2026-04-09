@@ -7,6 +7,7 @@ import * as messageTools from "@/discord/tools/runtime/messageTools";
 import * as channelDiscoveryTools from "@/discord/tools/runtime/channelDiscoveryTools";
 import * as memberTools from "@/discord/tools/runtime/memberTools";
 import * as resultReaders from "@/discord/tools/runtime/resultReaders";
+import { withCachedToolResult } from "@/discord/tools/runtime/toolCache";
 
 export class DiscordToolService {
     public static async searchMessages(
@@ -18,15 +19,35 @@ export class DiscordToolService {
             authorId?: string;
         } = {}
     ): Promise<DiscordToolResult> {
-        return messageTools.searchMessages(question, guild, options);
+        return withCachedToolResult(
+            "search_messages",
+            guild?.id || null,
+            {
+                question,
+                limit: options.limit ?? 8,
+                channelIds: options.channelIds ?? [],
+                authorId: options.authorId ?? null,
+            },
+            () => messageTools.searchMessages(question, guild, options)
+        );
     }
 
     public static async readMessageThread(messageId: string): Promise<DiscordToolResult> {
-        return messageTools.readMessageThread(messageId);
+        return withCachedToolResult(
+            "read_message_thread",
+            null,
+            { messageId },
+            () => messageTools.readMessageThread(messageId)
+        );
     }
 
     public static async readChannelSummary(channelId: string): Promise<DiscordToolResult> {
-        return messageTools.readChannelSummary(channelId);
+        return withCachedToolResult(
+            "read_channel_summary",
+            null,
+            { channelId },
+            () => messageTools.readChannelSummary(channelId)
+        );
     }
 
     public static async listRelevantChannels(
@@ -34,7 +55,15 @@ export class DiscordToolService {
         guild: Guild | null,
         currentChannelId?: string | null
     ): Promise<DiscordToolResult> {
-        return channelDiscoveryTools.listRelevantChannels(query, guild, currentChannelId);
+        return withCachedToolResult(
+            "list_relevant_channels",
+            guild?.id || null,
+            {
+                query,
+                currentChannelId: currentChannelId ?? null,
+            },
+            () => channelDiscoveryTools.listRelevantChannels(query, guild, currentChannelId)
+        );
     }
 
     public static async crawlChannelMessages(
@@ -50,7 +79,12 @@ export class DiscordToolService {
         guild: Guild | null,
         nameOrId: string
     ): Promise<DiscordToolResult> {
-        return memberTools.getMemberProfile(guild, nameOrId);
+        return withCachedToolResult(
+            "get_member_profile",
+            guild?.id || null,
+            { nameOrId },
+            () => memberTools.getMemberProfile(guild, nameOrId)
+        );
     }
 
     public static async listMembers(
@@ -62,11 +96,26 @@ export class DiscordToolService {
             sort?: MemberListSort;
         } = {}
     ): Promise<DiscordToolResult> {
-        return memberTools.listMembers(guild, options);
+        return withCachedToolResult(
+            "list_members",
+            guild?.id || null,
+            {
+                filters: options.filters ?? null,
+                limit: options.limit ?? null,
+                offset: options.offset ?? null,
+                sort: options.sort ?? null,
+            },
+            () => memberTools.listMembers(guild, options)
+        );
     }
 
     public static async getGuildContext(guild: Guild | null): Promise<DiscordToolResult> {
-        return memberTools.getGuildContext(guild);
+        return withCachedToolResult(
+            "get_guild_context",
+            guild?.id || null,
+            { guildId: guild?.id || null },
+            () => memberTools.getGuildContext(guild)
+        );
     }
 
     public static extractBestChunk(results: DiscordToolResult[]) {

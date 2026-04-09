@@ -16,8 +16,11 @@ function buildInitialState(question: string): DebugTraceState {
         status: "running",
         stage: "Iniciando",
         mode: null,
+        routeDecision: null,
         toolNames: [],
         groundingSummary: null,
+        groundingDecisionMode: null,
+        contextCacheStatus: "none",
         recentEvents: ["Iniciado"],
         startedAt: Date.now(),
     };
