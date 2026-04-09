@@ -76,7 +76,7 @@ describe("AgentOrchestrator debug reporting", () => {
                 action: "search_messages",
                 arguments: {
                     query: "roadmap",
-                    limit: 8,
+                    limit: 30,
                 },
                 reason: "search first",
             } as any)
@@ -135,7 +135,7 @@ describe("AgentOrchestrator debug reporting", () => {
             [
                 "Onde: memória local disponível",
                 'Busca: "Qual foi a decisão do roadmap?"',
-                "Limite: até 8 resultados",
+                "Limite: até 30 resultados",
             ]
         );
         expect(debugSession.setToolResult).toHaveBeenCalledWith(
@@ -147,7 +147,7 @@ describe("AgentOrchestrator debug reporting", () => {
             messageEvidenceCount: 0,
             liveEvidenceCount: 0,
             sufficient: false,
-        }, "heuristic");
+        }, "heuristic", "insufficient");
         expect(debugSession.finishSuccess).toHaveBeenCalledWith(
             "Concluído sem evidência suficiente."
         );
@@ -212,10 +212,10 @@ describe("AgentOrchestrator debug reporting", () => {
             messageEvidenceCount: 0,
             liveEvidenceCount: 1,
             sufficient: true,
-        }, "heuristic");
+        }, "heuristic", "confident");
         expect(debugSession.setGenerating).toHaveBeenCalledTimes(1);
         expect(debugSession.finishSuccess).toHaveBeenCalledWith("Resposta concluída.");
-        expect(ModelGateway.generateJson).not.toHaveBeenCalled();
+        expect(ModelGateway.generateJson).toHaveBeenCalled();
     });
 
     it("uses a fallback answer when the model returns empty output", async () => {
@@ -322,7 +322,7 @@ describe("AgentOrchestrator debug reporting", () => {
         });
 
         expect(result.answer).toBe("O 17º membro é User 17.");
-        expect(generateJsonSpy).not.toHaveBeenCalled();
+        expect(generateJsonSpy).toHaveBeenCalled();
         expect(listMembersSpy).toHaveBeenNthCalledWith(1, expect.anything(), {
             filters: undefined,
             limit: 100,
@@ -418,10 +418,137 @@ describe("AgentOrchestrator debug reporting", () => {
         expect(crawlSpy).toHaveBeenCalledWith(
             expect.anything(),
             "c-scart",
-            1000,
-            "escolha uma musica legal no canal scart"
+            250,
+            "scart",
+            expect.any(Function)
         );
         expect(generateTextSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("forces a scoped indexed search before allowing the first crawl", async () => {
+        vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
+            mode: "discord_grounded",
+            reason: "needs discord evidence",
+        });
+        vi.spyOn(ModelGateway, "generateJson")
+            .mockResolvedValueOnce({
+                questionIntent: "person_messages",
+                nextAction: "crawl_channel_messages",
+                targetText: "One Person",
+                authorId: "u-open",
+                authorQuery: "oneperson",
+                topicText: "silksong",
+                channelHintText: "silksong",
+                channelIds: ["c-silk"],
+                searchQuery: "silksong",
+                needsMessageEvidence: true,
+                answerConfidence: "best_effort",
+                confidence: 0.91,
+                reason: "Go straight to the channel crawl.",
+            } as any)
+            .mockResolvedValueOnce({
+                questionIntent: "person_messages",
+                nextAction: "crawl_channel_messages",
+                targetText: "One Person",
+                authorId: "u-open",
+                authorQuery: "oneperson",
+                topicText: "silksong",
+                channelHintText: "silksong",
+                channelIds: ["c-silk"],
+                searchQuery: "silksong",
+                needsMessageEvidence: true,
+                answerConfidence: "best_effort",
+                confidence: 0.91,
+                reason: "Now crawl the hinted channel.",
+            } as any)
+            .mockResolvedValueOnce({
+                questionIntent: "person_messages",
+                nextAction: "answer",
+                targetText: "One Person",
+                authorId: "u-open",
+                authorQuery: "oneperson",
+                topicText: "silksong",
+                channelHintText: "silksong",
+                channelIds: ["c-silk"],
+                searchQuery: "silksong",
+                needsMessageEvidence: true,
+                answerConfidence: "best_effort",
+                confidence: 0.91,
+                reason: "The evidence is enough to answer.",
+            } as any);
+        const searchSpy = vi
+            .spyOn(DiscordToolService, "searchMessages")
+            .mockResolvedValueOnce({
+                tool: "search_messages",
+                summary: "No relevant stored messages found.",
+                data: [],
+            } as any)
+            .mockResolvedValueOnce({
+                tool: "search_messages",
+                summary: "Found 1 relevant message chunks.",
+                data: [
+                    {
+                        totalScore: 0.63,
+                        channelId: "c-silk",
+                        channelName: "silksong",
+                        authorId: "u-open",
+                        authorName: "Openrosen",
+                        jumpLink: "https://example.com/silk",
+                        content: "Silksong está incrível.",
+                    },
+                ],
+            } as any);
+        const crawlSpy = vi
+            .spyOn(DiscordToolService, "crawlChannelMessages")
+            .mockResolvedValue({
+                tool: "crawl_channel_messages",
+                summary: "Fetched 40 messages from silksong; queued 40 for background indexing.",
+                data: {
+                    channelId: "c-silk",
+                    channelName: "silksong",
+                    messagesFetched: 40,
+                    messagesStored: 40,
+                    exhausted: false,
+                    queryHint: "silksong",
+                    backgroundIngestQueued: true,
+                    previewMessages: [],
+                },
+            } as any);
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
+            "One Person disse que Silksong está incrível."
+        );
+
+        const result = await AgentOrchestrator.answerQuestion({
+            question: "me conte a experencia de One Person jogando silksong baseado no que ele falou no canal de silksong",
+            user: { id: "u1" } as any,
+            guild: {
+                id: "g1",
+                name: "Oz Synthesis",
+                channels: {
+                    cache: new Collection([
+                        ["c-silk", createReadableChannel("c-silk", "silksong")],
+                    ]),
+                },
+            } as any,
+            currentChannelId: "c-now",
+        });
+
+        expect(result.answer).toContain("Silksong");
+        expect(searchSpy).toHaveBeenNthCalledWith(
+            1,
+            "silksong",
+            expect.anything(),
+            expect.objectContaining({
+                authorId: "u-open",
+                channelIds: ["c-silk"],
+            })
+        );
+        expect(searchSpy).toHaveBeenCalled();
+        if (crawlSpy.mock.calls.length > 0) {
+            expect(searchSpy.mock.invocationCallOrder[0]).toBeLessThan(
+                crawlSpy.mock.invocationCallOrder[0]
+            );
+        }
     });
 
     it("accepts moderate post-crawl channel results as sufficient grounding", async () => {
@@ -510,14 +637,14 @@ describe("AgentOrchestrator debug reporting", () => {
             messageEvidenceCount: 1,
             liveEvidenceCount: 0,
             sufficient: true,
-        }, "judge");
+        }, "heuristic", "best_effort");
         expect(debugSession.setGenerating).toHaveBeenCalledTimes(1);
         expect(debugSession.finishSuccess).toHaveBeenCalledWith("Resposta concluída.");
         expect(generateTextSpy).toHaveBeenCalledTimes(1);
         expect(
             vi.mocked(ModelGateway.generateJson).mock.calls.some(
                 ([, , options]) =>
-                    options?.traceContext?.traceLabel === "grounding_sufficiency_judgment"
+                    options?.traceContext?.traceLabel === "discord_retrieval_controller"
             )
         ).toBe(true);
     });
@@ -581,8 +708,9 @@ describe("AgentOrchestrator debug reporting", () => {
         expect(crawlSpy).toHaveBeenCalledWith(
             expect.anything(),
             "12345",
-            1000,
-            "escolha uma musica legal ai do <#12345>"
+            250,
+            "escolha uma musica legal ai do <#12345>",
+            expect.any(Function)
         );
         expect(getMemberProfileSpy).not.toHaveBeenCalled();
     });
@@ -654,7 +782,8 @@ describe("AgentOrchestrator debug reporting", () => {
                 liveEvidenceCount: 1,
                 sufficient: true,
             },
-            "reused"
+            "reused",
+            "confident"
         );
         expect(generateTextSpy).toHaveBeenCalledTimes(1);
     });
@@ -869,8 +998,145 @@ describe("AgentOrchestrator debug reporting", () => {
         expect(crawlSpy).toHaveBeenCalledWith(
             expect.anything(),
             "c-silk",
-            1000,
-            "silksong"
+            250,
+            "silksong",
+            expect.any(Function)
         );
+    });
+
+    it("seeds follow-up runs from the most recent grounded context in the conversation", async () => {
+        vi.spyOn(RequestClassifier, "classify").mockResolvedValue({
+            mode: "discord_grounded",
+            reason: "needs discord evidence",
+        });
+        DiscordMemoryService.saveConversationResolutionContext({
+            guildId: "g1",
+            channelId: "c-now",
+            routeIntent: "person_target",
+            targetText: "One Person",
+            authorId: "u-open",
+            authorQuery: "oneperson",
+            channelIds: ["c-silk"],
+            topicText: "silksong",
+            channelHintText: "silksong",
+            resolvedPerson: {
+                id: "u-open",
+                username: "oneperson",
+                displayName: "Openrosen",
+                globalName: null,
+                nickname: "One Person",
+                roles: ["member"],
+            },
+            createdTimestamp: Date.now(),
+            expiryTimestamp: Date.now() + 60_000,
+            createdResponseOrdinal: 1,
+        });
+        DiscordMemoryService.saveReusableGroundedContext({
+            guildId: "g1",
+            channelId: "c-now",
+            channelScopeKey: "c-now",
+            questionFingerprint: "me conte a experiencia de one person jogando silksong baseado no que ele falou no canal de silksong",
+            routeIntent: "person_target",
+            evidenceText: "Tool: search_messages\nSummary: Found 2 relevant message chunks.",
+            citations: [],
+            toolRuns: [
+                {
+                    tool: "search_messages",
+                    summary: "Found 2 relevant message chunks.",
+                    data: [
+                        {
+                            totalScore: 0.72,
+                            channelName: "silksong",
+                            authorName: "Openrosen",
+                            jumpLink: "https://example.com/1",
+                            content: "A jogabilidade é uma obra-prima.",
+                        },
+                        {
+                            totalScore: 0.64,
+                            channelName: "silksong",
+                            authorName: "Openrosen",
+                            jumpLink: "https://example.com/2",
+                            content: "O começo parece fácil para quem já ficou bom em Hollow Knight.",
+                        },
+                    ],
+                },
+            ],
+            sufficient: true,
+            groundingDecisionMode: "heuristic",
+            createdTimestamp: Date.now(),
+            expiryTimestamp: Date.now() + 60_000,
+            createdResponseOrdinal: 1,
+        });
+        vi.spyOn(ModelGateway, "generateJson")
+            .mockResolvedValueOnce({
+                questionIntent: "person_messages",
+                nextAction: "search_messages",
+                targetText: "One Person",
+                authorId: "u-open",
+                authorQuery: "oneperson",
+                topicText: "silksong",
+                channelHintText: "silksong",
+                channelIds: ["c-silk"],
+                searchQuery: "silksong",
+                needsMessageEvidence: true,
+                answerConfidence: "best_effort",
+                confidence: 0.9,
+                reason: "Reuse the existing person/topic context.",
+            } as any)
+            .mockResolvedValue({
+                questionIntent: "person_messages",
+                nextAction: "answer",
+                targetText: "One Person",
+                authorId: "u-open",
+                authorQuery: "oneperson",
+                topicText: "silksong",
+                channelHintText: "silksong",
+                channelIds: ["c-silk"],
+                searchQuery: "silksong",
+                needsMessageEvidence: true,
+                answerConfidence: "confident",
+                confidence: 0.9,
+                reason: "The seeded evidence already answers the follow-up.",
+            } as any);
+        const crawlSpy = vi.spyOn(DiscordToolService, "crawlChannelMessages");
+        const searchSpy = vi.spyOn(DiscordToolService, "searchMessages");
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
+            "Ele também disse que a jogabilidade é uma obra-prima e que o começo parece fácil para veteranos de Hollow Knight."
+        );
+
+        const debugSession = {
+            setClassifying: vi.fn().mockResolvedValue(undefined),
+            setClassification: vi.fn().mockResolvedValue(undefined),
+            setRouting: vi.fn().mockResolvedValue(undefined),
+            setContextCacheStatus: vi.fn().mockResolvedValue(undefined),
+            setPlanning: vi.fn().mockResolvedValue(undefined),
+            setToolRunning: vi.fn().mockResolvedValue(undefined),
+            setToolResult: vi.fn().mockResolvedValue(undefined),
+            setGroundingSummary: vi.fn().mockResolvedValue(undefined),
+            setGenerating: vi.fn().mockResolvedValue(undefined),
+            finishSuccess: vi.fn().mockResolvedValue(undefined),
+            finishError: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const result = await AgentOrchestrator.answerQuestion({
+            question: "que mais ele disse?",
+            user: { id: "u1" } as any,
+            guild: {
+                id: "g1",
+                name: "Oz Synthesis",
+                channels: {
+                    cache: new Collection([
+                        ["c-silk", createReadableChannel("c-silk", "silksong")],
+                    ]),
+                },
+            } as any,
+            currentChannelId: "c-now",
+            debugSession,
+        });
+
+        expect(result.answer).toContain("obra-prima");
+        expect(debugSession.setContextCacheStatus).toHaveBeenCalledWith("seeded");
+        expect(searchSpy).not.toHaveBeenCalled();
+        expect(crawlSpy).not.toHaveBeenCalled();
     });
 });

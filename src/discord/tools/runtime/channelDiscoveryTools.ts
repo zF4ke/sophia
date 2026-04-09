@@ -1,6 +1,9 @@
 import type { Guild } from "discord.js";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
-import { DiscordChannelCrawlService } from "@/discord/live/DiscordChannelCrawlService";
+import {
+    DiscordChannelCrawlService,
+    INTERACTIVE_CRAWL_LIMIT,
+} from "@/discord/live/DiscordChannelCrawlService";
 import type { ChannelCandidate, DiscordToolResult } from "@/shared/appTypes";
 
 export async function listRelevantChannels(
@@ -44,20 +47,24 @@ export async function listRelevantChannels(
 export async function crawlChannelMessages(
     guild: Guild | null,
     channelId: string,
-    limit = 1000,
-    queryHint?: string
+    limit = INTERACTIVE_CRAWL_LIMIT,
+    queryHint?: string,
+    onProgress?: (toolName: string, summary: string) => Promise<void> | void
 ): Promise<DiscordToolResult> {
     const crawl = await DiscordChannelCrawlService.crawlChannelMessages(
         guild,
         channelId,
         limit,
-        queryHint
+        queryHint,
+        onProgress
     );
 
     return {
         tool: "crawl_channel_messages",
         summary: crawl.messagesFetched
-            ? `Fetched ${crawl.messagesFetched} messages from ${crawl.channelName} and stored ${crawl.messagesStored}.`
+            ? crawl.backgroundIngestQueued
+                ? `Fetched ${crawl.messagesFetched} messages from ${crawl.channelName}; queued ${crawl.messagesStored} for background indexing.`
+                : `Fetched ${crawl.messagesFetched} messages from ${crawl.channelName} and stored ${crawl.messagesStored}.`
             : `No messages fetched from ${crawl.channelName}.`,
         data: crawl,
     };

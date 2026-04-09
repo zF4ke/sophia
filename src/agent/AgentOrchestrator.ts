@@ -12,13 +12,13 @@ import {
     generateDirectAnswer,
     generateGroundedAnswer,
 } from "@/agent/orchestration/answerFlow";
-import { decideGroundingFromAssessment } from "@/agent/orchestration/evidenceJudge";
-import { routeDiscordQuestion } from "@/agent/orchestration/router";
 import {
     findConversationResolutionContext,
     saveConversationResolutionContext,
 } from "@/agent/orchestration/conversationContext";
+import { decideRetrievalAction } from "@/agent/orchestration/retrievalController";
 import {
+    findRecentConversationGroundedContext,
     findReusableGroundedContext,
     saveReusableGroundedContext,
 } from "@/agent/orchestration/reuseCache";
@@ -26,6 +26,8 @@ import { runWithRequestCacheContext } from "@/agent/orchestration/requestCacheCo
 import { runDiscordToolLoop } from "@/agent/orchestration/toolLoop";
 import { assessGrounding } from "@/agent/orchestration/grounding";
 import { PromptRegistry } from "@/agent/prompts/PromptRegistry";
+import { isReferentialFollowUp } from "@/agent/orchestration/questionAnalysis";
+import type { SearchContext } from "@/agent/orchestration/types";
 
 export class AgentOrchestrator {
     public static async answerQuestion(options: {
@@ -119,40 +121,72 @@ export class AgentOrchestrator {
             guildId: options.guild?.id || null,
             currentChannelId: options.currentChannelId || null,
         });
-        const routeDecision = await routeDiscordQuestion({
+        const initialControllerContext: SearchContext = {
+            crawledChannelIds: new Set<string>(),
+            seededFromContext: false,
+            initialToolRuns: [],
+            latestControllerDecision: null,
+        };
+        const initialDecision = await decideRetrievalAction({
             question: options.question,
             guild: options.guild,
             currentChannelId: options.currentChannelId,
+            toolRuns: [],
             priorContext: priorConversationContext,
+            context: initialControllerContext,
         });
-        await options.debugSession?.setRouting?.(routeDecision);
+        await options.debugSession?.setRouting?.(initialDecision);
         await options.debugSession?.setContextCacheStatus?.("none");
 
         const reusableContext = findReusableGroundedContext({
             guildId: options.guild?.id || null,
             currentChannelId: options.currentChannelId || null,
             question: options.question,
-            routeDecision,
+            routeIntent: initialDecision.routeIntent,
             requireSufficient: true,
         });
 
         if (reusableContext) {
             await options.debugSession?.setContextCacheStatus?.("reused");
-            const cachedGrounding = assessGrounding(
-                options.question,
-                reusableContext.toolRuns
-            );
+            const cachedGrounding = assessGrounding(options.question, reusableContext.toolRuns);
+            const cachedDecision = await decideRetrievalAction({
+                question: options.question,
+                guild: options.guild,
+                currentChannelId: options.currentChannelId,
+                toolRuns: reusableContext.toolRuns,
+                priorContext: priorConversationContext,
+                context: {
+                    ...initialControllerContext,
+                    seededFromContext: true,
+                    initialToolRuns: [...reusableContext.toolRuns],
+                },
+                forcedFinal: true,
+            });
+            await options.debugSession?.setRouting?.(cachedDecision);
             await options.debugSession?.setGroundingSummary(
                 {
                     ...cachedGrounding.summary,
-                    sufficient: true,
+                    sufficient: cachedDecision.answerConfidence !== "insufficient",
                 },
-                "reused"
+                "reused",
+                cachedDecision.answerConfidence
             );
+
+            if (cachedDecision.answerConfidence === "insufficient") {
+                await options.debugSession?.finishSuccess("Concluído sem evidência suficiente.");
+                return {
+                    answer: PromptRegistry.load("guards/insufficient_evidence"),
+                    citations: [],
+                    classification,
+                    toolRuns: reusableContext.toolRuns,
+                };
+            }
+
             await options.debugSession?.setGenerating();
             const answer = await generateGroundedAnswer(
                 options.question,
-                reusableContext.evidenceText
+                reusableContext.evidenceText,
+                cachedDecision.answerConfidence
             );
             await options.debugSession?.finishSuccess("Resposta concluída.");
 
@@ -168,56 +202,73 @@ export class AgentOrchestrator {
             guildId: options.guild?.id || null,
             currentChannelId: options.currentChannelId || null,
             question: options.question,
-            routeDecision,
+            routeIntent: initialDecision.routeIntent,
             requireSufficient: false,
         });
-        const initialToolRuns = seedContext?.toolRuns?.length ? seedContext.toolRuns : [];
+        const followUpSeedContext =
+            !seedContext &&
+            priorConversationContext &&
+            isReferentialFollowUp(options.question)
+                ? findRecentConversationGroundedContext({
+                      guildId: options.guild?.id || null,
+                      currentChannelId: options.currentChannelId || null,
+                      routeIntent: priorConversationContext.routeIntent,
+                      requireSufficient: true,
+                  })
+                : null;
+        const effectiveSeedContext = seedContext ?? followUpSeedContext;
+        const initialToolRuns = effectiveSeedContext?.toolRuns?.length
+            ? effectiveSeedContext.toolRuns
+            : [];
         if (initialToolRuns.length) {
             await options.debugSession?.setContextCacheStatus?.("seeded");
         }
 
         const toolLoopResult = await runDiscordToolLoop({
             ...options,
-            routeDecision,
             initialToolRuns,
             seededFromContext: initialToolRuns.length > 0,
+            priorContext: priorConversationContext,
         });
         const toolRuns = toolLoopResult.toolRuns;
         const grounding = assessGrounding(options.question, toolRuns);
-        const judgedGrounding =
-            toolLoopResult.groundingDecision ||
-            (await decideGroundingFromAssessment({
-                question: options.question,
-                assessment: grounding,
-                toolRuns,
-                routeDecision,
-            }));
+        const finalDecision = toolLoopResult.finalDecision;
         const groundingSummary = {
             ...grounding.summary,
-            sufficient: judgedGrounding.sufficient,
+            sufficient: finalDecision.answerConfidence !== "insufficient",
         };
         await options.debugSession?.setGroundingSummary(
             groundingSummary,
-            judgedGrounding.mode
+            effectiveSeedContext ? "reused" : "heuristic",
+            finalDecision.answerConfidence
         );
 
         saveReusableGroundedContext({
             guildId: options.guild?.id || null,
             currentChannelId: options.currentChannelId || null,
             question: options.question,
-            routeDecision,
+            controllerDecision: finalDecision,
             grounding,
-            groundingDecision: judgedGrounding,
+            groundingDecision: {
+                sufficient: finalDecision.answerConfidence !== "insufficient",
+                mode: effectiveSeedContext ? "reused" : "heuristic",
+                answerMode: finalDecision.answerConfidence,
+                reason: finalDecision.reason,
+                missingInformation:
+                    finalDecision.answerConfidence === "insufficient"
+                        ? "More Discord evidence is needed."
+                        : null,
+            },
             toolRuns,
         });
         saveConversationResolutionContext({
             guildId: options.guild?.id || null,
             currentChannelId: options.currentChannelId || null,
-            routeDecision,
+            controllerDecision: finalDecision,
             toolRuns,
         });
 
-        if (!groundingSummary.sufficient) {
+        if (finalDecision.answerConfidence === "insufficient") {
             await options.debugSession?.finishSuccess("Concluído sem evidência suficiente.");
             return {
                 answer: PromptRegistry.load("guards/insufficient_evidence"),
@@ -228,7 +279,11 @@ export class AgentOrchestrator {
         }
 
         await options.debugSession?.setGenerating();
-        const answer = await generateGroundedAnswer(options.question, grounding.evidence);
+        const answer = await generateGroundedAnswer(
+            options.question,
+            grounding.evidence,
+            finalDecision.answerConfidence
+        );
         this.recordToolRuns(options, toolRuns.slice(initialToolRuns.length));
         await options.debugSession?.finishSuccess("Resposta concluída.");
 

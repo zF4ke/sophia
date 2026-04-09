@@ -21,6 +21,7 @@ import {
 import type { SearchContext } from "@/agent/orchestration/types";
 
 const MIN_SEARCH_SCORE = 0.15;
+const SEARCH_MESSAGE_LIMIT = 30;
 
 export async function planNextTool(
     question: string,
@@ -47,7 +48,7 @@ export async function planNextTool(
         arguments: {
             query: question,
             scope: "guild",
-            limit: 8,
+            limit: SEARCH_MESSAGE_LIMIT,
         },
         reason: toolRuns.length
             ? "Stop after the initial evidence pass."
@@ -199,7 +200,7 @@ function planChannelTarget(
             action: "search_messages",
             arguments: {
                 query: question,
-                limit: 8,
+                limit: SEARCH_MESSAGE_LIMIT,
                 channelIds: targetChannelIds.length ? targetChannelIds.join(",") : undefined,
             },
             reason: targetChannelIds.length
@@ -233,7 +234,7 @@ function planChannelTarget(
             action: "search_messages",
             arguments: {
                 query: question,
-                limit: 8,
+                limit: SEARCH_MESSAGE_LIMIT,
                 channelIds: targetChannelIds.join(","),
             },
             reason: "Retry local search in the routed channel after crawling it.",
@@ -274,7 +275,7 @@ function planChannelTarget(
             action: "search_messages",
             arguments: {
                 query: question,
-                limit: 8,
+                limit: SEARCH_MESSAGE_LIMIT,
                 channelIds: targetChannelIds.length ? targetChannelIds.join(",") : undefined,
             },
             reason: targetChannelIds.length
@@ -340,7 +341,7 @@ function planPersonTarget(
             action: "search_messages",
             arguments: {
                 query: searchQuery,
-                limit: 8,
+                limit: SEARCH_MESSAGE_LIMIT,
                 authorId,
                 channelIds: targetChannelIds.length
                     ? targetChannelIds.join(",")
@@ -377,7 +378,7 @@ function planPersonTarget(
             action: "search_messages",
             arguments: {
                 query: searchQuery,
-                limit: 8,
+                limit: SEARCH_MESSAGE_LIMIT,
                 authorId,
                 channelIds: targetChannelIds.join(","),
             },
@@ -417,7 +418,7 @@ function planPersonTarget(
             action: "search_messages",
             arguments: {
                 query: searchQuery,
-                limit: 8,
+                limit: SEARCH_MESSAGE_LIMIT,
                 authorId,
             },
             reason: "Retry author-scoped search after crawling likely channels.",
@@ -453,7 +454,7 @@ function planBroadSearch(
             action: "search_messages",
             arguments: {
                 query: question,
-                limit: 8,
+                limit: SEARCH_MESSAGE_LIMIT,
             },
             reason: "Try local memory search first.",
         };
@@ -495,7 +496,7 @@ function planBroadSearch(
             action: "search_messages",
             arguments: {
                 query: question,
-                limit: 8,
+                limit: SEARCH_MESSAGE_LIMIT,
             },
             reason: "Retry local search after crawling live channels.",
         };

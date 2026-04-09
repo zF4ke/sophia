@@ -20,18 +20,15 @@ This file is the canonical engineering and operator handoff for the runtime. `RE
 ## Runtime Flow
 
 1. Classify the request as `direct_answer` or `discord_grounded`.
-2. If grounded, apply deterministic routing for explicit Discord entities and clear server/member questions.
-3. For ambiguous grounded questions, run the Discord routing prompt once to choose a target strategy, reusing short-lived same-guild conversation context for referential follow-ups when appropriate.
-4. Run a bounded Discord tool loop from that route.
-5. Treat stored-message evidence and live Discord metadata as separate grounding types.
-6. Reuse a fresh grounded context from the same guild when possible, preferring the current channel over other guild channels.
-7. Run a bounded Discord tool loop with cached tool results when reuse is not enough.
-8. Use the grounding sufficiency judge only for ambiguous middle-ground cases; obvious sufficient and obvious insufficient cases stay heuristic.
-9. Synthesize a concise answer only from useful evidence.
-10. Keep citations internal for grounding and debug, but do not show source lists in the final user-facing answer.
-11. If both grounding types are weak or the evidence judge says the evidence is insufficient, say that Sophia does not have enough Discord evidence to answer reliably.
-12. If local memory misses, the agent may crawl readable channels, ingest them, and retry local retrieval within the same bounded loop.
-13. Person-target follow-ups should preserve the resolved member identity, then search that person’s messages with topic or channel hints instead of falling back to member listing.
+2. If grounded, collect explicit Discord entities, readable channel names, short-lived conversation context, and cached tool/evidence state as controller inputs.
+3. Run the retrieval controller prompt to choose the current question intent, the next tool action, and the grounded answer mode.
+4. Execute one bounded Discord tool step at a time until the controller chooses `answer`, `best_effort_answer`, or the hard tool budget is exhausted.
+5. Reuse a fresh grounded context from the same guild when possible, preferring the current channel over other guild channels.
+6. Treat stored-message evidence and live Discord metadata as separate grounding types, but keep the final grounded outcome graded as `confident`, `best_effort`, or `insufficient`.
+7. If local memory misses, the controller may choose channel discovery, live crawl, and local retry within the same bounded loop.
+8. Keep citations internal for grounding, cache, and debug, but do not show source lists in the final user-facing answer.
+9. Identity questions may answer from resolved member/profile evidence alone.
+10. Message-history questions should continue searching for message evidence; if some evidence exists but the budget ends, return a best-effort grounded answer instead of the generic guard.
 
 The main orchestration files are:
 
@@ -81,6 +78,7 @@ Runtime prompts live in `resources/prompts/` and should remain external to the c
 - `resources/prompts/system/base.md`
 - `resources/prompts/system/grounded.md`
 - `resources/prompts/tasks/classify_request.md`
+- `resources/prompts/tasks/retrieval_controller.md`
 - `resources/prompts/tasks/route_discord_intent.md`
 - `resources/prompts/tasks/plan_discord_search.md`
 - `resources/prompts/tasks/judge_grounding_sufficiency.md`
@@ -91,7 +89,7 @@ The stable prompt catalog is:
 
 - `src/shared/promptCatalog.ts`
 
-If you change the expected JSON shape for classification, routing, tool planning, or grounding sufficiency judgment, update:
+If you change the expected JSON shape for classification, retrieval control, routing, tool planning, or grounding sufficiency judgment, update:
 
 - The prompt file
 - The consuming TypeScript types in `src/shared/appTypes.ts`

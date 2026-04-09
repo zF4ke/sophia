@@ -4,7 +4,7 @@ import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type {
     ConversationResolutionContext,
     DiscordToolResult,
-    RouteDecision,
+    RetrievalControllerDecision,
 } from "@/shared/appTypes";
 
 const CONVERSATION_CONTEXT_TTL_MS = 20 * 60_000;
@@ -26,7 +26,7 @@ export function findConversationResolutionContext(options: {
 export function saveConversationResolutionContext(options: {
     guildId: string | null;
     currentChannelId: string | null;
-    routeDecision: RouteDecision;
+    controllerDecision: RetrievalControllerDecision;
     toolRuns: DiscordToolResult[];
 }): void {
     const requestContext = getRequestCacheContext();
@@ -39,9 +39,9 @@ export function saveConversationResolutionContext(options: {
 
     const shouldPersist =
         Boolean(profile) ||
-        Boolean(options.routeDecision.channelIds?.length) ||
-        Boolean(options.routeDecision.channelHintText) ||
-        Boolean(options.routeDecision.topicText);
+        Boolean(options.controllerDecision.channelIds?.length) ||
+        Boolean(options.controllerDecision.channelHintText) ||
+        Boolean(options.controllerDecision.topicText);
     if (!shouldPersist) {
         return;
     }
@@ -50,17 +50,17 @@ export function saveConversationResolutionContext(options: {
     DiscordMemoryService.saveConversationResolutionContext({
         guildId: options.guildId,
         channelId: options.currentChannelId,
-        routeIntent: options.routeDecision.intent,
-        targetText: options.routeDecision.targetText,
-        authorId: options.routeDecision.authorId ?? profile?.id ?? null,
+        routeIntent: options.controllerDecision.routeIntent,
+        targetText: options.controllerDecision.targetText,
+        authorId: options.controllerDecision.authorId ?? profile?.id ?? null,
         authorQuery:
-            options.routeDecision.authorQuery ??
+            options.controllerDecision.authorQuery ??
             profile?.username ??
-            options.routeDecision.targetText ??
+            options.controllerDecision.targetText ??
             null,
-        channelIds: options.routeDecision.channelIds ?? [],
-        topicText: options.routeDecision.topicText ?? null,
-        channelHintText: options.routeDecision.channelHintText ?? null,
+        channelIds: options.controllerDecision.channelIds ?? [],
+        topicText: options.controllerDecision.topicText ?? null,
+        channelHintText: options.controllerDecision.channelHintText ?? null,
         resolvedPerson: profile
             ? {
                   id: profile.id,
@@ -70,7 +70,7 @@ export function saveConversationResolutionContext(options: {
                   nickname: profile.nickname,
                   roles: profile.roles,
               }
-            : options.routeDecision.resolvedPerson ?? null,
+            : options.controllerDecision.resolvedPerson ?? null,
         createdTimestamp: now,
         expiryTimestamp: now + CONVERSATION_CONTEXT_TTL_MS,
         createdResponseOrdinal: requestContext.responseOrdinal,

@@ -2,6 +2,7 @@ import { Collection, TextChannel } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DiscordChannelCrawlService } from "@/discord/live/DiscordChannelCrawlService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { MemoryDatabase } from "@/memory/MemoryDatabase";
 
 function createChannel(
     id: string,
@@ -27,6 +28,10 @@ function createChannel(
 describe("DiscordChannelCrawlService", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        process.env.SOPHIA_MEMORY_DB_PATH = ":memory:";
+        process.env.DISCORD_TOKEN = "test-token";
+        process.env.OPENROUTER_API_KEY = "test-key";
+        MemoryDatabase.reset();
     });
 
     it("ranks indexed and unindexed candidate channels together", () => {
@@ -112,15 +117,45 @@ describe("DiscordChannelCrawlService", () => {
         const result = await DiscordChannelCrawlService.crawlChannelMessages(
             guild,
             "c1",
-            1000,
+            250,
             "scart"
         );
+        await DiscordChannelCrawlService.waitForBackgroundIngest();
 
         expect(result.messagesFetched).toBe(2);
         expect(result.messagesStored).toBe(2);
         expect(result.exhausted).toBe(true);
+        expect(result.backgroundIngestQueued).toBe(true);
+        expect(result.previewMessages).toHaveLength(0);
         expect(ingestMessage).toHaveBeenCalledTimes(2);
         expect(upsertChannel).toHaveBeenCalledWith("c1", "g1", "scart", expect.any(Number));
         expect(updateCrawlState).toHaveBeenCalledWith("c1", "m1", true);
+    });
+
+    it("continues from the oldest fetched message instead of recrawling the top", async () => {
+        DiscordMemoryService.updateChannelCrawlState("c1", "m-oldest", false);
+
+        const fetchSpy = vi
+            .fn()
+            .mockResolvedValueOnce(new Collection())
+            .mockResolvedValueOnce(new Collection());
+        const channel = createChannel("c1", "silksong", {
+            messages: {
+                fetch: fetchSpy,
+            },
+        });
+        const guild = {
+            id: "g1",
+            channels: {
+                cache: new Collection([["c1", channel]]),
+            },
+        } as any;
+
+        await DiscordChannelCrawlService.crawlChannelMessages(guild, "c1", 250, "silksong");
+
+        expect(fetchSpy).toHaveBeenCalledWith({
+            limit: 100,
+            before: "m-oldest",
+        });
     });
 });

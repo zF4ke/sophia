@@ -1,9 +1,11 @@
 import type {
     AnswerCitation,
     DiscordToolResult,
+    GroundedAnswerMode,
     GroundingDecisionMode,
     GroundingSummary,
     LiveMemberListResult,
+    RetrievalControllerDecision,
 } from "@/shared/appTypes";
 import type { ReusableGroundedContextRecord } from "@/memory/types";
 
@@ -38,6 +40,7 @@ export type GroundingAssessment = {
 export type GroundingDecision = {
     sufficient: boolean;
     mode: GroundingDecisionMode;
+    answerMode: GroundedAnswerMode;
     reason: string;
     missingInformation: string | null;
 };
@@ -48,4 +51,5 @@ export type SearchContext = {
     crawledChannelIds: Set<string>;
     seededFromContext: boolean;
     initialToolRuns: DiscordToolResult[];
+    latestControllerDecision: RetrievalControllerDecision | null;
 };

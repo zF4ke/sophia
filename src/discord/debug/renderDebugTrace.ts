@@ -56,6 +56,22 @@ function formatGroundingDecisionMode(state: DebugTraceState): string {
     return "heurística";
 }
 
+function formatAnswerMode(state: DebugTraceState): string {
+    if (!state.groundedAnswerMode) {
+        return "";
+    }
+
+    if (state.groundedAnswerMode === "confident") {
+        return "confiante";
+    }
+
+    if (state.groundedAnswerMode === "best_effort") {
+        return "melhor esforço";
+    }
+
+    return "insuficiente";
+}
+
 function formatContextCacheStatus(state: DebugTraceState): string {
     if (state.contextCacheStatus === "reused") {
         return "reutilizado";
@@ -68,16 +84,16 @@ function formatContextCacheStatus(state: DebugTraceState): string {
     return "não";
 }
 
-function formatRouteDecision(state: DebugTraceState): string {
-    if (!state.routeDecision) {
-        return "a decidir";
+function formatControllerDecision(state: DebugTraceState): string {
+    if (!state.controllerDecision) {
+        return "";
     }
 
-    const source = state.routeDecision.source === "ai" ? "IA" : "determinística";
-    const target = state.routeDecision.targetText
-        ? ` · alvo ${state.routeDecision.targetText}`
+    const source = state.controllerDecision.source === "ai" ? "IA" : "determinística";
+    const target = state.controllerDecision.targetText
+        ? ` · alvo ${state.controllerDecision.targetText}`
         : "";
-    return `${source} · ${state.routeDecision.intent}${target}`;
+    return `${source} · ${state.controllerDecision.questionIntent}${target}`;
 }
 
 export function renderDebugTrace(state: DebugTraceState): ContainerBuilder {
@@ -85,6 +101,40 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder {
     const recentEvents = state.recentEvents.length
         ? state.recentEvents.map((event) => `- ${event}`).join("\n")
         : "- Aguardando etapas.";
+    const details = [
+        `**Pergunta:** ${state.questionPreview}`,
+        `**Estado:** ${formatStatus(state.status)}`,
+        `**Etapa:** ${state.stage}`,
+        `**Modo:** ${state.mode ?? "a decidir"}`,
+    ];
+
+    if (state.mode === "Com grounding do Discord") {
+        const route = formatControllerDecision(state);
+        if (route) {
+            details.push(`**Controle:** ${route}`);
+        }
+
+        details.push(`**Cache de contexto:** ${formatContextCacheStatus(state)}`);
+        details.push(`**Ferramentas:** ${tools}`);
+
+        if (state.groundingSummary) {
+            details.push(`**Base útil:** ${formatGroundingSummary(state)}`);
+            details.push(`**Grounding:** ${formatGroundingState(state)}`);
+        }
+
+        const answerMode = formatAnswerMode(state);
+        if (answerMode) {
+            details.push(`**Resultado:** ${answerMode}`);
+        }
+
+        if (state.groundingDecisionMode) {
+            details.push(`**Decisão:** ${formatGroundingDecisionMode(state)}`);
+        }
+    } else {
+        details.push(`**Ferramentas:** ${tools}`);
+    }
+
+    details.push(`**Tempo:** ${formatDuration(state.startedAt)}`);
 
     return new ContainerBuilder()
         .setAccentColor(
@@ -96,21 +146,7 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder {
         )
         .addTextDisplayComponents(
             new TextDisplayBuilder().setContent("## Debug da Sophia"),
-            new TextDisplayBuilder().setContent(
-                [
-                    `**Pergunta:** ${state.questionPreview}`,
-                    `**Estado:** ${formatStatus(state.status)}`,
-                    `**Etapa:** ${state.stage}`,
-                    `**Modo:** ${state.mode ?? "a decidir"}`,
-                    `**Rota:** ${formatRouteDecision(state)}`,
-                    `**Cache de contexto:** ${formatContextCacheStatus(state)}`,
-                    `**Ferramentas:** ${tools}`,
-                    `**Base útil:** ${formatGroundingSummary(state)}`,
-                    `**Grounding:** ${formatGroundingState(state)}`,
-                    `**Decisão:** ${formatGroundingDecisionMode(state)}`,
-                    `**Tempo:** ${formatDuration(state.startedAt)}`,
-                ].join("\n")
-            )
+            new TextDisplayBuilder().setContent(details.join("\n"))
         )
         .addSeparatorComponents(
             new SeparatorBuilder()

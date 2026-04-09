@@ -3,6 +3,10 @@ import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type { ChannelCrawlResult } from "@/shared/appTypes";
 
 type CrawlableChannel = TextChannel | ThreadChannel;
+export const INTERACTIVE_CRAWL_LIMIT = 250;
+const PREVIEW_MESSAGE_LIMIT = 12;
+
+let backgroundIngestQueue: Promise<void> = Promise.resolve();
 
 function normalizeLookupValue(value: string): string {
     return value
@@ -14,6 +18,22 @@ function normalizeLookupValue(value: string): string {
 }
 
 export class DiscordChannelCrawlService {
+    private static enqueueBackgroundIngest(messages: Array<any>): void {
+        if (!messages.length) {
+            return;
+        }
+
+        backgroundIngestQueue = backgroundIngestQueue
+            .then(async () => {
+                for (const message of messages) {
+                    await DiscordMemoryService.ingestMessage(message);
+                }
+            })
+            .catch((error) => {
+                console.error("Background crawl ingest failed:", error);
+            });
+    }
+
     public static listReadableChannels(guild: Guild | null): CrawlableChannel[] {
         if (!guild || !guild.channels?.cache) {
             return [];
@@ -130,8 +150,9 @@ export class DiscordChannelCrawlService {
     public static async crawlChannelMessages(
         guild: Guild | null,
         channelId: string,
-        limit = 1000,
-        queryHint?: string
+        limit = INTERACTIVE_CRAWL_LIMIT,
+        queryHint?: string,
+        onProgress?: (toolName: string, summary: string) => Promise<void> | void
     ): Promise<ChannelCrawlResult> {
         if (!guild) {
             return {
@@ -141,6 +162,8 @@ export class DiscordChannelCrawlService {
                 messagesStored: 0,
                 exhausted: true,
                 queryHint: queryHint || null,
+                backgroundIngestQueued: false,
+                previewMessages: [],
             };
         }
 
@@ -153,6 +176,8 @@ export class DiscordChannelCrawlService {
                 messagesStored: 0,
                 exhausted: true,
                 queryHint: queryHint || null,
+                backgroundIngestQueued: false,
+                previewMessages: [],
             };
         }
 
@@ -163,10 +188,29 @@ export class DiscordChannelCrawlService {
             Date.now()
         );
 
+        const crawlState = DiscordMemoryService.getChannelCrawlState(channel.id)[0] || null;
+        if (crawlState?.exhausted) {
+            await onProgress?.(
+                "crawl_channel_messages",
+                `histórico já esgotado em ${channel.name}; evitando recrawl`
+            );
+            return {
+                channelId: channel.id,
+                channelName: channel.name,
+                messagesFetched: 0,
+                messagesStored: 0,
+                exhausted: true,
+                queryHint: queryHint || null,
+                backgroundIngestQueued: false,
+                previewMessages: [],
+            };
+        }
+
         let fetched = 0;
         let stored = 0;
-        let before: string | undefined;
+        let before: string | undefined = crawlState?.oldestFetchedMessageId || undefined;
         let exhausted = false;
+        const fetchedMessages: Array<any> = [];
 
         while (fetched < limit) {
             const batch = await channel.messages.fetch({
@@ -182,17 +226,20 @@ export class DiscordChannelCrawlService {
             const messages = [...batch.values()].sort(
                 (left, right) => left.createdTimestamp - right.createdTimestamp
             );
-
-            for (const message of messages) {
-                await DiscordMemoryService.ingestMessage(message);
-                stored += 1;
-            }
+            fetchedMessages.push(...messages);
 
             fetched += batch.size;
             before = messages[0]?.id;
+            stored = fetchedMessages.length;
+            await onProgress?.(
+                "crawl_channel_messages",
+                `coletadas ${fetched}/${limit} mensagens de ${channel.name}`
+            );
         }
 
         DiscordMemoryService.updateChannelCrawlState(channel.id, before || null, exhausted);
+        const previewMessages = buildPreviewMessages(fetchedMessages, queryHint);
+        this.enqueueBackgroundIngest(fetchedMessages);
 
         return {
             channelId: channel.id,
@@ -201,6 +248,57 @@ export class DiscordChannelCrawlService {
             messagesStored: stored,
             exhausted,
             queryHint: queryHint || null,
+            backgroundIngestQueued: stored > 0,
+            previewMessages,
         };
     }
+
+    public static async waitForBackgroundIngest(): Promise<void> {
+        await backgroundIngestQueue;
+    }
+}
+
+function buildPreviewMessages(
+    messages: Array<any>,
+    queryHint?: string
+): ChannelCrawlResult["previewMessages"] {
+    const normalizedTerms = (queryHint || "")
+        .split(/\s+/)
+        .map((term) => normalizeLookupValue(term))
+        .filter((term) => term.length > 1);
+
+    const ranked = messages
+        .filter((message) => Boolean(message?.content?.trim()))
+        .map((message) => {
+            const normalizedContent = normalizeLookupValue(String(message.content || ""));
+            const score = normalizedTerms.reduce((total, term) => {
+                return total + (normalizedContent.includes(term) ? 1 : 0);
+            }, 0);
+
+            return {
+                message,
+                score,
+            };
+        })
+        .filter((item) => item.score > 0 || normalizedTerms.length === 0)
+        .sort((left, right) => {
+            if (right.score !== left.score) {
+                return right.score - left.score;
+            }
+
+            return (right.message.createdTimestamp || 0) - (left.message.createdTimestamp || 0);
+        })
+        .slice(0, PREVIEW_MESSAGE_LIMIT);
+
+    return ranked.map(({ message }) => ({
+        messageId: String(message.id),
+        authorId: String(message.author?.id || ""),
+        authorName: String(message.author?.username || message.author?.displayName || "unknown"),
+        content: String(message.content || ""),
+        createdTimestamp: Number(message.createdTimestamp || 0),
+        jumpLink:
+            typeof message.url === "string"
+                ? message.url
+                : `https://discord.com/channels/${message.guildId}/${message.channelId}/${message.id}`,
+    }));
 }

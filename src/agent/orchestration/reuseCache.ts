@@ -1,7 +1,12 @@
 import { createQuestionFingerprint } from "@/agent/orchestration/questionFingerprint";
+import { mapQuestionIntentToRouteIntent } from "@/agent/orchestration/retrievalController";
 import { getRequestCacheContext } from "@/agent/orchestration/requestCacheContext";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
-import type { RouteDecision } from "@/shared/appTypes";
+import type {
+    QuestionIntent,
+    RetrievalControllerDecision,
+    RouteIntent,
+} from "@/shared/appTypes";
 import type { GroundingDecision, GroundingAssessment, ReusableGroundedContext } from "@/agent/orchestration/types";
 
 const REUSABLE_CONTEXT_TTL_MS = 20 * 60_000;
@@ -11,7 +16,8 @@ export function findReusableGroundedContext(options: {
     guildId: string | null;
     currentChannelId: string | null;
     question: string;
-    routeDecision: RouteDecision;
+    routeIntent?: RouteIntent;
+    questionIntent?: QuestionIntent;
     requireSufficient?: boolean;
 }): ReusableGroundedContext | null {
     const questionFingerprint = createQuestionFingerprint(options.question);
@@ -23,7 +29,25 @@ export function findReusableGroundedContext(options: {
         guildId: options.guildId,
         currentChannelId: options.currentChannelId,
         questionFingerprint,
-        routeIntent: options.routeDecision.intent,
+        routeIntent:
+            options.routeIntent ||
+            mapQuestionIntentToRouteIntent(options.questionIntent || "broad_search"),
+        requireSufficient: options.requireSufficient,
+        currentResponseOrdinal: getRequestCacheContext().responseOrdinal,
+        maxResponsesAgo: MAX_REUSABLE_CONTEXT_AGE_RESPONSES,
+    });
+}
+
+export function findRecentConversationGroundedContext(options: {
+    guildId: string | null;
+    currentChannelId: string | null;
+    routeIntent?: RouteIntent;
+    requireSufficient?: boolean;
+}): ReusableGroundedContext | null {
+    return DiscordMemoryService.getRecentReusableGroundedContext({
+        guildId: options.guildId,
+        currentChannelId: options.currentChannelId,
+        routeIntent: options.routeIntent,
         requireSufficient: options.requireSufficient,
         currentResponseOrdinal: getRequestCacheContext().responseOrdinal,
         maxResponsesAgo: MAX_REUSABLE_CONTEXT_AGE_RESPONSES,
@@ -34,7 +58,7 @@ export function saveReusableGroundedContext(options: {
     guildId: string | null;
     currentChannelId: string | null;
     question: string;
-    routeDecision: RouteDecision;
+    controllerDecision: RetrievalControllerDecision;
     grounding: GroundingAssessment;
     groundingDecision: GroundingDecision;
     toolRuns: ReusableGroundedContext["toolRuns"];
@@ -63,7 +87,7 @@ export function saveReusableGroundedContext(options: {
         channelId: options.currentChannelId,
         channelScopeKey: buildChannelScopeKey(options.currentChannelId),
         questionFingerprint,
-        routeIntent: options.routeDecision.intent,
+        routeIntent: options.controllerDecision.routeIntent,
         evidenceText: options.grounding.evidence,
         citations: options.grounding.citations,
         toolRuns: options.toolRuns,

@@ -7,6 +7,7 @@ Runtime prompts are stored on disk and loaded through `PromptRegistry`.
 - `system/base`
 - `system/grounded`
 - `tasks/classify_request`
+- `tasks/retrieval_controller`
 - `tasks/route_discord_intent`
 - `tasks/plan_discord_search`
 - `tasks/judge_grounding_sufficiency`
@@ -16,6 +17,17 @@ Runtime prompts are stored on disk and loaded through `PromptRegistry`.
 The stable code catalog is `src/shared/promptCatalog.ts`.
 
 ## Tool-Aware Prompt
+
+`resources/prompts/tasks/retrieval_controller.md` is the primary grounded-runtime controller. It must stay aligned with:
+
+- `QuestionIntent`
+- `GroundedAnswerMode`
+- `RetrievalControllerDecision`
+- explicit mention constraints
+- short-lived conversation context
+- cache- and tool-history-aware next-action selection
+
+It chooses the current grounded question intent, the next tool action, whether message evidence is still required, and whether the final grounded answer should be `confident`, `best_effort`, or `insufficient`.
 
 `resources/prompts/tasks/route_discord_intent.md` is the routing prompt for ambiguous grounded questions. It must stay aligned with the route decision shape in `src/shared/appTypes.ts`, including topic hints, channel-name hints, and reuse of short-lived prior person context.
 
@@ -53,6 +65,7 @@ The judge is selective in runtime:
 These prompts return strict JSON and must stay synchronized with `src/shared/appTypes.ts`:
 
 - `tasks/classify_request`
+- `tasks/retrieval_controller`
 - `tasks/route_discord_intent`
 - `tasks/plan_discord_search`
 - `tasks/judge_grounding_sufficiency`

@@ -130,6 +130,56 @@ export class CacheReadRepository {
         return row ? this.mapConversationResolutionContext(row) : null;
     }
 
+    public static getRecentReusableGroundedContext(options: {
+        guildId: string | null;
+        currentChannelId: string | null;
+        routeIntent?: string;
+        requireSufficient?: boolean;
+        currentResponseOrdinal?: number | null;
+        maxResponsesAgo?: number;
+        now?: number;
+    }): ReusableGroundedContextRecord | null {
+        const now = options.now ?? Date.now();
+        const routeIntentSql = options.routeIntent ? "AND route_intent = ?" : "";
+        const row = MemoryDatabase.get()
+            .prepare(
+                `
+                    SELECT *
+                    FROM reusable_grounded_contexts
+                    WHERE guild_id IS ?
+                      ${routeIntentSql}
+                      AND expiry_timestamp > ?
+                      AND (
+                        created_response_ordinal IS NULL
+                        OR ? IS NULL
+                        OR (? - created_response_ordinal) <= ?
+                      )
+                      ${options.requireSufficient ? "AND sufficient = 1" : ""}
+                    ORDER BY
+                        CASE
+                            WHEN channel_id = ? THEN 0
+                            WHEN channel_id IS NULL THEN 2
+                            ELSE 1
+                        END,
+                        created_timestamp DESC
+                    LIMIT 1
+                `
+            )
+            .get(
+                ...[
+                    options.guildId,
+                    ...(options.routeIntent ? [options.routeIntent] : []),
+                    now,
+                    options.currentResponseOrdinal ?? null,
+                    options.currentResponseOrdinal ?? null,
+                    options.maxResponsesAgo ?? Number.MAX_SAFE_INTEGER,
+                    options.currentChannelId,
+                ]
+            ) as Record<string, unknown> | undefined;
+
+        return row ? this.mapReusableGroundedContext(row) : null;
+    }
+
     private static mapReusableGroundedContext(
         row: Record<string, unknown>
     ): ReusableGroundedContextRecord {

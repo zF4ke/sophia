@@ -21,7 +21,8 @@ export async function generateDirectAnswer(question: string): Promise<string> {
 
 export async function generateGroundedAnswer(
     question: string,
-    evidence: string
+    evidence: string,
+    answerMode: "confident" | "best_effort" | "insufficient" = "confident"
 ): Promise<string> {
     return ModelGateway.generateText(
         [
@@ -32,6 +33,7 @@ export async function generateGroundedAnswer(
                 content: PromptRegistry.render("tasks/synthesize_answer", {
                     question,
                     evidence,
+                    answer_mode: answerMode,
                 }),
             },
         ],

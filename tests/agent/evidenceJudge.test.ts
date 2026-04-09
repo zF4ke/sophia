@@ -47,6 +47,7 @@ describe("decideGroundingSufficiency", () => {
         expect(result).toEqual({
             sufficient: true,
             mode: "judge",
+            answerMode: "confident",
             reason: "The evidence directly lists the requested songs.",
             missingInformation: null,
         });
@@ -79,6 +80,7 @@ describe("decideGroundingSufficiency", () => {
         expect(result).toEqual({
             sufficient: false,
             mode: "heuristic",
+            answerMode: "insufficient",
             reason: "No direct evidence is available yet.",
             missingInformation: "More Discord evidence is needed.",
         });

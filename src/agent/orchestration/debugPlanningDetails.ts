@@ -1,5 +1,8 @@
 import type { Guild } from "discord.js";
 import type { SearchPlan } from "@/shared/appTypes";
+import { INTERACTIVE_CRAWL_LIMIT } from "@/discord/live/DiscordChannelCrawlService";
+
+const SEARCH_MESSAGE_LIMIT = 30;
 
 export function compactDebugText(value: string, maxLength: number): string {
     const compact = value.replace(/\s+/g, " ").trim();
@@ -19,7 +22,7 @@ export function describePlannedTool(
 
     if (plan.action === "search_messages") {
         const query = String(plan.arguments.query || "").trim();
-        const limit = Number(plan.arguments.limit || 8);
+        const limit = Number(plan.arguments.limit || SEARCH_MESSAGE_LIMIT);
         const requestedScope = String(plan.arguments.scope || "guild");
         const location = guild
             ? requestedScope === "channel" && currentChannelId
@@ -46,7 +49,7 @@ export function describePlannedTool(
 
     if (plan.action === "crawl_channel_messages") {
         const channelId = String(plan.arguments.channelId || "").trim();
-        const limit = Number(plan.arguments.limit || 1000);
+        const limit = Number(plan.arguments.limit || INTERACTIVE_CRAWL_LIMIT);
         if (channelId) {
             details.push(`Canal: <#${channelId}>`);
         }

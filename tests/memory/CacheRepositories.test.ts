@@ -152,4 +152,50 @@ describe("cache repositories", () => {
 
         expect(result).toBeNull();
     });
+
+    it("can recover the most recent reusable context for follow-up reuse without a question fingerprint", () => {
+        const now = Date.now();
+        DiscordMemoryService.saveReusableGroundedContext({
+            guildId: "g1",
+            channelId: "c-other",
+            channelScopeKey: "c-other",
+            questionFingerprint: "older question",
+            routeIntent: "person_target",
+            evidenceText: "older evidence",
+            citations: [],
+            toolRuns: [],
+            sufficient: true,
+            groundingDecisionMode: "heuristic",
+            createdTimestamp: now - 5_000,
+            expiryTimestamp: now + 60_000,
+            createdResponseOrdinal: 1,
+        });
+        DiscordMemoryService.saveReusableGroundedContext({
+            guildId: "g1",
+            channelId: "c-now",
+            channelScopeKey: "c-now",
+            questionFingerprint: "newer question",
+            routeIntent: "person_target",
+            evidenceText: "newer evidence",
+            citations: [],
+            toolRuns: [],
+            sufficient: true,
+            groundingDecisionMode: "heuristic",
+            createdTimestamp: now,
+            expiryTimestamp: now + 60_000,
+            createdResponseOrdinal: 2,
+        });
+
+        const result = DiscordMemoryService.getRecentReusableGroundedContext({
+            guildId: "g1",
+            currentChannelId: "c-now",
+            routeIntent: "person_target",
+            requireSufficient: true,
+            currentResponseOrdinal: 3,
+            maxResponsesAgo: 6,
+        });
+
+        expect(result?.channelId).toBe("c-now");
+        expect(result?.evidenceText).toBe("newer evidence");
+    });
 });

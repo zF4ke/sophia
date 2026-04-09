@@ -99,6 +99,16 @@ export interface EvidenceJudgeResult {
     missingInformation: string | null;
 }
 
+export type QuestionIntent =
+    | "person_identity"
+    | "person_messages"
+    | "member_list_or_ordinal"
+    | "server_context"
+    | "channel_or_topic_search"
+    | "broad_search";
+
+export type GroundedAnswerMode = "confident" | "best_effort" | "insufficient";
+
 export type RouteIntent =
     | "channel_target"
     | "person_target"
@@ -116,6 +126,28 @@ export interface RouteDecision {
     topicText?: string | null;
     channelHintText?: string | null;
     resolvedPerson?: ResolvedPersonContext | null;
+    confidence: number;
+    reason: string;
+}
+
+export interface RetrievalControllerDecision {
+    source: "deterministic" | "ai";
+    questionIntent: QuestionIntent;
+    routeIntent: RouteIntent;
+    nextAction:
+        | "answer"
+        | "best_effort_answer"
+        | DiscordToolName;
+    targetText: string | null;
+    channelIds?: string[];
+    authorId?: string;
+    authorQuery?: string;
+    topicText?: string | null;
+    channelHintText?: string | null;
+    resolvedPerson?: ResolvedPersonContext | null;
+    searchQuery?: string | null;
+    needsMessageEvidence: boolean;
+    answerConfidence: GroundedAnswerMode;
     confidence: number;
     reason: string;
 }
@@ -191,6 +223,15 @@ export interface ChannelCrawlResult {
     messagesStored: number;
     exhausted: boolean;
     queryHint: string | null;
+    backgroundIngestQueued?: boolean;
+    previewMessages?: Array<{
+        messageId: string;
+        authorId: string;
+        authorName: string;
+        content: string;
+        createdTimestamp: number;
+        jumpLink: string;
+    }>;
 }
 
 export interface DiscordToolResult {
@@ -198,6 +239,7 @@ export interface DiscordToolResult {
     summary: string;
     data: unknown;
     cacheStatus?: "hit" | "miss";
+    errorMessage?: string | null;
 }
 
 export interface SearchPlan {

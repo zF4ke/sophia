@@ -15,6 +15,10 @@ export class MemorySearchService {
         if (!normalizedQuery) {
             return [];
         }
+        const ftsQuery = SearchScopeClause.toFtsQuery(normalizedQuery);
+        if (!ftsQuery) {
+            return [];
+        }
 
         const scopeClause = SearchScopeClause.build(scope);
         const lexicalRows = MemoryDatabase.get()
@@ -40,7 +44,7 @@ export class MemorySearchService {
                 LIMIT ?
             `)
             .all(
-                SearchScopeClause.toFtsQuery(normalizedQuery),
+                ftsQuery,
                 ...scopeClause.params,
                 Math.max(limit * 5, 20)
             ) as Array<Record<string, unknown>>;

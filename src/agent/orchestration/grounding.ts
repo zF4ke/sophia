@@ -35,6 +35,11 @@ export function assessGrounding(
             return false;
         }
 
+        if (run.tool === "crawl_channel_messages") {
+            const crawl = run.data as ChannelCrawlResult;
+            return Boolean(crawl?.previewMessages?.length);
+        }
+
         const role = DISCORD_TOOL_EVIDENCE_ROLES[run.tool as DiscordToolName];
         if (role === "discovery_only") {
             return false;
@@ -45,19 +50,15 @@ export function assessGrounding(
             return Boolean(chunks.length && chunks[0].totalScore >= MIN_SEARCH_SCORE);
         }
 
-        if (run.tool === "crawl_channel_messages") {
-            const crawl = run.data as ChannelCrawlResult;
-            return crawl.messagesStored > 0;
-        }
-
         return getToolEvidenceCount(run) > 0;
     });
 
     const messageEvidenceCount = usefulRuns
         .filter(
             (run) =>
+                run.tool === "crawl_channel_messages" ||
                 DISCORD_TOOL_EVIDENCE_ROLES[run.tool as DiscordToolName] ===
-                "message_evidence"
+                    "message_evidence"
         )
         .reduce((total, run) => total + getToolEvidenceCount(run), 0);
     const liveEvidenceCount = usefulRuns
@@ -126,7 +127,8 @@ export function collectMemberEvidence(
 ): AggregatedMemberEvidence | null {
     const listRuns = toolRuns
         .filter((run) => run.tool === "list_members")
-        .map((run) => run.data as LiveMemberListResult);
+        .map((run) => run.data as LiveMemberListResult | null)
+        .filter((run): run is LiveMemberListResult => Boolean(run));
 
     if (!listRuns.length) {
         return null;

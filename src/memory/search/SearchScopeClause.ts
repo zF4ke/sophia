@@ -28,13 +28,16 @@ export class SearchScopeClause {
 
     public static toFtsQuery(query: string): string {
         return query
+            .replace(/[^\p{L}\p{N}_]+/gu, " ")
             .split(/\s+/)
             .map((term) =>
                 term
-                    .replace(/[^\p{L}\p{N}_-]/gu, "")
+                    .replace(/[^\p{L}\p{N}_]/gu, "")
                     .trim()
             )
             .filter((term) => term.length > 1)
+            .filter((term, index, terms) => terms.indexOf(term) === index)
+            .map((term) => `"${term.replace(/"/g, '""')}"`)
             .join(" OR ");
     }
 }

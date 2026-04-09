@@ -17,8 +17,8 @@ export function getToolEvidenceCount(result: DiscordToolResult): number {
         case "read_message_thread":
             return Array.isArray(result.data) ? result.data.length : 0;
         case "list_members": {
-            const members = result.data as LiveMemberListResult;
-            return members.returnedCount;
+            const members = result.data as LiveMemberListResult | null;
+            return members?.returnedCount ?? 0;
         }
         case "read_channel_summary": {
             const summary = result.data as ChannelSummaryEvidence | null;
@@ -29,7 +29,7 @@ export function getToolEvidenceCount(result: DiscordToolResult): number {
             return result.data ? 1 : 0;
         case "crawl_channel_messages": {
             const crawl = result.data as ChannelCrawlResult;
-            return crawl.messagesStored;
+            return crawl?.previewMessages?.length ?? 0;
         }
         default:
             return 0;
@@ -42,11 +42,11 @@ export function getDebugItemCount(result: DiscordToolResult): number | undefined
     }
 
     if (result.tool === "list_members") {
-        return (result.data as LiveMemberListResult).returnedCount;
+        return (result.data as LiveMemberListResult | null)?.returnedCount;
     }
 
     if (result.tool === "crawl_channel_messages") {
-        return (result.data as ChannelCrawlResult).messagesStored;
+        return (result.data as ChannelCrawlResult)?.previewMessages?.length;
     }
 
     return undefined;
@@ -157,6 +157,11 @@ export function formatEvidence(toolRuns: DiscordToolResult[]): string {
             }
         } else if (run.tool === "list_members") {
             const members = run.data as LiveMemberListResult;
+            if (!members) {
+                lines.push("Member list unavailable.");
+                lines.push("");
+                continue;
+            }
             lines.push(`Total members available: ${members.totalCount}`);
             lines.push(
                 `Members shown: ${members.returnedCount} (offset ${members.offset}, limit ${members.limit})`
@@ -172,6 +177,14 @@ export function formatEvidence(toolRuns: DiscordToolResult[]): string {
             lines.push(`Fetched: ${crawl.messagesFetched}`);
             lines.push(`Stored: ${crawl.messagesStored}`);
             lines.push(`Exhausted: ${crawl.exhausted ? "yes" : "no"}`);
+            if (crawl.backgroundIngestQueued) {
+                lines.push("Background indexing: queued");
+            }
+            crawl.previewMessages?.slice(0, 6).forEach((message, index) => {
+                lines.push(
+                    `${index + 1}. [${crawl.channelName}] ${message.authorName}: ${message.content} (${message.jumpLink})`
+                );
+            });
         } else {
             lines.push(String(run.data ?? "No data."));
         }

@@ -31,6 +31,7 @@ export async function decideGroundingSufficiency(options: {
         return {
             sufficient: true,
             mode: "reused",
+            answerMode: "confident",
             reason: "A reusable grounded context was found.",
             missingInformation: null,
         };
@@ -53,6 +54,7 @@ export async function decideGroundingSufficiency(options: {
     return {
         sufficient: judged.sufficient,
         mode: "judge",
+        answerMode: judged.sufficient ? "confident" : "insufficient",
         reason: judged.reason,
         missingInformation: judged.missingInformation,
     };
@@ -71,6 +73,7 @@ export function getHeuristicGroundingDecision(
         return {
             sufficient: false,
             mode: "heuristic",
+            answerMode: "insufficient",
             reason: "No direct evidence is available yet.",
             missingInformation: "More Discord evidence is needed.",
         };
@@ -83,6 +86,7 @@ export function getHeuristicGroundingDecision(
         return {
             sufficient: true,
             mode: "heuristic",
+            answerMode: "confident",
             reason: "Live guild context directly answers the question.",
             missingInformation: null,
         };
@@ -96,6 +100,7 @@ export function getHeuristicGroundingDecision(
             return {
                 sufficient: true,
                 mode: "heuristic",
+                answerMode: "confident",
                 reason: "Member evidence already covers the requested member scope.",
                 missingInformation: null,
             };
@@ -104,6 +109,7 @@ export function getHeuristicGroundingDecision(
         return {
             sufficient: false,
             mode: "heuristic",
+            answerMode: "insufficient",
             reason: "Member evidence is still incomplete for the requested scope.",
             missingInformation: "More member evidence is needed.",
         };
@@ -117,6 +123,7 @@ export function getHeuristicGroundingDecision(
         return {
             sufficient: false,
             mode: "heuristic",
+            answerMode: "insufficient",
             reason: "Profile or member evidence alone does not answer what that person said.",
             missingInformation: "Need message evidence from that person on the requested topic.",
         };
@@ -131,6 +138,7 @@ export function getHeuristicGroundingDecision(
         return {
             sufficient: true,
             mode: "heuristic",
+            answerMode: "confident",
             reason: "Message evidence is already strong enough.",
             missingInformation: null,
         };

@@ -2,9 +2,10 @@ import { Message, MessageFlags } from "discord.js";
 import { renderDebugTrace } from "@/discord/debug/renderDebugTrace";
 import type { DebugSessionReporter, DebugTraceState } from "@/discord/debug/types";
 import type {
+    GroundedAnswerMode,
     GroundingDecisionMode,
     GroundingSummary,
-    RouteDecision,
+    RetrievalControllerDecision,
 } from "@/shared/appTypes";
 
 const MAX_EVENTS = 6;
@@ -43,10 +44,11 @@ export class DebugSession implements DebugSessionReporter {
             status: "running",
             stage: "Iniciando",
             mode: null,
-            routeDecision: null,
+            controllerDecision: null,
             toolNames: [],
             groundingSummary: null,
             groundingDecisionMode: null,
+            groundedAnswerMode: null,
             contextCacheStatus: "none",
             recentEvents: ["Iniciado"],
             startedAt: Date.now(),
@@ -77,14 +79,14 @@ export class DebugSession implements DebugSessionReporter {
         );
     }
 
-    public async setRouting(decision: RouteDecision): Promise<void> {
+    public async setRouting(decision: RetrievalControllerDecision): Promise<void> {
         const source = decision.source === "ai" ? "IA" : "determinística";
         const target = decision.targetText ? ` · alvo ${decision.targetText}` : "";
         await this.mutate(
             "Roteando pedido",
-            `Rota escolhida: ${source} · ${decision.intent}${target}`,
+            `Controle: ${source} · ${decision.questionIntent}${target}`,
             (state) => {
-                state.routeDecision = decision;
+                state.controllerDecision = decision;
             }
         );
     }
@@ -134,9 +136,17 @@ export class DebugSession implements DebugSessionReporter {
         );
     }
 
+    public async setToolProgress(toolName: string, summary: string): Promise<void> {
+        await this.mutate(
+            `Usando ${toolName}`,
+            `${toolName}: ${summary}`
+        );
+    }
+
     public async setGroundingSummary(
         summary: GroundingSummary,
-        decisionMode?: GroundingDecisionMode
+        decisionMode?: GroundingDecisionMode,
+        answerMode?: GroundedAnswerMode
     ): Promise<void> {
         const cacheAwareEvent = summary.sufficient
             ? `Base suficiente: mensagens ${summary.messageEvidenceCount} · contexto ao vivo ${summary.liveEvidenceCount}`
@@ -147,6 +157,7 @@ export class DebugSession implements DebugSessionReporter {
             (state) => {
                 state.groundingSummary = summary;
                 state.groundingDecisionMode = decisionMode || null;
+                state.groundedAnswerMode = answerMode || null;
             }
         );
     }

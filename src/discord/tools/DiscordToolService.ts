@@ -8,6 +8,7 @@ import * as channelDiscoveryTools from "@/discord/tools/runtime/channelDiscovery
 import * as memberTools from "@/discord/tools/runtime/memberTools";
 import * as resultReaders from "@/discord/tools/runtime/resultReaders";
 import { withCachedToolResult } from "@/discord/tools/runtime/toolCache";
+import { INTERACTIVE_CRAWL_LIMIT } from "@/discord/live/DiscordChannelCrawlService";
 
 export class DiscordToolService {
     public static async searchMessages(
@@ -69,10 +70,17 @@ export class DiscordToolService {
     public static async crawlChannelMessages(
         guild: Guild | null,
         channelId: string,
-        limit = 1000,
-        queryHint?: string
+        limit = INTERACTIVE_CRAWL_LIMIT,
+        queryHint?: string,
+        onProgress?: (toolName: string, summary: string) => Promise<void> | void
     ): Promise<DiscordToolResult> {
-        return channelDiscoveryTools.crawlChannelMessages(guild, channelId, limit, queryHint);
+        return channelDiscoveryTools.crawlChannelMessages(
+            guild,
+            channelId,
+            limit,
+            queryHint,
+            onProgress
+        );
     }
 
     public static async getMemberProfile(

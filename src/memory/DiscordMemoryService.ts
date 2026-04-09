@@ -179,6 +179,17 @@ export class DiscordMemoryService {
         CacheWriteRepository.upsertReusableGroundedContext(context);
     }
 
+    public static getRecentReusableGroundedContext(options: {
+        guildId: string | null;
+        currentChannelId: string | null;
+        routeIntent?: string;
+        requireSufficient?: boolean;
+        currentResponseOrdinal?: number | null;
+        maxResponsesAgo?: number;
+    }): ReusableGroundedContextRecord | null {
+        return CacheReadRepository.getRecentReusableGroundedContext(options);
+    }
+
     public static getCachedToolResult(
         cacheKey: string,
         currentResponseOrdinal: number | null,
