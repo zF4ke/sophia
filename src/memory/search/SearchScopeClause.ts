@@ -15,6 +15,11 @@ export class SearchScopeClause {
             params.push(...scope.channelIds);
         }
 
+        if (scope.authorIds?.length) {
+            clauses.push(`AND m.author_id IN (${scope.authorIds.map(() => "?").join(", ")})`);
+            params.push(...scope.authorIds);
+        }
+
         return {
             sql: clauses.join("\n"),
             params,
@@ -24,7 +29,11 @@ export class SearchScopeClause {
     public static toFtsQuery(query: string): string {
         return query
             .split(/\s+/)
-            .map((term) => term.replace(/["']/g, "").trim())
+            .map((term) =>
+                term
+                    .replace(/[^\p{L}\p{N}_-]/gu, "")
+                    .trim()
+            )
             .filter((term) => term.length > 1)
             .join(" OR ");
     }

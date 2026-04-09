@@ -2,12 +2,10 @@ import {
     ChatInputCommandInteraction,
     ContainerBuilder,
     MessageFlags,
-    SectionBuilder,
     SeparatorBuilder,
     SeparatorSpacingSize,
     SlashCommandBuilder,
     TextDisplayBuilder,
-    ThumbnailBuilder,
 } from "discord.js";
 
 function getLatencyTone(latencyMs: number, gatewayMs: number): {
@@ -19,20 +17,20 @@ function getLatencyTone(latencyMs: number, gatewayMs: number): {
     if (worst <= 150) {
         return {
             accentColor: 0x57f287,
-            label: "Healthy",
+            label: "Estável",
         };
     }
 
     if (worst <= 350) {
         return {
             accentColor: 0xfee75c,
-            label: "Stable",
+            label: "Aceitável",
         };
     }
 
     return {
         accentColor: 0xed4245,
-        label: "Slow",
+        label: "Lento",
     };
 }
 
@@ -49,9 +47,13 @@ export = {
                 .setRequired(false)
         ),
     async execute(interaction: ChatInputCommandInteraction) {
-        const roundTripMs = Date.now() - interaction.createdTimestamp;
-        const gatewayMs = Math.round(interaction.client.ws.ping);
         const ephemeral = interaction.options.getBoolean("ephemeral") ?? false;
+        await interaction.deferReply({
+            flags: ephemeral ? MessageFlags.Ephemeral : undefined,
+        });
+
+        const roundTripMs = Math.max(0, Date.now() - interaction.createdTimestamp);
+        const gatewayMs = Math.max(0, Math.round(interaction.client.ws.ping));
         const tone = getLatencyTone(roundTripMs, gatewayMs);
 
         const container = new ContainerBuilder()
@@ -59,7 +61,14 @@ export = {
             .addTextDisplayComponents(
                 new TextDisplayBuilder().setContent("## Pong"),
                 new TextDisplayBuilder().setContent(
-                    `Sophia is online. Current status: **${tone.label}**.`
+                    `Sophia está online. Estado atual: **${tone.label}**.`
+                ),
+                new TextDisplayBuilder().setContent(
+                    [
+                        `**Ida e volta:** ${roundTripMs}ms`,
+                        `**Gateway:** ${gatewayMs}ms`,
+                        `**Shard:** ${interaction.guild?.shardId ?? 0}`,
+                    ].join("\n")
                 )
             )
             .addSeparatorComponents(
@@ -67,44 +76,15 @@ export = {
                     .setDivider(true)
                     .setSpacing(SeparatorSpacingSize.Small)
             )
-            .addSectionComponents(
-                new SectionBuilder()
-                    .addTextDisplayComponents(
-                        new TextDisplayBuilder().setContent(
-                            [
-                                `**Round trip**\n\`${roundTripMs}ms\``,
-                                `**Gateway**\n\`${gatewayMs}ms\``,
-                                `**Shard**\n\`${interaction.guild?.shardId ?? 0}\``,
-                            ].join("\n\n")
-                        )
-                    )
-                    .setThumbnailAccessory(
-                        new ThumbnailBuilder()
-                            .setURL(
-                                interaction.client.user.displayAvatarURL({
-                                    extension: "png",
-                                    size: 256,
-                                })
-                            )
-                            .setDescription("Sophia avatar")
-                    )
-            )
-            .addSeparatorComponents(
-                new SeparatorBuilder()
-                    .setDivider(false)
-                    .setSpacing(SeparatorSpacingSize.Small)
-            )
             .addTextDisplayComponents(
                 new TextDisplayBuilder().setContent(
-                    `- Checked <t:${Math.floor(Date.now() / 1000)}:R>`
+                    `Verificado <t:${Math.floor(Date.now() / 1000)}:R>.`
                 )
             );
 
-        await interaction.reply({
+        await interaction.editReply({
             components: [container],
-            flags:
-                MessageFlags.IsComponentsV2 |
-                (ephemeral ? MessageFlags.Ephemeral : 0),
+            flags: MessageFlags.IsComponentsV2,
         });
     },
 };

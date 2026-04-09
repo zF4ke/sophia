@@ -17,7 +17,6 @@ export const EMOJIS = {
     found: "🔎",
     database: "🗄️",
     network: "📡",
-    complete: "✨",
     memory: "💾",
     check: "✅",
     sync: "🔄",

@@ -1,113 +1,87 @@
 import type { Guild } from "discord.js";
-import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
-import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
-import type { DiscordToolResult, RetrievedChunk } from "@/shared/appTypes";
+import type {
+    DiscordToolResult,
+    MemberListSort,
+} from "@/shared/appTypes";
+import * as messageTools from "@/discord/tools/runtime/messageTools";
+import * as channelDiscoveryTools from "@/discord/tools/runtime/channelDiscoveryTools";
+import * as memberTools from "@/discord/tools/runtime/memberTools";
+import * as resultReaders from "@/discord/tools/runtime/resultReaders";
 
 export class DiscordToolService {
     public static async searchMessages(
         question: string,
         guild: Guild | null,
-        limit = 8
+        options: {
+            limit?: number;
+            channelIds?: string[];
+            authorId?: string;
+        } = {}
     ): Promise<DiscordToolResult> {
-        const results = await DiscordMemoryService.searchMessagesAsync(
-            question,
-            { guildId: guild?.id || null },
-            limit
-        );
-
-        return {
-            tool: "search_messages",
-            summary: results.length
-                ? `Found ${results.length} relevant message chunks.`
-                : "No relevant stored messages found.",
-            data: results,
-        };
+        return messageTools.searchMessages(question, guild, options);
     }
 
     public static async readMessageThread(messageId: string): Promise<DiscordToolResult> {
-        const thread = DiscordMemoryService.getMessageThread(messageId);
-        return {
-            tool: "read_message_thread",
-            summary: thread.length
-                ? `Loaded ${thread.length} nearby thread messages.`
-                : "No nearby thread context found.",
-            data: thread,
-        };
+        return messageTools.readMessageThread(messageId);
     }
 
     public static async readChannelSummary(channelId: string): Promise<DiscordToolResult> {
-        const summary = DiscordMemoryService.getChannelSummary(channelId);
-        return {
-            tool: "read_channel_summary",
-            summary: summary
-                ? `Loaded summary for channel ${channelId}.`
-                : "No stored summary for that channel.",
-            data: summary,
-        };
+        return messageTools.readChannelSummary(channelId);
     }
 
     public static async listRelevantChannels(
         query: string,
-        guild: Guild | null
+        guild: Guild | null,
+        currentChannelId?: string | null
     ): Promise<DiscordToolResult> {
-        const channels = DiscordMemoryService.listRelevantChannels(query, {
-            guildId: guild?.id || null,
-        });
+        return channelDiscoveryTools.listRelevantChannels(query, guild, currentChannelId);
+    }
 
-        return {
-            tool: "list_relevant_channels",
-            summary: channels.length
-                ? `Found ${channels.length} potentially relevant channels.`
-                : "No relevant channels found in local memory.",
-            data: channels,
-        };
+    public static async crawlChannelMessages(
+        guild: Guild | null,
+        channelId: string,
+        limit = 1000,
+        queryHint?: string
+    ): Promise<DiscordToolResult> {
+        return channelDiscoveryTools.crawlChannelMessages(guild, channelId, limit, queryHint);
     }
 
     public static async getMemberProfile(
         guild: Guild | null,
         nameOrId: string
     ): Promise<DiscordToolResult> {
-        const profile = await DiscordLiveService.getMemberProfile(guild, nameOrId);
-        return {
-            tool: "get_member_profile",
-            summary: profile ? `Loaded member profile for ${profile.displayName}.` : "Member not found.",
-            data: profile,
-        };
+        return memberTools.getMemberProfile(guild, nameOrId);
     }
 
     public static async listMembers(
         guild: Guild | null,
-        filters?: string
+        options: {
+            filters?: string;
+            limit?: number;
+            offset?: number;
+            sort?: MemberListSort;
+        } = {}
     ): Promise<DiscordToolResult> {
-        const members = await DiscordLiveService.listMembers(guild, filters);
-        return {
-            tool: "list_members",
-            summary: members.length ? `Loaded ${members.length} members.` : "No matching members found.",
-            data: members,
-        };
+        return memberTools.listMembers(guild, options);
     }
 
     public static async getGuildContext(guild: Guild | null): Promise<DiscordToolResult> {
-        const context = await DiscordLiveService.getGuildContext(guild);
-        return {
-            tool: "get_guild_context",
-            summary: context ? `Loaded guild context for ${context.name}.` : "No guild context available.",
-            data: context,
-        };
+        return memberTools.getGuildContext(guild);
     }
 
-    public static extractBestChunk(results: DiscordToolResult[]): RetrievedChunk | null {
-        for (const result of results) {
-            if (result.tool !== "search_messages") {
-                continue;
-            }
+    public static extractBestChunk(results: DiscordToolResult[]) {
+        return resultReaders.extractBestChunk(results);
+    }
 
-            const chunks = result.data as RetrievedChunk[];
-            if (chunks.length) {
-                return chunks[0];
-            }
-        }
+    public static getListMembersResult(result: DiscordToolResult) {
+        return resultReaders.getListMembersResult(result);
+    }
 
-        return null;
+    public static getMemberProfileResult(result: DiscordToolResult) {
+        return resultReaders.getMemberProfileResult(result);
+    }
+
+    public static getCrawlResult(result: DiscordToolResult) {
+        return resultReaders.getCrawlResult(result);
     }
 }

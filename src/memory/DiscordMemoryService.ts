@@ -8,8 +8,8 @@ import { MemoryReadRepository } from "@/memory/repositories/MemoryReadRepository
 import { MemoryWriteRepository } from "@/memory/repositories/MemoryWriteRepository";
 import { MemorySearchService } from "@/memory/search/MemorySearchService";
 import { SearchScopeClause } from "@/memory/search/SearchScopeClause";
-import type { SearchMessageScope, StoredMessage } from "@/memory/types";
-import type { RetrievedChunk } from "@/shared/appTypes";
+import type { ChannelCrawlState, SearchMessageScope, StoredMessage } from "@/memory/types";
+import type { ChannelCandidate, RetrievedChunk } from "@/shared/appTypes";
 
 const EMBEDDING_BATCH_SIZE = 32;
 
@@ -48,6 +48,10 @@ export class DiscordMemoryService {
         return MemoryReadRepository.getIndexState(channelId);
     }
 
+    public static getChannelCrawlState(channelId?: string): ChannelCrawlState[] {
+        return MemoryReadRepository.getChannelCrawlState(channelId);
+    }
+
     public static clearAll(): void {
         MemoryWriteRepository.clearAll();
     }
@@ -77,12 +81,47 @@ export class DiscordMemoryService {
         scope: SearchMessageScope = {},
         limit = 6
     ) {
+        const ftsQuery = SearchScopeClause.toFtsQuery(query);
+        if (!ftsQuery) {
+            return [];
+        }
+
         const scopeClause = SearchScopeClause.build(scope);
         return MemoryReadRepository.listRelevantChannels(
-            SearchScopeClause.toFtsQuery(query),
+            ftsQuery,
             scopeClause.sql,
             scopeClause.params,
             limit
+        );
+    }
+
+    public static getKnownChannels(guildId?: string | null) {
+        return MemoryReadRepository.listKnownChannels(guildId);
+    }
+
+    public static upsertDiscoveredChannel(
+        channelId: string,
+        guildId: string | null,
+        channelName: string,
+        timestamp = Date.now()
+    ): void {
+        MemoryWriteRepository.upsertDiscoveredChannel(
+            channelId,
+            guildId,
+            channelName,
+            timestamp
+        );
+    }
+
+    public static updateChannelCrawlState(
+        channelId: string,
+        oldestFetchedMessageId: string | null,
+        exhausted: boolean
+    ): void {
+        MemoryWriteRepository.updateChannelCrawlState(
+            channelId,
+            oldestFetchedMessageId,
+            exhausted
         );
     }
 

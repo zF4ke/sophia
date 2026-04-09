@@ -21,9 +21,18 @@ The stable code catalog is `src/shared/promptCatalog.ts`.
 - `read_message_thread`
 - `read_channel_summary`
 - `list_relevant_channels`
+- `crawl_channel_messages`
 - `get_member_profile`
 - `list_members`
 - `get_guild_context`
+
+It also defines the grounding policy:
+
+- message tools are for history and discussion evidence
+- live metadata tools are authoritative for current-server facts
+- `list_relevant_channels` and `crawl_channel_messages` are discovery-only
+- the planner may pivot from local search to bounded live crawl, then rerun local search
+- the planner should finish once the available evidence already answers the question
 
 ## JSON Contracts
 

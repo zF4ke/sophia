@@ -15,15 +15,18 @@ This file is the canonical engineering and operator handoff for the runtime. `RE
 - `docs/prompt-catalog.md`
 - `docs/commands-and-admin.md`
 - `docs/cleanup-migration.md`
+- `docs/ui.md`
 
 ## Runtime Flow
 
 1. Classify the request as `direct_answer` or `discord_grounded`.
 2. If grounded, run a bounded Discord tool loop.
-3. Stop early when evidence is strong enough or clearly weak.
-4. Synthesize a concise answer only from useful evidence.
-5. Return citations when evidence was used.
-6. If evidence is weak, say that Sophia does not have enough Discord evidence to answer reliably.
+3. Treat stored-message evidence and live Discord metadata as separate grounding types.
+4. Stop early when evidence is strong enough or clearly weak.
+5. Synthesize a concise answer only from useful evidence.
+6. Return citations only when stored messages were used.
+7. If both grounding types are weak, say that Sophia does not have enough Discord evidence to answer reliably.
+8. If local memory misses, the agent may crawl readable channels, ingest them, and retry local retrieval within the same bounded loop.
 
 The main orchestration files are:
 
@@ -40,6 +43,7 @@ These tool names are part of the prompt contract and should stay stable unless y
 - `read_message_thread`
 - `read_channel_summary`
 - `list_relevant_channels`
+- `crawl_channel_messages`
 - `get_member_profile`
 - `list_members`
 - `get_guild_context`
@@ -56,6 +60,14 @@ If you add, remove, or rename a tool, update all of the following in the same ch
 - `resources/prompts/tasks/plan_discord_search.md`
 - `docs/prompt-catalog.md`
 - Any affected tests, especially the documentation integrity test
+
+If you change whether a tool is treated as message evidence, live evidence, or discovery-only, update:
+
+- `src/shared/discordTools.ts`
+- `src/agent/AgentOrchestrator.ts`
+- `resources/prompts/tasks/plan_discord_search.md`
+- `docs/agent-loop.md`
+- `docs/prompt-catalog.md`
 
 ## Prompt Ownership
 
@@ -112,7 +124,8 @@ Core supported commands:
 - `/find`
 - `/context`
 - `/talk`
-- `/getmessage`
+- `/nth`
+- `/debug`
 - `/index`
 - `/access`
 - `/cache`

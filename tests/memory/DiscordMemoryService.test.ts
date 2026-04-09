@@ -86,4 +86,28 @@ describe("DiscordMemoryService", () => {
         const message = DiscordMemoryService.getNthHistoricalMessage("c1", 2);
         expect(message?.id).toBe("m2");
     });
+
+    it("stores discovered channels and crawl state", () => {
+        DiscordMemoryService.upsertDiscoveredChannel("c1", "g1", "general", 123);
+        DiscordMemoryService.updateChannelCrawlState("c1", "m-oldest", true);
+
+        const channels = DiscordMemoryService.getKnownChannels("g1");
+        const crawlState = DiscordMemoryService.getChannelCrawlState("c1");
+
+        expect(channels).toEqual([
+            expect.objectContaining({
+                channelId: "c1",
+                guildId: "g1",
+                channelName: "general",
+            }),
+        ]);
+        expect(crawlState).toEqual([
+            {
+                channelId: "c1",
+                lastCrawledTimestamp: expect.any(Number),
+                oldestFetchedMessageId: "m-oldest",
+                exhausted: true,
+            },
+        ]);
+    });
 });

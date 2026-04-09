@@ -1,436 +1,166 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { AppPaths } from "@/app/AppPaths";
+import type fs from "fs";
+import {
+    ensureDirectoryExists,
+    getStorageDir,
+    getStorageFilePath,
+    storageRoot,
+} from "@/platform/storage/directories";
+import {
+    readJsonFile,
+    readJsonFromStoragePath,
+    writeJsonFile,
+    writeJsonToStoragePath,
+} from "@/platform/storage/jsonStore";
+import {
+    readTextFile,
+    readTextFromStoragePath,
+    writeTextFile,
+    writeTextToStoragePath,
+} from "@/platform/storage/textStore";
+import {
+    readBinaryFile,
+    readBinaryFromStoragePath,
+    writeBinaryFile,
+    writeBinaryToStoragePath,
+} from "@/platform/storage/binaryStore";
+import {
+    clearStorageDirectory,
+    deleteFile,
+    deleteFileFromStoragePath,
+    fileExists,
+    fileExistsInStoragePath,
+    getDirectoryFiles,
+    getDirectorySize,
+    getFileStats,
+    getFileStatsFromStoragePath,
+    listFiles,
+    listFilesInStoragePath,
+} from "@/platform/storage/fileInfo";
 
 /**
  * Service for handling file system operations throughout the application
  * Acts as a centralized interface for all file I/O operations
  */
 export class FileSystemService {
-    /**
-     * Base directory for all mutable runtime storage
-     */
-    private static readonly BASE_STORAGE_DIR = AppPaths.storageRoot;
-
-    /**
-     * Ensures that a directory exists, creating it if necessary
-     * @param dirPath Full path to the directory
-     */
     public static ensureDirectoryExists(dirPath: string): void {
-        if (!fs.existsSync(dirPath)) {
-            fs.mkdirSync(dirPath, { recursive: true });
-        }
+        ensureDirectoryExists(dirPath);
     }
 
-    /**
-     * Gets the base data directory path
-     * @returns Path to the base data directory
-     */
     public static getBaseStorageDir(): string {
-        return this.BASE_STORAGE_DIR;
+        return storageRoot;
     }
 
-    /**
-     * Gets the directory path within the data directory structure
-     * Can handle arbitrarily deep paths
-     * @param pathSegments Array of path segments to join
-     * @returns Full path to the requested directory, which is created if it doesn't exist
-     */
     public static getDir(...pathSegments: string[]): string {
-        const dirPath = path.join(this.BASE_STORAGE_DIR, ...pathSegments);
-        this.ensureDirectoryExists(dirPath);
-        return dirPath;
+        return getStorageDir(...pathSegments);
     }
 
-    /**
-     * Gets the path for a file within the data directory structure
-     * @param fileName Name of the file (should include extension)
-     * @param pathSegments Array of path segments leading to the file location
-     * @returns Full path to the file
-     */
     public static getFilePath(fileName: string, ...pathSegments: string[]): string {
-        const dirPath = this.getDir(...pathSegments);
-        return path.join(dirPath, fileName);
+        return getStorageFilePath(fileName, ...pathSegments);
     }
 
-    /**
-     * Reads a JSON file and parses its contents
-     * @param filePath Full path to the JSON file
-     * @returns Parsed JSON data or null if file doesn't exist or is invalid
-     */
     public static readJsonFile<T>(filePath: string): T | null {
-        try {
-            if (!fs.existsSync(filePath)) {
-                return null;
-            }
-            
-            const content = fs.readFileSync(filePath, 'utf-8');
-            return JSON.parse(content) as T;
-        } catch (error) {
-            console.error(`Error reading JSON file ${filePath}:`, error);
-            return null;
-        }
+        return readJsonFile<T>(filePath);
     }
 
-    /**
-     * Reads a JSON file from anywhere within the data directory structure
-     * @param fileName Name of the JSON file
-     * @param pathSegments Path segments leading to the file location 
-     * @returns Parsed JSON data or null if file doesn't exist or is invalid
-     */
     public static readJsonFromPath<T>(fileName: string, ...pathSegments: string[]): T | null {
-        const filePath = this.getFilePath(fileName, ...pathSegments);
-        return this.readJsonFile<T>(filePath);
+        return readJsonFromStoragePath<T>(fileName, ...pathSegments);
     }
 
-    /**
-     * Writes data to a JSON file
-     * @param filePath Full path to the JSON file
-     * @param data Data to write
-     * @returns True if write was successful, false otherwise
-     */
-    public static writeJsonFile(filePath: string, data: any): boolean {
-        try {
-            // Ensure the directory exists
-            const dirPath = path.dirname(filePath);
-            this.ensureDirectoryExists(dirPath);
-            
-            // Write the file
-            fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
-            return true;
-        } catch (error) {
-            console.error(`Error writing JSON file ${filePath}:`, error);
-            return false;
-        }
+    public static writeJsonFile(filePath: string, data: unknown): boolean {
+        return writeJsonFile(filePath, data);
     }
 
-    /**
-     * Writes JSON data to a file within the data directory structure
-     * @param fileName Name of the JSON file
-     * @param data Data to write
-     * @param pathSegments Path segments leading to the file location
-     * @returns True if write was successful, false otherwise
-     */
-    public static writeJsonToPath(fileName: string, data: any, ...pathSegments: string[]): boolean {
-        const filePath = this.getFilePath(fileName, ...pathSegments);
-        return this.writeJsonFile(filePath, data);
+    public static writeJsonToPath(
+        fileName: string,
+        data: unknown,
+        ...pathSegments: string[]
+    ): boolean {
+        return writeJsonToStoragePath(fileName, data, ...pathSegments);
     }
 
-    /**
-     * Lists all files in a directory
-     * @param dirPath Directory to list files from
-     * @param extension Optional file extension filter
-     * @returns Array of file paths
-     */
     public static listFiles(dirPath: string, extension?: string): string[] {
-        try {
-            if (!fs.existsSync(dirPath)) {
-                return [];
-            }
-            
-            const files = fs.readdirSync(dirPath);
-            if (extension) {
-                return files.filter(file => file.endsWith(extension));
-            }
-            return files;
-        } catch (error) {
-            console.error(`Error listing files in directory ${dirPath}:`, error);
-            return [];
-        }
+        return listFiles(dirPath, extension);
     }
 
-    /**
-     * Lists all files in a directory within the data directory structure
-     * @param pathSegments Path segments leading to the directory
-     * @param extension Optional file extension filter
-     * @returns Array of file names
-     */
     public static listFilesInPath(extension?: string, ...pathSegments: string[]): string[] {
-        const dirPath = this.getDir(...pathSegments);
-        return this.listFiles(dirPath, extension);
+        return listFilesInStoragePath(extension, ...pathSegments);
     }
 
-    /**
-     * Deletes a file if it exists
-     * @param filePath Full path to the file
-     * @returns True if delete was successful or file didn't exist, false on error
-     */
     public static deleteFile(filePath: string): boolean {
-        try {
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
-            return true;
-        } catch (error) {
-            console.error(`Error deleting file ${filePath}:`, error);
-            return false;
-        }
+        return deleteFile(filePath);
     }
 
-    /**
-     * Deletes a file within the data directory structure
-     * @param fileName Name of the file to delete
-     * @param pathSegments Path segments leading to the file location
-     * @returns True if delete was successful or file didn't exist, false on error
-     */
     public static deleteFileFromPath(fileName: string, ...pathSegments: string[]): boolean {
-        const filePath = this.getFilePath(fileName, ...pathSegments);
-        return this.deleteFile(filePath);
+        return deleteFileFromStoragePath(fileName, ...pathSegments);
     }
 
-    /**
-     * Clears all files in a directory within the data directory structure
-     * @param pathSegments Path segments leading to the directory
-     * @param extension Optional filter by file extension
-     * @returns True if deletion was successful, false otherwise
-     */
     public static clearDirectory(extension?: string, ...pathSegments: string[]): boolean {
-        try {
-            const dirPath = this.getDir(...pathSegments);
-            
-            if (fs.existsSync(dirPath)) {
-                const files = this.listFiles(dirPath, extension);
-                
-                for (const file of files) {
-                    const filePath = path.join(dirPath, file);
-                    this.deleteFile(filePath);
-                }
-            }
-            return true;
-        } catch (error) {
-            console.error(`Error clearing directory ${pathSegments.join('/')}:`, error);
-            return false;
-        }
+        return clearStorageDirectory(extension, ...pathSegments);
     }
 
-    /**
-     * Reads raw file contents as a string (not parsed as JSON)
-     * @param filePath Path to the file
-     * @returns File contents as string or null if file doesn't exist
-     */
     public static readTextFile(filePath: string): string | null {
-        try {
-            if (!fs.existsSync(filePath)) {
-                return null;
-            }
-            
-            return fs.readFileSync(filePath, 'utf-8');
-        } catch (error) {
-            console.error(`Error reading text file ${filePath}:`, error);
-            return null;
-        }
+        return readTextFile(filePath);
     }
 
-    /**
-     * Reads raw text file contents from anywhere within the data directory structure
-     * @param fileName Name of the text file
-     * @param pathSegments Path segments leading to the file location
-     * @returns File contents as string or null if file doesn't exist
-     */
     public static readTextFromPath(fileName: string, ...pathSegments: string[]): string | null {
-        const filePath = this.getFilePath(fileName, ...pathSegments);
-        return this.readTextFile(filePath);
+        return readTextFromStoragePath(fileName, ...pathSegments);
     }
 
-    /**
-     * Writes raw text content to a file
-     * @param filePath Path to the file
-     * @param content Text content to write
-     * @returns True if write was successful, false otherwise
-     */
     public static writeTextFile(filePath: string, content: string): boolean {
-        try {
-            // Ensure the directory exists
-            const dirPath = path.dirname(filePath);
-            this.ensureDirectoryExists(dirPath);
-            
-            // Write the file
-            fs.writeFileSync(filePath, content, 'utf-8');
-            return true;
-        } catch (error) {
-            console.error(`Error writing text file ${filePath}:`, error);
-            return false;
-        }
+        return writeTextFile(filePath, content);
     }
 
-    /**
-     * Writes raw text content to a file within the data directory structure
-     * @param fileName Name of the text file
-     * @param content Text content to write
-     * @param pathSegments Path segments leading to the file location
-     * @returns True if write was successful, false otherwise
-     */
-    public static writeTextToPath(fileName: string, content: string, ...pathSegments: string[]): boolean {
-        const filePath = this.getFilePath(fileName, ...pathSegments);
-        return this.writeTextFile(filePath, content);
+    public static writeTextToPath(
+        fileName: string,
+        content: string,
+        ...pathSegments: string[]
+    ): boolean {
+        return writeTextToStoragePath(fileName, content, ...pathSegments);
     }
 
-    /**
-     * Reads binary file contents as a Buffer
-     * @param filePath Path to the file
-     * @returns File contents as Buffer or null if file doesn't exist
-     */
     public static readBinaryFile(filePath: string): Buffer | null {
-        try {
-            if (!fs.existsSync(filePath)) {
-                return null;
-            }
-            
-            return fs.readFileSync(filePath);
-        } catch (error) {
-            console.error(`Error reading binary file ${filePath}:`, error);
-            return null;
-        }
+        return readBinaryFile(filePath);
     }
 
-    /**
-     * Reads binary file contents from anywhere within the data directory structure
-     * @param fileName Name of the binary file
-     * @param pathSegments Path segments leading to the file location
-     * @returns File contents as Buffer or null if file doesn't exist
-     */
     public static readBinaryFromPath(fileName: string, ...pathSegments: string[]): Buffer | null {
-        const filePath = this.getFilePath(fileName, ...pathSegments);
-        return this.readBinaryFile(filePath);
+        return readBinaryFromStoragePath(fileName, ...pathSegments);
     }
 
-    /**
-     * Writes binary content to a file
-     * @param filePath Path to the file
-     * @param content Binary content to write
-     * @returns True if write was successful, false otherwise
-     */
     public static writeBinaryFile(filePath: string, content: Buffer): boolean {
-        try {
-            // Ensure the directory exists
-            const dirPath = path.dirname(filePath);
-            this.ensureDirectoryExists(dirPath);
-            
-            // Write the file
-            fs.writeFileSync(filePath, content);
-            return true;
-        } catch (error) {
-            console.error(`Error writing binary file ${filePath}:`, error);
-            return false;
-        }
+        return writeBinaryFile(filePath, content);
     }
 
-    /**
-     * Writes binary content to a file within the data directory structure
-     * @param fileName Name of the binary file
-     * @param content Binary content to write
-     * @param pathSegments Path segments leading to the file location
-     * @returns True if write was successful, false otherwise
-     */
-    public static writeBinaryToPath(fileName: string, content: Buffer, ...pathSegments: string[]): boolean {
-        const filePath = this.getFilePath(fileName, ...pathSegments);
-        return this.writeBinaryFile(filePath, content);
+    public static writeBinaryToPath(
+        fileName: string,
+        content: Buffer,
+        ...pathSegments: string[]
+    ): boolean {
+        return writeBinaryToStoragePath(fileName, content, ...pathSegments);
     }
 
-    /**
-     * Checks if a file exists
-     * @param filePath Path to the file
-     * @returns True if file exists, false otherwise
-     */
     public static fileExists(filePath: string): boolean {
-        return fs.existsSync(filePath);
+        return fileExists(filePath);
     }
 
-    /**
-     * Checks if a file exists within the data directory structure
-     * @param fileName Name of the file
-     * @param pathSegments Path segments leading to the file location
-     * @returns True if file exists, false otherwise
-     */
     public static fileExistsInPath(fileName: string, ...pathSegments: string[]): boolean {
-        const filePath = this.getFilePath(fileName, ...pathSegments);
-        return this.fileExists(filePath);
+        return fileExistsInStoragePath(fileName, ...pathSegments);
     }
 
-    /**
-     * Gets file stats (size, modification date, etc.)
-     * @param filePath Path to the file
-     * @returns File stats or null if file doesn't exist
-     */
     public static getFileStats(filePath: string): fs.Stats | null {
-        try {
-            if (!fs.existsSync(filePath)) {
-                return null;
-            }
-            
-            return fs.statSync(filePath);
-        } catch (error) {
-            console.error(`Error getting file stats ${filePath}:`, error);
-            return null;
-        }
+        return getFileStats(filePath);
     }
 
-    /**
-     * Gets file stats for a file within the data directory structure
-     * @param fileName Name of the file
-     * @param pathSegments Path segments leading to the file location
-     * @returns File stats or null if file doesn't exist
-     */
     public static getFileStatsFromPath(fileName: string, ...pathSegments: string[]): fs.Stats | null {
-        const filePath = this.getFilePath(fileName, ...pathSegments);
-        return this.getFileStats(filePath);
+        return getFileStatsFromStoragePath(fileName, ...pathSegments);
     }
 
-    /**
-     * Calculates the total size of a directory in bytes
-     * @param directoryPath Path to the directory
-     * @returns Total size in bytes
-     */
     public static getDirectorySize(directoryPath: string): number {
-        let totalSize = 0;
-        
-        if (!fs.existsSync(directoryPath)) {
-            return 0;
-        }
-
-        const files = fs.readdirSync(directoryPath);
-        
-        for (const file of files) {
-            const filePath = path.join(directoryPath, file);
-            const stats = fs.statSync(filePath);
-            
-            if (stats.isFile()) {
-                totalSize += stats.size;
-            } else if (stats.isDirectory()) {
-                totalSize += this.getDirectorySize(filePath);
-            }
-        }
-        
-        return totalSize;
+        return getDirectorySize(directoryPath);
     }
 
-    /**
-     * Gets detailed information about files in a directory
-     * @param directoryPath Path to the directory
-     * @returns Array of objects with file information
-     */
-    public static getDirectoryFiles(directoryPath: string): Array<{ path: string, size: number, created: number }> {
-        const files: Array<{ path: string, size: number, created: number }> = [];
-        
-        if (!fs.existsSync(directoryPath)) {
-            return files;
-        }
-
-        const items = fs.readdirSync(directoryPath);
-        
-        for (const item of items) {
-            const fullPath = path.join(directoryPath, item);
-            const stats = fs.statSync(fullPath);
-            
-            if (stats.isFile()) {
-                files.push({
-                    path: fullPath,
-                    size: stats.size,
-                    created: stats.birthtime.getTime()
-                });
-            }
-        }
-        
-        return files;
+    public static getDirectoryFiles(
+        directoryPath: string
+    ): Array<{ path: string; size: number; created: number }> {
+        return getDirectoryFiles(directoryPath);
     }
 }

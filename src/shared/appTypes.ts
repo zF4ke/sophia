@@ -71,9 +71,72 @@ export interface RetrievedChunk {
     totalScore: number;
 }
 
+export interface ChannelCandidate {
+    channelId: string;
+    channelName: string;
+    hitCount: number;
+    isIndexed: boolean;
+    matchSource: "memory" | "live_name";
+    lastIndexedTimestamp: number | null;
+}
+
 export interface AnswerCitation {
     label: string;
     jumpLink: string;
+}
+
+export interface GroundingSummary {
+    messageEvidenceCount: number;
+    liveEvidenceCount: number;
+    sufficient: boolean;
+}
+
+export interface ModelTraceContext {
+    traceLabel: string;
+    questionPreview?: string;
+}
+
+export type MemberListSort = "joined_at";
+
+export interface LiveMemberRecord {
+    id: string;
+    username: string;
+    displayName: string;
+    joinedTimestamp: number | null;
+    globalName?: string | null;
+    nickname?: string | null;
+}
+
+export interface LiveMemberListResult {
+    members: LiveMemberRecord[];
+    totalCount: number;
+    returnedCount: number;
+    hasMore: boolean;
+    offset: number;
+    limit: number;
+    sort: MemberListSort;
+    filters: string | null;
+}
+
+export interface MemberProfileResult {
+    id: string;
+    username: string;
+    displayName: string;
+    globalName: string | null;
+    nickname: string | null;
+    roles: string[];
+    bannerUrl: string | null;
+    accentColor: string | null;
+    bio: string | null;
+}
+
+export interface ChannelCrawlResult {
+    channelId: string;
+    channelName: string;
+    messagesFetched: number;
+    messagesStored: number;
+    exhausted: boolean;
+    queryHint: string | null;
 }
 
 export interface DiscordToolResult {

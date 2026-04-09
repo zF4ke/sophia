@@ -87,9 +87,10 @@ npm start
 - `/find`: Search stored Discord evidence
 - `/context`: Ask for a context-aware answer
 - `/talk`: Talk to Sophia directly
-- `/getmessage`: Retrieve the Nth indexed historical message
+- `/nth`: Retrieve the Nth indexed historical message
+- `/debug`: Toggle and inspect the global live debug mode
 - `/index`: Backfill, inspect, repair, or clear the local memory index
 
 ### System Commands
-- `/access`: Manage user permissions
+- `/access`: Open the admin access panel
 - `/cache`: Show local memory statistics

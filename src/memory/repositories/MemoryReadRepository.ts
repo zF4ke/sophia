@@ -1,5 +1,6 @@
 import { MemoryDatabase } from "@/memory/MemoryDatabase";
-import type { ChannelIndexState, StoredMessage } from "@/memory/types";
+import type { ChannelCrawlState, ChannelIndexState, StoredMessage } from "@/memory/types";
+import type { ChannelCandidate } from "@/shared/appTypes";
 
 export class MemoryReadRepository {
     public static getIndexState(channelId?: string): ChannelIndexState[] {
@@ -120,6 +121,73 @@ export class MemoryReadRepository {
             channelId: String(row.channel_id),
             channelName: String(row.channel_name),
             hitCount: Number(row.hit_count),
+        }));
+    }
+
+    public static listKnownChannels(guildId?: string | null): Array<{
+        channelId: string;
+        guildId: string | null;
+        channelName: string;
+        lastSeenTimestamp: number;
+    }> {
+        const rows = guildId
+            ? MemoryDatabase.get()
+                  .prepare(
+                      `
+                        SELECT channel_id, guild_id, channel_name, last_seen_timestamp
+                        FROM channels
+                        WHERE guild_id = ?
+                        ORDER BY channel_name ASC
+                    `
+                  )
+                  .all(guildId)
+            : MemoryDatabase.get()
+                  .prepare(
+                      `
+                        SELECT channel_id, guild_id, channel_name, last_seen_timestamp
+                        FROM channels
+                        ORDER BY channel_name ASC
+                    `
+                  )
+                  .all();
+
+        return (rows as Array<Record<string, unknown>>).map((row) => ({
+            channelId: String(row.channel_id),
+            guildId: row.guild_id ? String(row.guild_id) : null,
+            channelName: String(row.channel_name),
+            lastSeenTimestamp: Number(row.last_seen_timestamp),
+        }));
+    }
+
+    public static getChannelCrawlState(channelId?: string): ChannelCrawlState[] {
+        const rows = channelId
+            ? MemoryDatabase.get()
+                  .prepare(
+                      `
+                        SELECT *
+                        FROM channel_crawl_state
+                        WHERE channel_id = ?
+                    `
+                  )
+                  .all(channelId)
+            : MemoryDatabase.get()
+                  .prepare(
+                      `
+                        SELECT *
+                        FROM channel_crawl_state
+                    `
+                  )
+                  .all();
+
+        return (rows as Array<Record<string, unknown>>).map((row) => ({
+            channelId: String(row.channel_id),
+            lastCrawledTimestamp: row.last_crawled_timestamp
+                ? Number(row.last_crawled_timestamp)
+                : null,
+            oldestFetchedMessageId: row.oldest_fetched_message_id
+                ? String(row.oldest_fetched_message_id)
+                : null,
+            exhausted: Boolean(Number(row.exhausted ?? 0)),
         }));
     }
 

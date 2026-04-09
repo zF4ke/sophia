@@ -24,4 +24,12 @@ describe("RequestClassifier", () => {
         );
         expect(result.mode).toBe("discord_grounded");
     });
+
+    it("treats perguntas sobre este servidor as discord grounded heuristically", () => {
+        const result = RequestClassifier.classifyHeuristically(
+            "Pode me dizer que servidor é esse?"
+        );
+
+        expect(result.mode).toBe("discord_grounded");
+    });
 });

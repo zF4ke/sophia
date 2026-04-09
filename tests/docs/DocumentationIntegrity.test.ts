@@ -12,6 +12,7 @@ const importantDocs = [
     "docs/prompt-catalog.md",
     "docs/commands-and-admin.md",
     "docs/cleanup-migration.md",
+    "docs/ui.md",
 ];
 
 describe("documentation integrity", () => {

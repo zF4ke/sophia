@@ -6,7 +6,7 @@ import {
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { SecurityService } from "@/security/SecurityService";
 import { EMOJIS } from "@/discord/constants";
-import { buildMemoryStatusCard } from "@/discord/ui/cards/buildMemoryStatusCard";
+import { buildMemoryStatusContainer } from "@/discord/commands/shared/buildMemoryStatusContainer";
 
 export = {
     data: new SlashCommandBuilder()
@@ -35,22 +35,10 @@ export = {
         });
 
         const stats = DiscordMemoryService.getStats();
-        const allStates = DiscordMemoryService.getIndexState().sort(
-            (left, right) =>
-                (right.lastIndexedTimestamp ?? 0) - (left.lastIndexedTimestamp ?? 0)
-        );
-        const visibleStates = allStates.slice(0, 6);
-        const hiddenCount = Math.max(allStates.length - visibleStates.length, 0);
+        const states = DiscordMemoryService.getIndexState();
 
         await interaction.editReply({
-            components: [
-                buildMemoryStatusCard(
-                    interaction.client,
-                    stats,
-                    visibleStates,
-                    hiddenCount
-                ),
-            ],
+            components: [buildMemoryStatusContainer(stats, states)],
             flags: MessageFlags.IsComponentsV2,
         });
     },

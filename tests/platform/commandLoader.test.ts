@@ -21,6 +21,9 @@ describe("commandLoader", () => {
         expect(client.commands.has("ask")).toBe(true);
         expect(client.commands.has("find")).toBe(true);
         expect(client.commands.has("access")).toBe(true);
+        expect(client.commands.has("debug")).toBe(true);
+        expect(client.commands.has("nth")).toBe(true);
+        expect(client.commands.has("getmessage")).toBe(false);
         expect(client.commands.has("adminHandlers")).toBe(false);
         expect(setCommands).toHaveBeenCalledTimes(1);
         consoleSpy.mockRestore();

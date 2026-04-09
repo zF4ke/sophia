@@ -8,6 +8,7 @@ Evidence:
 
 Instructions:
 - Start with the answer.
-- Add a short evidence section only if it helps.
+- Use the evidence naturally in the answer when it helps.
+- Do not prepend headings like "Evidence:" or "Evidência:" unless the user asked for that format.
 - Stay concise.
 - If the evidence is insufficient, say so clearly.

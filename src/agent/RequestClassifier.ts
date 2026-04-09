@@ -4,6 +4,7 @@ import type { RequestClassification } from "@/shared/appTypes";
 
 const DISCORD_SIGNAL_WORDS = [
     "server",
+    "servidor",
     "discord",
     "channel",
     "canal",
@@ -14,6 +15,9 @@ const DISCORD_SIGNAL_WORDS = [
     "role",
     "cargo",
     "guild",
+    "esse servidor",
+    "este servidor",
+    "this server",
     "staff",
     "who said",
     "quem disse",
@@ -37,7 +41,13 @@ export class RequestClassifier {
                 { role: "system", content: "Return strict JSON only." },
                 { role: "user", content: prompt },
             ],
-            heuristic
+            heuristic,
+            {
+                traceContext: {
+                    traceLabel: "request_classification",
+                    questionPreview: question,
+                },
+            }
         );
 
         if (modelResult.mode === "direct_answer" || modelResult.mode === "discord_grounded") {

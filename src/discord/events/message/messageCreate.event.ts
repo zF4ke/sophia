@@ -1,4 +1,5 @@
 import { AgentOrchestrator } from "@/agent/AgentOrchestrator";
+import { DebugService } from "@/discord/debug/DebugService";
 import { SecurityService } from "@/security/SecurityService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { UIService } from "@/discord/ui/UIService";
@@ -44,6 +45,8 @@ export = {
 }
 
 async function talk(message: Message) {
+    let debugSession = null;
+
     try {
         if (message.author.bot) return;
 
@@ -59,20 +62,25 @@ async function talk(message: Message) {
         if (!permissions.has(PermissionFlagsBits.SendMessages)) return;
 
         const prompt = message.content.replace(/<@!?[0-9]+>/g, "").trim();
+        debugSession = await DebugService.startForMessage(message, prompt);
         const response = await AgentOrchestrator.answerQuestion({
             question: prompt,
             user: message.author,
             guild: message.guild,
             currentChannelId: channel.id,
+            debugSession,
         });
 
         await UIService.sendLongMessage(message, UIService.formatAnswer(response.answer, response.citations));
     } catch (error) {
         console.error(error);
+        await debugSession?.finishError(error);
     }
 }
 
 async function talkReference(message: Message, referencedMessage: Message) {
+    let debugSession = null;
+
     try {
         if (message.author.bot) return;
 
@@ -92,16 +100,22 @@ async function talkReference(message: Message, referencedMessage: Message) {
             ${referencedMessage.content.trim()}
             """ Use isso para responder à mensagem dele.
         `;
+        debugSession = await DebugService.startForMessage(
+            message,
+            message.content
+        );
 
         const response = await AgentOrchestrator.answerQuestion({
             question: `${message.content}\n\n${additionalContext}`,
             user: message.author,
             guild: message.guild,
             currentChannelId: channel.id,
+            debugSession,
         });
 
         await UIService.sendLongMessage(message, UIService.formatAnswer(response.answer, response.citations));
     } catch (error) {
         console.error(error);
+        await debugSession?.finishError(error);
     }
 }

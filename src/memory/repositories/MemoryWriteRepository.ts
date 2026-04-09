@@ -115,6 +115,7 @@ export class MemoryWriteRepository {
             DELETE FROM messages;
             DELETE FROM channels;
             DELETE FROM index_state;
+            DELETE FROM channel_crawl_state;
             DELETE FROM tool_runs;
         `);
     }
@@ -143,5 +144,44 @@ export class MemoryWriteRepository {
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
             `)
             .run(guildId, channelId, userId, question, toolName, summary, Date.now());
+    }
+
+    public static upsertDiscoveredChannel(
+        channelId: string,
+        guildId: string | null,
+        channelName: string,
+        timestamp = Date.now()
+    ): void {
+        MemoryDatabase.get()
+            .prepare(`
+                INSERT INTO channels (channel_id, guild_id, channel_name, last_seen_timestamp)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    guild_id = excluded.guild_id,
+                    channel_name = excluded.channel_name,
+                    last_seen_timestamp = MAX(channels.last_seen_timestamp, excluded.last_seen_timestamp)
+            `)
+            .run(channelId, guildId, channelName, timestamp);
+    }
+
+    public static updateChannelCrawlState(
+        channelId: string,
+        oldestFetchedMessageId: string | null,
+        exhausted: boolean
+    ): void {
+        MemoryDatabase.get()
+            .prepare(`
+                INSERT INTO channel_crawl_state (
+                    channel_id,
+                    last_crawled_timestamp,
+                    oldest_fetched_message_id,
+                    exhausted
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    last_crawled_timestamp = excluded.last_crawled_timestamp,
+                    oldest_fetched_message_id = excluded.oldest_fetched_message_id,
+                    exhausted = excluded.exhausted
+            `)
+            .run(channelId, Date.now(), oldestFetchedMessageId, exhausted ? 1 : 0);
     }
 }

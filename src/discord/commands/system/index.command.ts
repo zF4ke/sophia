@@ -2,15 +2,17 @@ import {
     CategoryChannel,
     ChannelType,
     ChatInputCommandInteraction,
+    ContainerBuilder,
     MessageFlags,
     SlashCommandBuilder,
+    TextDisplayBuilder,
     TextChannel,
     ThreadChannel,
 } from "discord.js";
+import { buildMemoryStatusContainer } from "@/discord/commands/shared/buildMemoryStatusContainer";
 import { DiscordBackfillService } from "@/discord/live/DiscordBackfillService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { SecurityService } from "@/security/SecurityService";
-import { UIService } from "@/discord/ui/UIService";
 import { EMOJIS } from "@/discord/constants";
 import type { BotClient } from "@/shared/appTypes";
 
@@ -84,31 +86,52 @@ export = {
             return;
         }
 
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        await interaction.deferReply();
         const subcommand = interaction.options.getSubcommand();
 
         if (subcommand === "status") {
             const stats = DiscordMemoryService.getStats();
-            const states = DiscordMemoryService.getIndexState().slice(0, 15);
-            const lines = states.length
-                ? states.map((state) => `• ${state.channelId}: <t:${Math.floor((state.lastIndexedTimestamp || 0) / 1000)}:R>`)
-                : ["• Nenhum canal indexado ainda."];
-
-            await interaction.editReply(
-                `Mensagens: **${stats.messages}**\nChunks: **${stats.chunks}**\nCanais: **${stats.channels}**\n\n${lines.join("\n")}`
-            );
+            const states = DiscordMemoryService.getIndexState();
+            await interaction.editReply({
+                components: [buildMemoryStatusContainer(stats, states, 10)],
+                flags: MessageFlags.IsComponentsV2,
+            });
             return;
         }
 
         if (subcommand === "clear") {
             DiscordMemoryService.clearAll();
-            await interaction.editReply("Memória local apagada.");
+            await interaction.editReply({
+                components: [
+                    new ContainerBuilder()
+                        .setAccentColor(0xed4245)
+                        .addTextDisplayComponents(
+                            new TextDisplayBuilder().setContent("## Memória local apagada"),
+                            new TextDisplayBuilder().setContent(
+                                "Todas as mensagens e blocos indexados foram removidos."
+                            )
+                        ),
+                ],
+                flags: MessageFlags.IsComponentsV2,
+            });
             return;
         }
 
         if (subcommand === "repair") {
             DiscordMemoryService.repairIndexes();
-            await interaction.editReply("Índices reparados.");
+            await interaction.editReply({
+                components: [
+                    new ContainerBuilder()
+                        .setAccentColor(0x57f287)
+                        .addTextDisplayComponents(
+                            new TextDisplayBuilder().setContent("## Índices reparados"),
+                            new TextDisplayBuilder().setContent(
+                                "Os índices locais foram reconstruídos e verificados."
+                            )
+                        ),
+                ],
+                flags: MessageFlags.IsComponentsV2,
+            });
             return;
         }
 

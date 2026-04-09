@@ -1,5 +1,7 @@
 import type { BotClient } from "@/shared/appTypes";
 import { Interaction, MessageFlags } from "discord.js";
+import { handleAccessPanelInteraction } from "@/discord/commands/system/access/panelInteractions";
+import { handleDebugPanelInteraction } from "@/discord/debug/debugPanelInteractions";
 import { SecurityService } from "@/security/SecurityService";
 
 export = {
@@ -11,6 +13,23 @@ export = {
                 await command.autocomplete(interaction, client);
             }
             return;
+        }
+
+        if (
+            interaction.isButton() ||
+            interaction.isStringSelectMenu() ||
+            interaction.isUserSelectMenu() ||
+            interaction.isModalSubmit()
+        ) {
+            if (interaction.isButton()) {
+                if (await handleDebugPanelInteraction(interaction)) {
+                    return;
+                }
+            }
+
+            if (await handleAccessPanelInteraction(interaction, client)) {
+                return;
+            }
         }
 
         if (interaction.isChatInputCommand()) {

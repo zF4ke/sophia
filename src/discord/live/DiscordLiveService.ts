@@ -5,6 +5,11 @@ import type {
     GuildMember,
     GuildTextBasedChannel,
 } from "discord.js";
+import type {
+    LiveMemberListResult,
+    MemberListSort,
+    MemberProfileResult,
+} from "@/shared/appTypes";
 
 export class DiscordLiveService {
     public static async getGuildContext(guild: Guild | null): Promise<{
@@ -28,12 +33,7 @@ export class DiscordLiveService {
     public static async getMemberProfile(
         guild: Guild | null,
         nameOrId: string
-    ): Promise<{
-        id: string;
-        username: string;
-        displayName: string;
-        roles: string[];
-    } | null> {
+    ): Promise<MemberProfileResult | null> {
         if (!guild) {
             return null;
         }
@@ -56,29 +56,53 @@ export class DiscordLiveService {
             return null;
         }
 
+        const fetchedUser = await member.user.fetch(true).catch(() => member.user);
+
         return {
             id: member.id,
             username: member.user.username,
             displayName: member.displayName,
+            globalName: fetchedUser.globalName ?? null,
+            nickname: member.nickname ?? null,
             roles: member.roles.cache
                 .filter((role) => role.name !== "@everyone")
                 .map((role) => role.name)
                 .slice(0, 10),
+            bannerUrl: fetchedUser.bannerURL() ?? member.displayBannerURL() ?? null,
+            accentColor: fetchedUser.hexAccentColor ?? null,
+            bio: null,
         };
     }
 
     public static async listMembers(
         guild: Guild | null,
-        filters?: string
-    ): Promise<Array<{ id: string; username: string; displayName: string }>> {
+        options: {
+            filters?: string;
+            limit?: number;
+            offset?: number;
+            sort?: MemberListSort;
+        } = {}
+    ): Promise<LiveMemberListResult> {
         if (!guild) {
-            return [];
+            return {
+                members: [],
+                totalCount: 0,
+                returnedCount: 0,
+                hasMore: false,
+                offset: 0,
+                limit: 0,
+                sort: "joined_at",
+                filters: options.filters?.trim() || null,
+            };
         }
 
         await guild.members.fetch();
-        const normalized = filters?.trim().toLowerCase();
+        const normalized = options.filters?.trim().toLowerCase();
+        const limit = Math.max(1, Math.min(250, options.limit ?? 100));
+        const offset = Math.max(0, options.offset ?? 0);
+        const sort = options.sort ?? "joined_at";
 
-        return guild.members.cache
+        const filteredMembers = guild.members.cache
             .filter((member) => {
                 if (!normalized) {
                     return true;
@@ -89,12 +113,38 @@ export class DiscordLiveService {
                     member.displayName.toLowerCase().includes(normalized)
                 );
             })
-            .first(12)
-            .map((member) => ({
-                id: member.id,
-                username: member.user.username,
-                displayName: member.displayName,
-            }));
+            .toJSON()
+            .sort((left, right) => {
+                if (sort === "joined_at") {
+                    const leftJoined = left.joinedTimestamp ?? Number.MAX_SAFE_INTEGER;
+                    const rightJoined = right.joinedTimestamp ?? Number.MAX_SAFE_INTEGER;
+                    if (leftJoined !== rightJoined) {
+                        return leftJoined - rightJoined;
+                    }
+                }
+
+                return left.id.localeCompare(right.id);
+            });
+
+        const members = filteredMembers.slice(offset, offset + limit).map((member) => ({
+            id: member.id,
+            username: member.user.username,
+            displayName: member.displayName,
+            joinedTimestamp: member.joinedTimestamp ?? null,
+            globalName: member.user.globalName ?? null,
+            nickname: member.nickname ?? null,
+        }));
+
+        return {
+            members,
+            totalCount: filteredMembers.length,
+            returnedCount: members.length,
+            hasMore: offset + members.length < filteredMembers.length,
+            offset,
+            limit,
+            sort,
+            filters: options.filters?.trim() || null,
+        };
     }
 
     public static listReadableGuildChannels(guild: Guild | null): Array<{

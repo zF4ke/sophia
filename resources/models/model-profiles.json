@@ -2,19 +2,11 @@
   "defaultProfile": "balanced",
   "profiles": {
     "balanced": {
-      "chatModel": "minimax/minimax-m2.5:free",
-      "analysisModel": "minimax/minimax-m2.5:free",
+      "chatModel": "minimax/minimax-m2.5",
+      "analysisModel": "minimax/minimax-m2.5",
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.2,
       "maxOutputTokens": 1200,
-      "webEnabled": false
-    },
-    "deep": {
-      "chatModel": "openai/gpt-5",
-      "analysisModel": "openai/gpt-5",
-      "embeddingModel": "openai/text-embedding-3-large",
-      "temperature": 0.15,
-      "maxOutputTokens": 1800,
       "webEnabled": false
     }
   }

@@ -91,6 +91,13 @@ export class MemoryDatabase {
                 last_indexed_timestamp INTEGER
             );
 
+            CREATE TABLE IF NOT EXISTS channel_crawl_state (
+                channel_id TEXT PRIMARY KEY,
+                last_crawled_timestamp INTEGER,
+                oldest_fetched_message_id TEXT,
+                exhausted INTEGER NOT NULL DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS tool_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 guild_id TEXT,

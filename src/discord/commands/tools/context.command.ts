@@ -4,6 +4,7 @@ import {
     SlashCommandBuilder,
 } from "discord.js";
 import { AgentOrchestrator } from "@/agent/AgentOrchestrator";
+import { DebugService } from "@/discord/debug/DebugService";
 import { SecurityService } from "@/security/SecurityService";
 import { UIService } from "@/discord/ui/UIService";
 import { EMOJIS } from "@/discord/constants";
@@ -28,6 +29,8 @@ export = {
                 .setRequired(false)
         ),
     async execute(interaction: ChatInputCommandInteraction, _client: BotClient) {
+        let debugSession = null;
+
         try {
             if (!SecurityService.isAdmin(interaction.user.id)) {
                 await interaction.reply({
@@ -42,22 +45,25 @@ export = {
             await interaction.deferReply({
                 flags: ephemeral ? MessageFlags.Ephemeral : undefined,
             });
+            debugSession = await DebugService.startForInteraction(interaction, prompt);
 
             const result = await AgentOrchestrator.answerQuestion({
                 question: prompt,
                 user: interaction.user,
                 guild: interaction.guild,
                 currentChannelId: interaction.channelId,
+                debugSession,
             });
 
             await UIService.sendLongResponse(
                 interaction,
-                UIService.formatStatusMessage(EMOJIS.complete, "Resposta contextual pronta"),
+                "",
                 UIService.formatAnswer(result.answer, result.citations),
                 ephemeral
             );
         } catch (error) {
             console.error("Error in context command:", error);
+            await debugSession?.finishError(error);
             await interaction.editReply(
                 UIService.formatStatusMessage(
                     EMOJIS.error,

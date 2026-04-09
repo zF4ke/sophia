@@ -22,4 +22,18 @@ export interface ChannelIndexState {
 export interface SearchMessageScope {
     guildId?: string | null;
     channelIds?: string[];
+    authorIds?: string[];
+}
+
+export interface ChannelIndexState {
+    channelId: string;
+    lastMessageId: string | null;
+    lastIndexedTimestamp: number | null;
+}
+
+export interface ChannelCrawlState {
+    channelId: string;
+    lastCrawledTimestamp: number | null;
+    oldestFetchedMessageId: string | null;
+    exhausted: boolean;
 }
