@@ -5,9 +5,8 @@ import {
 } from "discord.js";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { SecurityService } from "@/security/SecurityService";
-import { UIService } from "@/discord/ui/UIService";
 import { EMOJIS } from "@/discord/constants";
-import type { BotClient } from "@/shared/appTypes";
+import { buildMemoryStatusCard } from "@/discord/ui/cards/buildMemoryStatusCard";
 
 export = {
     data: new SlashCommandBuilder()
@@ -21,7 +20,7 @@ export = {
                 .setDescription("Somente você pode ver o resultado")
                 .setRequired(false)
         ),
-    async execute(interaction: ChatInputCommandInteraction, _client: BotClient) {
+    async execute(interaction: ChatInputCommandInteraction) {
         if (!SecurityService.isAdmin(interaction.user.id)) {
             await interaction.reply({
                 content: `${EMOJIS.error} Este comando está disponível apenas para administradores.`,
@@ -36,18 +35,23 @@ export = {
         });
 
         const stats = DiscordMemoryService.getStats();
-        const states = DiscordMemoryService.getIndexState().slice(0, 10);
-        const lines = states.length
-            ? states.map((state) => `• ${state.channelId}: ${state.lastMessageId || "sem cursor"}`)
-            : ["• Nenhum canal indexado."];
+        const allStates = DiscordMemoryService.getIndexState().sort(
+            (left, right) =>
+                (right.lastIndexedTimestamp ?? 0) - (left.lastIndexedTimestamp ?? 0)
+        );
+        const visibleStates = allStates.slice(0, 6);
+        const hiddenCount = Math.max(allStates.length - visibleStates.length, 0);
 
         await interaction.editReply({
-            content:
-                `${UIService.formatStatusMessage(EMOJIS.memory, "Estado da memória local", false)}\n\n` +
-                `Mensagens: **${stats.messages}**\n` +
-                `Chunks: **${stats.chunks}**\n` +
-                `Canais: **${stats.channels}**\n\n` +
-                lines.join("\n"),
+            components: [
+                buildMemoryStatusCard(
+                    interaction.client,
+                    stats,
+                    visibleStates,
+                    hiddenCount
+                ),
+            ],
+            flags: MessageFlags.IsComponentsV2,
         });
     },
 };
