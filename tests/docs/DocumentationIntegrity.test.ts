@@ -12,6 +12,7 @@ const importantDocs = [
     "docs/prompt-catalog.md",
     "docs/commands-and-admin.md",
     "docs/cleanup-migration.md",
+    "docs/testing.md",
     "docs/ui.md",
     "docs/feature-user-stories.md",
 ];

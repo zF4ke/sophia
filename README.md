@@ -109,6 +109,7 @@ Key docs:
 - `docs/cleanup-migration.md`
 - `docs/how-sophia-works.md`
 - `docs/feature-user-stories.md`
+- `docs/testing.md`
 - `docs/ui.md`
 
 ## Verification
@@ -116,4 +117,9 @@ Key docs:
 Run:
 ```bash
 npm run check
+```
+
+Optional live-model suite:
+```bash
+LIVE_MODEL_TESTS=1 OPENROUTER_API_KEY=... npm run test:live
 ```

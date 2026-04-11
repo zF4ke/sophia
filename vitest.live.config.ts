@@ -9,7 +9,8 @@ export default defineConfig({
     },
     test: {
         environment: "node",
-        include: ["tests/**/*.test.ts"],
-        exclude: ["tests/live/**/*.test.ts"],
+        include: ["tests/live/**/*.test.ts"],
+        testTimeout: 120000,
+        hookTimeout: 120000,
     },
 });

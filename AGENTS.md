@@ -12,6 +12,7 @@ This file is the engineering handoff for the current runtime.
 - `docs/prompt-catalog.md`
 - `docs/commands-and-admin.md`
 - `docs/cleanup-migration.md`
+- `docs/testing.md`
 - `docs/ui.md`
 - `docs/how-sophia-works.md`
 - `docs/feature-user-stories.md`
@@ -138,5 +139,7 @@ Command registry/loader:
 3. Update `AGENTS.md` and the relevant docs.
 4. Update or add tests.
 5. Run `npm run check`.
+
+Use `npm run test:live` for opt-in real-model verification when prompt or orchestration changes need behavior validation beyond deterministic mocks.
 
 Do not reintroduce giant inline prompts, fake web-search claims, refusal-first grounding, or uncontrolled tool loops.

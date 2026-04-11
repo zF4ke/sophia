@@ -8,7 +8,9 @@
     "start": "tsx ./src/index.ts",
     "check": "npm run typecheck && npm run test",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run -c vitest.config.ts",
+    "test:live": "vitest run -c vitest.live.config.ts",
+    "test:all": "npm run test && npm run test:live"
   },
   "keywords": [],
   "author": "",
