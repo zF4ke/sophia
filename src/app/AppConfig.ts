@@ -54,7 +54,7 @@ export function getAppConfig(): AppConfig {
                 process.env.RUNTIME_CHECKPOINT_DB_PATH ||
                 path.join(runtimeDir, "checkpoints.sqlite"),
             maxToolCalls: Number(process.env.RUNTIME_MAX_TOOL_CALLS || 6),
-            maxResearchPasses: Number(process.env.RUNTIME_MAX_RESEARCH_PASSES || 2),
+            maxResearchPasses: Number(process.env.RUNTIME_MAX_RESEARCH_PASSES || 4),
             maxRepeatedCallSignature: Number(
                 process.env.RUNTIME_MAX_REPEATED_CALL_SIGNATURE || 1
             ),

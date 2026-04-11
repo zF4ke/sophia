@@ -88,6 +88,7 @@ Current runtime capabilities and workflows:
 - Runtime loads the matched guild structure with `list_guild_structure`.
 - If the matched target is a category, Sophia expands it to visible child channels.
 - Runtime retrieves scoped message evidence from those resolved child channels with `retrieve_messages`.
+- If one of those child channels is not indexed locally yet, scoped retrieval should still run and automatically escalate to live Discord fetch for that channel, ingest the messages, and retry.
 - Sophia answers from the combination of structure plus scoped messages instead of claiming the category is empty or guessing from a partial alphabetic subset.
 
 ### `/find` with scoped search
@@ -112,3 +113,4 @@ Current runtime capabilities and workflows:
 - Tool composition should stay bounded by runtime budgets and repeated-call guards.
 - Category or channel existence alone is not enough to claim what a service does; Sophia should prefer scoped messages when those channels are readable.
 - Sophia should not say a category is empty unless the evidence explicitly shows zero visible child channels.
+- If a target channel is readable but not indexed, Sophia should still try scoped retrieval and let the retrieval layer do the cache miss -> live fetch -> ingest path automatically.

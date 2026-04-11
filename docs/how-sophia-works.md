@@ -23,6 +23,22 @@ She does not yet have autonomous long-term memory, a self-updating personality s
 8. She writes the final answer or asks a targeted follow-up.
 9. She persists runtime and trace data.
 
+### Runtime Diagram
+
+```mermaid
+flowchart TD
+    A[Discord trigger\n/talk mention reply] --> B[Normalize turn input]
+    B --> C[Resolve conversation key]
+    C --> D[Load checkpoint]
+    D --> E[Load runtime memory]
+    E --> F[plan_turn]
+    F -->|conversation| G[synthesize_answer]
+    F -->|research| H[run_research_loop]
+    H --> G
+    G --> I[persist_run]
+    I --> J[Answer back to Discord]
+```
+
 ## How Conversation Continuity Works
 
 Sophia tracks continuity in two layers.
@@ -99,6 +115,42 @@ The runtime then applies only narrow guardrails:
 - a small generic fallback plan if model output is invalid
 - short-lived resolved-target carry-over for the active conversation thread
 
+### Planning And Execution Diagram
+
+```mermaid
+flowchart TD
+    A[plan_turn\nmodel-led] --> B{mode}
+    B -->|conversation| C[synthesize_answer]
+    B -->|research| D[planNextStep]
+    D --> E[validate capability + arguments]
+    E --> F[execute capability]
+    F --> G[extract evidence]
+    G --> H[update active targets]
+    H --> I[judge_evidence]
+    I -->|enough| C
+    I -->|not enough| D
+```
+
+### What The Planner Actually Sees
+
+The planner is not wired separately for each user phrasing. The model gets one prompt with:
+- the question
+- the trigger type
+- reply context
+- recent turns in the same conversation
+- recent ambient channel messages
+- current active resolved targets
+- the capability registry
+- whether guild context exists
+
+It then returns one plan:
+- `mode`
+- `reason`
+- `goal`
+- `successCriteria`
+- `candidateCapabilities`
+- `confidence`
+
 ### `run_research_loop`
 
 If she needs Discord evidence, she runs a bounded loop with registry-driven capabilities.
@@ -116,6 +168,36 @@ For category/channel questions, the intended chain is:
 1. resolve the target category/channel
 2. inspect the matched guild structure
 3. retrieve scoped messages from the resolved child channels
+
+The runtime now defaults to enough research passes to complete that chain even when the channel is not indexed yet and `retrieve_messages` has to do a cache-first miss followed by live Discord escalation.
+
+### Category And Channel Questions
+
+```mermaid
+flowchart TD
+    A[User asks about category or channel] --> B[resolve_channel_targets]
+    B --> C[list_guild_structure]
+    C --> D{resolved target is category?}
+    D -->|yes| E[expand visible child message channels]
+    D -->|no channel| F[use exact channel id]
+    E --> G[retrieve_messages scoped to resolved ids]
+    F --> G
+    G --> H{cache enough?}
+    H -->|yes| I[answer from message evidence]
+    H -->|no| J[live Discord fetch and ingest]
+    J --> K[retry scoped retrieval]
+    K --> I
+```
+
+### Why Category Discovery And Retrieval Are Separate
+
+- `resolve_channel_targets` answers: what server object is the user talking about?
+- `list_guild_structure` answers: what is around that target and which child channels are visible?
+- `retrieve_messages` answers: what is actually being said there?
+
+That separation matters because a category name alone is not enough to explain what a service does. Sophia needs either:
+- message evidence from the resolved channels, or
+- a clearly-limited answer that says it is based only on server structure
 
 ### `judge_evidence`
 
@@ -139,6 +221,41 @@ She then turns the result into the final reply or a best-effort conversational f
 - carry short-lived resolved member/channel targets across follow-up turns in the same conversation
 - inspect category structure and then retrieve scoped messages from its visible child channels
 - run `/find` as a specialized retrieval workflow
+
+## Common Wiring Patterns
+
+### 1. Casual conversation
+
+```text
+mention/reply -> plan_turn(conversation) -> synthesize_answer
+```
+
+### 2. Exact identity question
+
+```text
+plan_turn(research) -> resolve_member_identity -> judge_evidence -> synthesize_answer
+```
+
+### 3. Category or channel explanation
+
+```text
+plan_turn(research)
+-> resolve_channel_targets
+-> list_guild_structure
+-> retrieve_messages(scoped channel ids)
+-> synthesize_answer
+```
+
+### 4. Unindexed channel search
+
+```text
+resolve target -> scoped retrieve_messages
+-> cache search miss
+-> automatic live Discord fetch
+-> ingest local cache
+-> retry scoped retrieval
+-> answer
+```
 
 ## Limitations
 

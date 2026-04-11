@@ -441,7 +441,7 @@ describe("runtime user stories", () => {
         ]);
     });
 
-    it("inspects a matched category and then retrieves scoped messages before describing available services", async () => {
+    it("inspects a matched category and then retrieves scoped messages before describing available services, even when one target channel is not indexed", async () => {
         let selectCall = 0;
 
         vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
@@ -560,7 +560,7 @@ describe("runtime user stories", () => {
                 parentCategoryName: "Serviços",
                 isReadable: true,
                 isViewable: true,
-                isIndexed: true,
+                isIndexed: false,
                 source: "live",
                 missingOrDeletedPossible: false,
             },
@@ -599,15 +599,15 @@ describe("runtime user stories", () => {
                     totalScore: 4,
                 },
             ],
-            cacheHit: true,
-            liveEscalated: false,
+            cacheHit: false,
+            liveEscalated: true,
             searchedChannelIds: ["c-bot-commands", "c-automation"],
-            fetchedChannelIds: [],
-            cacheEnriched: false,
+            fetchedChannelIds: ["c-automation"],
+            cacheEnriched: true,
             evidenceSufficient: true,
             strongResultCount: 2,
             weakResultCount: 0,
-            sourceOrigin: "cache",
+            sourceOrigin: "live_refresh",
             targetAuthorId: null,
             targetChannelIds: ["c-bot-commands", "c-automation"],
         });
@@ -629,6 +629,13 @@ describe("runtime user stories", () => {
         expect(UnifiedMessageRetrieval.retrieve).toHaveBeenCalledWith(
             expect.objectContaining({
                 channelIds: ["c-bot-commands", "c-automation"],
+            })
+        );
+        expect(result.toolRuns.find((run) => run.tool === "retrieve_messages")?.data).toEqual(
+            expect.objectContaining({
+                liveEscalated: true,
+                fetchedChannelIds: ["c-automation"],
+                cacheEnriched: true,
             })
         );
     });
