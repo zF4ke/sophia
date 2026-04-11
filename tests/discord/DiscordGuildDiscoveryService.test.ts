@@ -114,4 +114,44 @@ describe("DiscordGuildDiscoveryService", () => {
             resolvedIds: ["c-live"],
         });
     });
+
+    it("prefers the exact matching category without dragging in unrelated short channel names", async () => {
+        vi.spyOn(DiscordMemoryService, "getKnownChannelsAsync").mockResolvedValue([]);
+        vi.spyOn(DiscordMemoryService, "getIndexStateAsync").mockResolvedValue([]);
+        vi.spyOn(DiscordMemoryService, "upsertDiscoveredChannel").mockResolvedValue(undefined);
+
+        const services = createCategory("cat-services", "Serviços");
+        const alpha = createCategory("cat-alpha", "Alfabeto");
+        const traveller = createTextChannel("c-traveller", "traveller", services);
+        const atlas = createTextChannel("c-atlas", "atlas", services);
+        const shortC = createTextChannel("c-short-c", "c", alpha);
+        const shortE = createTextChannel("c-short-e", "e", alpha);
+        const guild = {
+            id: "g1",
+            channels: {
+                fetch: vi.fn().mockResolvedValue(undefined),
+                cache: new Collection([
+                    ["cat-services", services],
+                    ["cat-alpha", alpha],
+                    ["c-traveller", traveller],
+                    ["c-atlas", atlas],
+                    ["c-short-c", shortC],
+                    ["c-short-e", shortE],
+                ]),
+            },
+        } as any;
+
+        const target = await DiscordGuildDiscoveryService.resolveChannelTargets(
+            guild,
+            "me mande a descrição de todos os serviços do servidor na categoria de serviços"
+        );
+
+        expect(target.entries).toEqual([
+            expect.objectContaining({
+                id: "cat-services",
+                name: "Serviços",
+            }),
+        ]);
+        expect(target.resolvedIds).toEqual(expect.arrayContaining(["c-traveller", "c-atlas"]));
+    });
 });

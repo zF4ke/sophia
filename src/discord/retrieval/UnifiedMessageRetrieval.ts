@@ -10,6 +10,32 @@ import type { RetrievalSourceOrigin } from "@/runtime/contracts";
 const MAX_CHANNEL_ESCALATIONS = 2;
 const ESCALATION_FETCH_LIMIT = Math.min(150, INTERACTIVE_CRAWL_LIMIT);
 
+function buildScopedPreviewResults(
+    crawls: Awaited<ReturnType<typeof DiscordChannelCrawlService.crawlChannelMessages>>[],
+    guildId: string | null,
+    limit: number
+): RetrievedChunk[] {
+    return crawls
+        .flatMap((crawl) =>
+            (crawl.previewMessages || []).map<RetrievedChunk>((message) => ({
+                messageId: message.messageId,
+                channelId: crawl.channelId,
+                channelName: crawl.channelName,
+                guildId,
+                authorId: message.authorId,
+                authorName: message.authorName,
+                content: message.content,
+                createdTimestamp: message.createdTimestamp,
+                jumpLink: message.jumpLink,
+                lexicalScore: 2,
+                semanticScore: 0,
+                recencyScore: 0,
+                totalScore: 2,
+            }))
+        )
+        .slice(0, limit);
+}
+
 function getResultStrength(result: RetrievedChunk): "strong" | "weak" {
     if (result.lexicalScore >= 2) {
         return "strong";
@@ -77,15 +103,29 @@ export class UnifiedMessageRetrieval {
         const fetchedChannelIds: string[] = [];
         let cacheEnriched = false;
         let sourceOrigin: RetrievalSourceOrigin = results.length ? "cache" : "none";
+        const crawlResults: Awaited<ReturnType<typeof DiscordChannelCrawlService.crawlChannelMessages>>[] = [];
 
         if (!hasSufficientLocalHits(results) && options.guild) {
-            const rankedChannels = await DiscordChannelCrawlService.rankCandidateChannels(
-                options.guild,
-                options.question,
-                options.currentChannelId
-            );
+            const rankedChannels = options.channelIds?.length
+                ? options.channelIds.map((channelId) => ({
+                      channelId,
+                      channelName: channelId,
+                      guildId: options.guild?.id || null,
+                      isIndexed: false,
+                      matchSource: "live_name" as const,
+                      lastIndexedTimestamp: null,
+                  }))
+                : await DiscordChannelCrawlService.rankCandidateChannels(
+                      options.guild,
+                      options.question,
+                      options.currentChannelId
+                  );
 
-            for (const channel of rankedChannels.slice(0, MAX_CHANNEL_ESCALATIONS)) {
+            const escalationTargets = options.channelIds?.length
+                ? rankedChannels
+                : rankedChannels.slice(0, MAX_CHANNEL_ESCALATIONS);
+
+            for (const channel of escalationTargets) {
                 if (!searchedChannelIds.includes(channel.channelId)) {
                     searchedChannelIds.push(channel.channelId);
                 }
@@ -97,6 +137,7 @@ export class UnifiedMessageRetrieval {
                     options.question,
                     options.onProgress
                 );
+                crawlResults.push(crawl);
 
                 if (crawl.messagesFetched > 0) {
                     fetchedChannelIds.push(channel.channelId);
@@ -111,6 +152,9 @@ export class UnifiedMessageRetrieval {
                     scope,
                     limit
                 );
+                if (!results.length && options.channelIds?.length) {
+                    results = buildScopedPreviewResults(crawlResults, options.guild?.id || null, limit);
+                }
                 sourceOrigin = results.length ? "cache_after_refresh" : "live_refresh";
             }
         }

@@ -16,6 +16,13 @@ function normalizeLookupValue(value: string): string {
         .trim();
 }
 
+function tokenizeLookupValue(value: string): string[] {
+    return normalizeLookupValue(value)
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 2);
+}
+
 function isCategoryEntry(entry: GuildStructureEntry): boolean {
     return entry.type === String(ChannelType.GuildCategory) || entry.type.toLowerCase().includes("category");
 }
@@ -158,6 +165,7 @@ export class DiscordGuildDiscoveryService {
         }
 
         const normalizedTarget = normalizeLookupValue(query);
+        const targetTokens = tokenizeLookupValue(query);
         const scored = entries
             .map((entry) => {
                 const normalizedName = normalizeLookupValue(entry.name);
@@ -165,15 +173,29 @@ export class DiscordGuildDiscoveryService {
                 let score = 0;
 
                 if (normalizedName === normalizedTarget) {
-                    score += 8;
+                    score += 20;
                 }
-                if (normalizedName.includes(normalizedTarget)) {
-                    score += 5;
+                if (targetTokens.includes(normalizedName)) {
+                    score += 12;
                 }
-                if (normalizedTarget.includes(normalizedName) && normalizedName) {
-                    score += 3;
+                if (normalizedTarget.length >= 4 && normalizedName.includes(normalizedTarget)) {
+                    score += 6;
                 }
-                if (normalizedParent && normalizedParent.includes(normalizedTarget)) {
+                if (
+                    normalizedName.length >= 4 &&
+                    normalizedTarget.length >= normalizedName.length + 2 &&
+                    normalizedTarget.includes(normalizedName)
+                ) {
+                    score += 2;
+                }
+                if (normalizedParent && targetTokens.includes(normalizedParent)) {
+                    score += 4;
+                }
+                if (
+                    normalizedParent &&
+                    normalizedTarget.length >= 4 &&
+                    normalizedParent.includes(normalizedTarget)
+                ) {
                     score += 2;
                 }
                 if (currentChannelId && entry.id === currentChannelId) {
@@ -185,7 +207,11 @@ export class DiscordGuildDiscoveryService {
             .filter((item) => item.score > 0)
             .sort((left, right) => right.score - left.score || left.entry.name.localeCompare(right.entry.name));
 
-        const selectedEntries = scored.slice(0, 3).map((item) => item.entry);
+        const bestScore = scored[0]?.score || 0;
+        const selectedEntries = scored
+            .filter((item) => item.score >= Math.max(bestScore - 2, 4))
+            .slice(0, 3)
+            .map((item) => item.entry);
         return {
             query,
             resolvedIds: this.expandToMessageChannelIds(selectedEntries, entries),
