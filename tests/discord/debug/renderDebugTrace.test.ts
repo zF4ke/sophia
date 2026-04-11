@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { renderDebugTrace } from "@/discord/debug/renderDebugTrace";
 
+function collectDisplayTextLength(value: unknown): number {
+    if (Array.isArray(value)) {
+        return value.reduce((total, item) => total + collectDisplayTextLength(item), 0);
+    }
+    if (!value || typeof value !== "object") {
+        return 0;
+    }
+
+    return Object.entries(value as Record<string, unknown>).reduce((total, [key, entry]) => {
+        if (key === "content" && typeof entry === "string") {
+            return total + entry.length;
+        }
+        return total + collectDisplayTextLength(entry);
+    }, 0);
+}
+
 describe("renderDebugTrace", () => {
     it("renders rich request, conversation, retrieval, and timeline sections", () => {
         const json = renderDebugTrace({
@@ -30,11 +46,19 @@ describe("renderDebugTrace", () => {
                 weakResultCount: 1,
                 historyMessageCount: 3,
                 semanticMatchCount: 1,
+                accumulatedUniqueCount: 4,
                 sourceOrigin: "cache",
                 continuationAvailable: true,
+                historyContinuationAvailable: true,
+                historyCursorByChannel: { c1: "101", c2: "202" },
+                semanticContinuationAvailable: false,
+                semanticCursor: null,
                 exhaustedChannelIds: [],
+                historyExhausted: false,
+                semanticExhausted: true,
                 beforeTimestamp: null,
                 afterTimestamp: null,
+                activeChannelIds: ["c1", "c2"],
             },
             groundedAnswerMode: "best_effort",
             stopReason: "evidence_sufficient",
@@ -89,6 +113,7 @@ describe("renderDebugTrace", () => {
         expect(rendered).toContain("retrieve_messages, get_member_profile");
         expect(rendered).toContain("Retrieval Origin");
         expect(rendered).toContain("Stop Reason");
+        expect(rendered).toContain("History Cursor");
         expect(rendered).toContain("Web");
         expect(rendered).toContain("Channels Searched");
         expect(rendered).toContain("<#c1>");
@@ -291,11 +316,19 @@ describe("renderDebugTrace", () => {
                 weakResultCount: 0,
                 historyMessageCount: 2,
                 semanticMatchCount: 0,
+                accumulatedUniqueCount: 2,
                 sourceOrigin: "live_refresh",
                 continuationAvailable: false,
+                historyContinuationAvailable: false,
+                historyCursorByChannel: { c1: "101" },
+                semanticContinuationAvailable: false,
+                semanticCursor: null,
                 exhaustedChannelIds: ["c1"],
+                historyExhausted: false,
+                semanticExhausted: true,
                 beforeTimestamp: null,
                 afterTimestamp: null,
+                activeChannelIds: ["c1", "c2", "c3", "c4", "c5", "c6", "c7"],
             },
             groundedAnswerMode: "best_effort",
             stopReason: "budget_exhausted",
@@ -336,5 +369,101 @@ describe("renderDebugTrace", () => {
         expect(rendered).toContain("Reached the latency budget.");
         expect(rendered).not.toContain("Sophia Debug · Timeline");
         expect(rendered).toContain("+1 more");
+    });
+
+    it("keeps long-session debug rendering under Discord display text limits", () => {
+        const json = renderDebugTrace({
+            questionPreview: "q".repeat(300),
+            status: "completed",
+            stage: "Completed",
+            requesterLabel: "F4zke",
+            trigger: "reply",
+            classificationMode: "discord_grounded",
+            runtimeMode: "research",
+            selectedCapabilities: [
+                "resolve_channel_targets",
+                "list_guild_structure",
+                "retrieve_messages",
+            ],
+            toolCallCount: 3,
+            groundingSummary: {
+                messageEvidenceCount: 12,
+                liveEvidenceCount: 6,
+                sufficient: false,
+            },
+            retrievalSummary: {
+                mode: "mixed",
+                cacheHit: true,
+                liveEscalated: true,
+                searchedChannelIds: Array.from({ length: 20 }, (_, index) => `c${index + 1}`),
+                fetchedChannelIds: Array.from({ length: 12 }, (_, index) => `f${index + 1}`),
+                cacheEnriched: true,
+                evidenceSufficient: false,
+                strongResultCount: 8,
+                weakResultCount: 5,
+                historyMessageCount: 10,
+                semanticMatchCount: 7,
+                accumulatedUniqueCount: 40,
+                sourceOrigin: "cache_after_refresh",
+                continuationAvailable: true,
+                historyContinuationAvailable: true,
+                historyCursorByChannel: Object.fromEntries(
+                    Array.from({ length: 10 }, (_, index) => [`c${index + 1}`, `${100 + index}`])
+                ),
+                semanticContinuationAvailable: true,
+                semanticCursor: {
+                    lastScore: 1.4,
+                    lastCreatedTimestamp: 1_700_000_000_000,
+                    lastMessageId: "999",
+                },
+                exhaustedChannelIds: Array.from({ length: 8 }, (_, index) => `x${index + 1}`),
+                historyExhausted: false,
+                semanticExhausted: false,
+                beforeTimestamp: 1_700_000_000_000,
+                afterTimestamp: 1_699_000_000_000,
+                activeChannelIds: Array.from({ length: 12 }, (_, index) => `a${index + 1}`),
+            },
+            groundedAnswerMode: "best_effort",
+            stopReason: "budget_exhausted",
+            stopDetail: "Reached the latency budget while continuation was still available.",
+            checkpointThreadId: "g1:c1:channel",
+            conversationContext: {
+                threadId: "g1:c1:channel",
+                kind: "reply_chain",
+                replyAnchorMessageId: "m1",
+                replyContext: {
+                    messageId: "m1",
+                    authorId: "u1",
+                    authorName: "alice",
+                    authorDisplayName: "Alice",
+                    content: "x".repeat(600),
+                    jumpLink: null,
+                },
+            },
+            webStatus: "enabled",
+            contextPreview: {
+                recentChannelMessages: Array.from({ length: 10 }, (_, index) => `msg ${index} ${"x".repeat(140)}`),
+                evidencePreview: Array.from({ length: 10 }, (_, index) => `[retrieve_messages] #c${index} · user: ${"x".repeat(140)}`),
+                recentTurns: Array.from({ length: 5 }, (_, index) => `Q${index}: ${"x".repeat(200)}`),
+            },
+            recentEvents: [],
+            timeline: Array.from({ length: 30 }, (_, index) => ({
+                label: `step-${index}`,
+                detail: `detail ${index} ${"x".repeat(200)}`,
+                tone: "info" as const,
+                timestamp: Date.now() - index * 1000,
+            })),
+            collapsedSections: {
+                request: false,
+                conversation: false,
+                retrieval: false,
+                context: false,
+                timeline: false,
+            },
+            startedAt: Date.now() - 10_000,
+            failureMessage: null,
+        }).map((container) => container.toJSON());
+
+        expect(collectDisplayTextLength(json)).toBeLessThanOrEqual(4000);
     });
 });

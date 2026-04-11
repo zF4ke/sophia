@@ -48,3 +48,15 @@ Recent channel messages (ambient context):
 
 Evidence:
 {{evidence}}
+
+Stop reason:
+{{stop_reason}}
+
+Stop detail:
+{{stop_detail}}
+
+Continuation available:
+{{continuation_available}}
+
+Active retrieval session:
+{{active_retrieval_session}}

@@ -5,7 +5,7 @@ import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DISCORD_TOOL_EVIDENCE_ROLES, type DiscordToolName } from "@/shared/discordTools";
 import type { DiscordToolResult, RetrievalMode } from "@/shared/appTypes";
-import type { CapabilityManifest } from "@/runtime/contracts";
+import type { CapabilityManifest, ToolArguments } from "@/runtime/contracts";
 
 type CapabilityContext = {
     guild: Guild | null;
@@ -17,7 +17,7 @@ type CapabilityContext = {
 type RuntimeCapability = CapabilityManifest & {
     run(
         context: CapabilityContext,
-        args: Record<string, string | number | undefined>
+        args: ToolArguments
     ): Promise<DiscordToolResult>;
 };
 
@@ -38,6 +38,11 @@ const chunkResultSchema = z.object({
 });
 
 const retrievalModeSchema = z.enum(["history", "semantic", "mixed"]);
+const semanticCursorSchema = z.object({
+    lastScore: z.number(),
+    lastCreatedTimestamp: z.number(),
+    lastMessageId: z.string(),
+});
 
 const capabilities: RuntimeCapability[] = [
     {
@@ -48,13 +53,18 @@ const capabilities: RuntimeCapability[] = [
         inputSchema: z.object({
             query: z.string(),
             limit: z.number().int().positive().optional(),
-            channelIds: z.string().optional(),
+            channelIds: z.array(z.string()).optional(),
             authorId: z.string().optional(),
             beforeTimestamp: z.number().optional(),
             afterTimestamp: z.number().optional(),
             mode: retrievalModeSchema.optional(),
-            cursor: z.string().optional(),
-            excludedMessageIds: z.string().optional(),
+            cursor: z
+                .object({
+                    history: z.record(z.string(), z.string().nullable()).optional(),
+                    semantic: semanticCursorSchema.nullable().optional(),
+                })
+                .optional(),
+            excludedMessageIds: z.array(z.string()).optional(),
         }),
         outputSchema: z.object({
             query: z.string(),
@@ -76,10 +86,21 @@ const capabilities: RuntimeCapability[] = [
             semanticMatches: z.array(chunkResultSchema),
             combinedResults: z.array(chunkResultSchema),
             continuation: z.object({
+                history: z.object({
+                    perChannelOldestMessageId: z.record(z.string(), z.string().nullable()),
+                    continuationAvailable: z.boolean(),
+                }),
+                semantic: z.object({
+                    cursor: semanticCursorSchema.nullable(),
+                    continuationAvailable: z.boolean(),
+                }),
                 perChannelOldestMessageId: z.record(z.string(), z.string().nullable()),
                 continuationAvailable: z.boolean(),
             }),
             exhaustion: z.object({
+                historyExhaustedChannelIds: z.array(z.string()),
+                historyExhausted: z.boolean(),
+                semanticExhausted: z.boolean(),
                 exhaustedChannelIds: z.array(z.string()),
                 exhausted: z.boolean(),
             }),
@@ -87,6 +108,7 @@ const capabilities: RuntimeCapability[] = [
                 beforeTimestamp: z.number().nullable(),
                 afterTimestamp: z.number().nullable(),
             }),
+            accumulatedUniqueCount: z.number(),
             beforeTimestamp: z.number().nullable(),
             afterTimestamp: z.number().nullable(),
             excludedMessageIds: z.array(z.string()),
@@ -99,11 +121,10 @@ const capabilities: RuntimeCapability[] = [
         preconditions: ["guild context should exist for live escalation"],
         postconditions: ["returns message evidence from the local cache after any needed live fetch"],
         async run(context, args) {
-            const query = String(args.query || context.question);
-            const channelIds =
-                typeof args.channelIds === "string" && args.channelIds.trim()
-                    ? args.channelIds.split(",").map((value) => value.trim()).filter(Boolean)
-                    : undefined;
+            const query = typeof args.query === "string" ? args.query : context.question;
+            const channelIds = Array.isArray(args.channelIds)
+                ? args.channelIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+                : undefined;
             const authorId =
                 typeof args.authorId === "string" && args.authorId.trim()
                     ? args.authorId.trim()
@@ -114,13 +135,38 @@ const capabilities: RuntimeCapability[] = [
                     ? (args.mode as RetrievalMode)
                     : undefined;
             const cursor =
-                typeof args.cursor === "string" && args.cursor.trim()
-                    ? JSON.parse(args.cursor)
+                args.cursor && typeof args.cursor === "object" && !Array.isArray(args.cursor)
+                    ? {
+                          history:
+                              args.cursor.history &&
+                              typeof args.cursor.history === "object" &&
+                              !Array.isArray(args.cursor.history)
+                                  ? Object.fromEntries(
+                                        Object.entries(args.cursor.history)
+                                            .filter(([, value]) => value == null || typeof value === "string")
+                                            .map(([key, value]) => [key, value == null ? null : String(value)])
+                                    )
+                                  : undefined,
+                          semantic:
+                              args.cursor.semantic &&
+                              typeof args.cursor.semantic === "object" &&
+                              !Array.isArray(args.cursor.semantic) &&
+                              typeof args.cursor.semantic.lastScore === "number" &&
+                              typeof args.cursor.semantic.lastCreatedTimestamp === "number" &&
+                              typeof args.cursor.semantic.lastMessageId === "string"
+                                  ? {
+                                        lastScore: args.cursor.semantic.lastScore,
+                                        lastCreatedTimestamp: args.cursor.semantic.lastCreatedTimestamp,
+                                        lastMessageId: args.cursor.semantic.lastMessageId,
+                                    }
+                                  : undefined,
+                      }
                     : undefined;
-            const excludedMessageIds =
-                typeof args.excludedMessageIds === "string" && args.excludedMessageIds.trim()
-                    ? JSON.parse(args.excludedMessageIds)
-                    : undefined;
+            const excludedMessageIds = Array.isArray(args.excludedMessageIds)
+                ? args.excludedMessageIds.filter(
+                      (value): value is string => typeof value === "string" && value.trim().length > 0
+                  )
+                : undefined;
 
             const result = await UnifiedMessageRetrieval.retrieve({
                 guild: context.guild,

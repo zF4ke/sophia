@@ -319,10 +319,21 @@ describe("runtime user stories", () => {
             targetAuthorId: "u-one",
             targetChannelIds: ["c-reflexoes"],
             continuation: {
+                history: {
+                    perChannelOldestMessageId: { "c-reflexoes": "m1" },
+                    continuationAvailable: true,
+                },
+                semantic: {
+                    cursor: null,
+                    continuationAvailable: false,
+                },
                 perChannelOldestMessageId: { "c-reflexoes": "m1" },
                 continuationAvailable: true,
             },
             exhaustion: {
+                historyExhaustedChannelIds: [],
+                historyExhausted: false,
+                semanticExhausted: true,
                 exhaustedChannelIds: [],
                 exhausted: false,
             },
@@ -330,6 +341,7 @@ describe("runtime user stories", () => {
                 beforeTimestamp: null,
                 afterTimestamp: null,
             },
+            accumulatedUniqueCount: 1,
             beforeTimestamp: null,
             afterTimestamp: null,
             excludedMessageIds: [],
@@ -683,6 +695,17 @@ describe("runtime user stories", () => {
             targetAuthorId: null,
             targetChannelIds: ["c-bot-commands", "c-automation"],
             continuation: {
+                history: {
+                    perChannelOldestMessageId: {
+                        "c-bot-commands": "m1",
+                        "c-automation": "m2",
+                    },
+                    continuationAvailable: true,
+                },
+                semantic: {
+                    cursor: null,
+                    continuationAvailable: false,
+                },
                 perChannelOldestMessageId: {
                     "c-bot-commands": "m1",
                     "c-automation": "m2",
@@ -690,6 +713,9 @@ describe("runtime user stories", () => {
                 continuationAvailable: true,
             },
             exhaustion: {
+                historyExhaustedChannelIds: [],
+                historyExhausted: false,
+                semanticExhausted: true,
                 exhaustedChannelIds: [],
                 exhausted: false,
             },
@@ -697,6 +723,7 @@ describe("runtime user stories", () => {
                 beforeTimestamp: null,
                 afterTimestamp: null,
             },
+            accumulatedUniqueCount: 2,
             beforeTimestamp: null,
             afterTimestamp: null,
             excludedMessageIds: [],
@@ -729,4 +756,5 @@ describe("runtime user stories", () => {
             })
         );
     });
+
 });

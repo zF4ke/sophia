@@ -15,6 +15,7 @@ const RETRIEVAL_SECTION_BUDGET = 900;
 const CONTEXT_SECTION_BUDGET = 700;
 const TIMELINE_SECTION_BUDGET = 1500;
 const FAILURE_SECTION_BUDGET = 240;
+const TOTAL_DISPLAY_TEXT_BUDGET = 3600;
 const TRACE_TOGGLE_PREFIX = "debug:trace:toggle:";
 const TRACE_EXPAND_ALL_ID = "debug:trace:expand_all";
 const TRACE_COLLAPSE_ALL_ID = "debug:trace:collapse_all";
@@ -45,6 +46,23 @@ function formatChannelList(channelIds: string[]): string {
     return hiddenCount > 0
         ? `${visible.join(", ")}, +${hiddenCount} more`
         : visible.join(", ");
+}
+
+function formatCursorMap(cursorByChannel: Record<string, string | null> | undefined): string {
+    if (!cursorByChannel) {
+        return "none";
+    }
+
+    const entries = Object.entries(cursorByChannel);
+    if (!entries.length) {
+        return "none";
+    }
+
+    const visible = entries.slice(0, 4).map(
+        ([channelId, messageId]) => `<#${channelId}> -> ${messageId || "none"}`
+    );
+    const hiddenCount = Math.max(0, entries.length - visible.length);
+    return hiddenCount > 0 ? `${visible.join(", ")}, +${hiddenCount} more` : visible.join(", ");
 }
 
 function trimPreview(text: string | null | undefined, maxLength = 220): string {
@@ -242,18 +260,48 @@ export function renderDebugTrace(
             retrieval ? `${retrieval.historyMessageCount} / ${retrieval.semanticMatchCount}` : "0 / 0"
         ),
         formatLabelValue(
+            "Accumulated Unique",
+            retrieval ? `${retrieval.accumulatedUniqueCount}` : "0"
+        ),
+        formatLabelValue(
             "Time Scope",
             retrieval
                 ? `after=${retrieval.afterTimestamp ?? "none"} before=${retrieval.beforeTimestamp ?? "none"}`
                 : "none"
         ),
         formatLabelValue(
+            "Active Channels",
+            retrieval ? formatChannelList(retrieval.activeChannelIds) : "none"
+        ),
+        formatLabelValue(
             "Continuation Available",
             retrieval ? (retrieval.continuationAvailable ? "yes" : "no") : "n/a"
         ),
         formatLabelValue(
+            "History / Semantic Continuation",
+            retrieval
+                ? `${retrieval.historyContinuationAvailable ? "yes" : "no"} / ${retrieval.semanticContinuationAvailable ? "yes" : "no"}`
+                : "n/a"
+        ),
+        formatLabelValue(
+            "History Cursor",
+            retrieval ? formatCursorMap(retrieval.historyCursorByChannel) : "none"
+        ),
+        formatLabelValue(
+            "Semantic Cursor",
+            retrieval?.semanticCursor
+                ? `score=${retrieval.semanticCursor.lastScore} ts=${retrieval.semanticCursor.lastCreatedTimestamp} id=${retrieval.semanticCursor.lastMessageId}`
+                : "none"
+        ),
+        formatLabelValue(
             "Exhausted Channels",
             retrieval ? formatChannelList(retrieval.exhaustedChannelIds) : "none"
+        ),
+        formatLabelValue(
+            "History / Semantic Exhausted",
+            retrieval
+                ? `${retrieval.historyExhausted ? "yes" : "no"} / ${retrieval.semanticExhausted ? "yes" : "no"}`
+                : "n/a"
         ),
         formatLabelValue(
             "Channels Searched",
@@ -270,6 +318,22 @@ export function renderDebugTrace(
     const containers: Array<ContainerBuilder | ActionRowBuilder<ButtonBuilder>> = [
         ...buildToggleRows(state),
     ];
+    let remainingDisplayBudget = TOTAL_DISPLAY_TEXT_BUDGET;
+
+    const pushBudgetedSection = (
+        title: string,
+        lines: string[],
+        budget: number,
+        color = accentColor
+    ) => {
+        if (remainingDisplayBudget <= 0) {
+            return;
+        }
+
+        const sectionBudget = Math.max(120, Math.min(budget, remainingDisplayBudget));
+        containers.push(buildSection(title, lines, color, sectionBudget));
+        remainingDisplayBudget = Math.max(0, remainingDisplayBudget - sectionBudget);
+    };
 
     overviewLines.splice(4, 0, formatLabelValue("Stop Condition", state.stopReason ?? "pending"));
     overviewLines.splice(
@@ -279,18 +343,20 @@ export function renderDebugTrace(
     );
 
     if (!state.collapsedSections.request) {
-        containers.push(
-            buildSection("## Sophia Debug · Request", overviewLines, accentColor, REQUEST_SECTION_BUDGET)
-        );
+        pushBudgetedSection("## Sophia Debug · Request", overviewLines, REQUEST_SECTION_BUDGET);
     }
     if (!state.collapsedSections.conversation) {
-        containers.push(
-            buildSection("## Sophia Debug · Conversation", conversationLines, accentColor, CONVERSATION_SECTION_BUDGET)
+        pushBudgetedSection(
+            "## Sophia Debug · Conversation",
+            conversationLines,
+            CONVERSATION_SECTION_BUDGET
         );
     }
     if (!state.collapsedSections.retrieval) {
-        containers.push(
-            buildSection("## Sophia Debug · Retrieval", retrievalLines, accentColor, RETRIEVAL_SECTION_BUDGET)
+        pushBudgetedSection(
+            "## Sophia Debug · Retrieval",
+            retrievalLines,
+            RETRIEVAL_SECTION_BUDGET
         );
     }
 
@@ -321,26 +387,20 @@ export function renderDebugTrace(
             );
         }
         if (contextLines.length && !state.collapsedSections.context) {
-            containers.push(
-                buildSection("## Sophia Debug · Context", contextLines, accentColor, CONTEXT_SECTION_BUDGET)
-            );
+            pushBudgetedSection("## Sophia Debug · Context", contextLines, CONTEXT_SECTION_BUDGET);
         }
     }
 
     if (!state.collapsedSections.timeline) {
-        containers.push(
-            buildSection("## Sophia Debug · Timeline", timelineEntries, accentColor, TIMELINE_SECTION_BUDGET),
-        );
+        pushBudgetedSection("## Sophia Debug · Timeline", timelineEntries, TIMELINE_SECTION_BUDGET);
     }
 
     if (state.failureMessage) {
-        containers.push(
-            buildSection(
-                "## Sophia Debug · Failure",
-                [formatLabelValue("Error", state.failureMessage)],
-                0xed4245,
-                FAILURE_SECTION_BUDGET
-            )
+        pushBudgetedSection(
+            "## Sophia Debug · Failure",
+            [formatLabelValue("Error", state.failureMessage)],
+            FAILURE_SECTION_BUDGET,
+            0xed4245
         );
     }
 

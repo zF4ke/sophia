@@ -31,6 +31,7 @@ import type {
     RuntimeMode,
     RuntimeTraceEvent,
     StopReason,
+    ToolArguments,
     ToolInvocationRecord,
     TurnInput,
 } from "@/runtime/contracts";
@@ -42,6 +43,7 @@ import type {
     ResolvedChannelTarget,
     ResolvedMemberIdentity,
     RetrievalMode,
+    SemanticContinuationCursor,
 } from "@/shared/appTypes";
 
 const State = Annotation.Root({
@@ -98,11 +100,23 @@ type RetrievalPayload = {
     weakResultCount?: number;
     historyMessageCount?: number;
     semanticMatchCount?: number;
+    accumulatedUniqueCount?: number;
     continuation?: {
+        history?: {
+            perChannelOldestMessageId?: Record<string, string | null>;
+            continuationAvailable?: boolean;
+        };
+        semantic?: {
+            cursor?: SemanticContinuationCursor | null;
+            continuationAvailable?: boolean;
+        };
         perChannelOldestMessageId?: Record<string, string | null>;
         continuationAvailable?: boolean;
     };
     exhaustion?: {
+        historyExhaustedChannelIds?: string[];
+        historyExhausted?: boolean;
+        semanticExhausted?: boolean;
         exhaustedChannelIds?: string[];
         exhausted?: boolean;
     };
@@ -379,7 +393,7 @@ function appendTrace(state: RuntimeState, label: string, detail: string): Runtim
     });
 }
 
-function argsSignature(tool: DiscordToolName, args: Record<string, string | number | undefined>) {
+function argsSignature(tool: DiscordToolName, args: ToolArguments) {
     return `${tool}:${JSON.stringify(args)}`;
 }
 
@@ -401,13 +415,27 @@ function getRetrievalSummary(run: DiscordToolResult): RetrievalSummary | null {
         weakResultCount: Number(payload.weakResultCount || 0),
         historyMessageCount: Number(payload.historyMessageCount || 0),
         semanticMatchCount: Number(payload.semanticMatchCount || 0),
+        accumulatedUniqueCount: Number(payload.accumulatedUniqueCount || 0),
         sourceOrigin: (payload.sourceOrigin || "none") as RetrievalSummary["sourceOrigin"],
         continuationAvailable: Boolean(payload.continuation?.continuationAvailable),
+        historyContinuationAvailable:
+            payload.continuation?.history?.continuationAvailable == null
+                ? Boolean(payload.continuation?.continuationAvailable)
+                : Boolean(payload.continuation?.history?.continuationAvailable),
+        historyCursorByChannel:
+            payload.continuation?.history?.perChannelOldestMessageId ||
+            payload.continuation?.perChannelOldestMessageId ||
+            {},
+        semanticContinuationAvailable: Boolean(payload.continuation?.semantic?.continuationAvailable),
+        semanticCursor: payload.continuation?.semantic?.cursor || null,
         exhaustedChannelIds: (payload.exhaustion?.exhaustedChannelIds || []).map(String),
+        historyExhausted: Boolean(payload.exhaustion?.historyExhausted),
+        semanticExhausted: Boolean(payload.exhaustion?.semanticExhausted),
         beforeTimestamp:
             payload.beforeTimestamp == null ? null : Number(payload.beforeTimestamp),
         afterTimestamp:
             payload.afterTimestamp == null ? null : Number(payload.afterTimestamp),
+        activeChannelIds: (payload.targetChannelIds || []).map(String),
     };
 }
 
@@ -431,12 +459,71 @@ function extractActiveRetrievalSession(run: DiscordToolResult): ActiveRetrievalS
         authorId: payload.targetAuthorId == null ? null : String(payload.targetAuthorId),
         beforeTimestamp: payload.beforeTimestamp == null ? null : Number(payload.beforeTimestamp),
         afterTimestamp: payload.afterTimestamp == null ? null : Number(payload.afterTimestamp),
-        perChannelOldestMessageId: payload.continuation?.perChannelOldestMessageId || {},
+        historyCursorByChannel:
+            payload.continuation?.history?.perChannelOldestMessageId ||
+            payload.continuation?.perChannelOldestMessageId ||
+            {},
+        semanticCursor: payload.continuation?.semantic?.cursor || null,
         seenMessageIds: (payload.combinedResults || [])
             .map((row) => (row && typeof row === "object" && "messageId" in row ? String((row as Record<string, unknown>).messageId) : null))
             .filter((value): value is string => Boolean(value)),
+        accumulatedUniqueCount: Number(payload.accumulatedUniqueCount || 0),
         exhaustedChannelIds: (payload.exhaustion?.exhaustedChannelIds || []).map(String),
+        historyExhausted: Boolean(payload.exhaustion?.historyExhausted),
+        semanticExhausted: Boolean(payload.exhaustion?.semanticExhausted),
         continuationAvailable: Boolean(payload.continuation?.continuationAvailable),
+    };
+}
+
+function sameRetrievalScope(
+    left: ActiveRetrievalSession | null,
+    right: ActiveRetrievalSession | null
+): boolean {
+    if (!left || !right) {
+        return false;
+    }
+
+    return (
+        left.mode === right.mode &&
+        left.authorId === right.authorId &&
+        left.beforeTimestamp === right.beforeTimestamp &&
+        left.afterTimestamp === right.afterTimestamp &&
+        left.channelIds.length === right.channelIds.length &&
+        left.channelIds.every((channelId, index) => channelId === right.channelIds[index])
+    );
+}
+
+export function mergeActiveRetrievalSession(
+    previous: ActiveRetrievalSession | null,
+    next: ActiveRetrievalSession | null
+): ActiveRetrievalSession | null {
+    if (!next) {
+        return previous;
+    }
+    if (!previous || !sameRetrievalScope(previous, next)) {
+        return next;
+    }
+
+    const seenMessageIds = [...new Set([...previous.seenMessageIds, ...next.seenMessageIds])];
+    return {
+        ...next,
+        historyCursorByChannel: {
+            ...previous.historyCursorByChannel,
+            ...next.historyCursorByChannel,
+        },
+        semanticCursor: next.semanticCursor || previous.semanticCursor,
+        seenMessageIds,
+        accumulatedUniqueCount: Math.max(
+            previous.accumulatedUniqueCount,
+            next.accumulatedUniqueCount,
+            seenMessageIds.length
+        ),
+        exhaustedChannelIds: [...new Set([...previous.exhaustedChannelIds, ...next.exhaustedChannelIds])],
+        historyExhausted: previous.historyExhausted || next.historyExhausted,
+        semanticExhausted: previous.semanticExhausted || next.semanticExhausted,
+        continuationAvailable:
+            next.continuationAvailable ||
+            previous.continuationAvailable,
     };
 }
 
@@ -632,7 +719,7 @@ const executeCapability = task(
             currentChannelId?: string | null;
             onProgress?: (toolName: string, summary: string) => Promise<void> | void;
         },
-        args: Record<string, string | number | undefined>
+        args: ToolArguments
     ) => CapabilityRegistry.get(tool).run(context, args)
 );
 
@@ -708,7 +795,10 @@ export class Runtime {
                             activeResolvedChannelIds = retrieval.searchedChannelIds;
                         }
                         if (retrievalSession) {
-                            activeRetrievalSession = retrievalSession;
+                            activeRetrievalSession = mergeActiveRetrievalSession(
+                                activeRetrievalSession,
+                                retrievalSession
+                            );
                         }
                     } catch {
                         continue;
@@ -922,7 +1012,10 @@ export class Runtime {
                         activeResolvedChannelIds = retrieval.searchedChannelIds;
                     }
                     if (retrievalSession) {
-                        activeRetrievalSession = retrievalSession;
+                        activeRetrievalSession = mergeActiveRetrievalSession(
+                            activeRetrievalSession,
+                            retrievalSession
+                        );
                     }
                     traceEvents.push(
                         { label: "step", detail: step.reason, timestamp: Date.now() },
@@ -959,11 +1052,19 @@ export class Runtime {
                         weakResultCount: 0,
                         historyMessageCount: 0,
                         semanticMatchCount: 0,
+                        accumulatedUniqueCount: 0,
                         sourceOrigin: "none",
                         continuationAvailable: false,
+                        historyContinuationAvailable: false,
+                        historyCursorByChannel: {},
+                        semanticContinuationAvailable: false,
+                        semanticCursor: null,
                         exhaustedChannelIds: [],
+                        historyExhausted: false,
+                        semanticExhausted: false,
                         beforeTimestamp: null,
                         afterTimestamp: null,
+                        activeChannelIds: [],
                     });
                 }
 
@@ -1038,6 +1139,16 @@ export class Runtime {
                                     recent_turns: summarizeRecentTurns(state.recentTurns),
                                     channel_context: formatChannelContext(state.channelContext),
                                     evidence: summarizeEvidence(state),
+                                    stop_reason: state.stopReason || "",
+                                    stop_detail:
+                                        deriveStopDetail(state.stopReason, state.traceEvents || []) || "",
+                                    continuation_available:
+                                        state.activeRetrievalSession?.continuationAvailable
+                                            ? "yes"
+                                            : "no",
+                                    active_retrieval_session: state.activeRetrievalSession
+                                        ? `${state.activeRetrievalSession.mode} :: ${state.activeRetrievalSession.channelIds.join(", ")} :: unique=${state.activeRetrievalSession.accumulatedUniqueCount}`
+                                        : "none",
                                 }),
                             },
                         ],
@@ -1224,11 +1335,19 @@ export class Runtime {
                 weakResultCount: 0,
                 historyMessageCount: 0,
                 semanticMatchCount: 0,
+                accumulatedUniqueCount: 0,
                 sourceOrigin: "none",
                 continuationAvailable: false,
+                historyContinuationAvailable: false,
+                historyCursorByChannel: {},
+                semanticContinuationAvailable: false,
+                semanticCursor: null,
                 exhaustedChannelIds: [],
+                historyExhausted: false,
+                semanticExhausted: false,
                 beforeTimestamp: null,
                 afterTimestamp: null,
+                activeChannelIds: [],
             }
             );
             await input.debugSession?.setGroundingSummary(

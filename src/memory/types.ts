@@ -39,6 +39,11 @@ export interface SearchMessageScope {
     beforeTimestamp?: number | null;
     afterTimestamp?: number | null;
     excludedMessageIds?: string[];
+    semanticCursor?: {
+        lastScore: number;
+        lastCreatedTimestamp: number;
+        lastMessageId: string;
+    } | null;
 }
 
 export interface ChannelIndexState {

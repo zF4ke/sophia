@@ -62,10 +62,21 @@ describe("CapabilityRegistry", () => {
             targetAuthorId: "u-alice",
             targetChannelIds: ["c-reflexoes"],
             continuation: {
+                history: {
+                    perChannelOldestMessageId: { "c-reflexoes": "m1" },
+                    continuationAvailable: true,
+                },
+                semantic: {
+                    cursor: null,
+                    continuationAvailable: false,
+                },
                 perChannelOldestMessageId: { "c-reflexoes": "m1" },
                 continuationAvailable: true,
             },
             exhaustion: {
+                historyExhaustedChannelIds: [],
+                historyExhausted: false,
+                semanticExhausted: true,
                 exhaustedChannelIds: [],
                 exhausted: false,
             },
@@ -73,6 +84,7 @@ describe("CapabilityRegistry", () => {
                 beforeTimestamp: null,
                 afterTimestamp: null,
             },
+            accumulatedUniqueCount: 1,
             beforeTimestamp: null,
             afterTimestamp: null,
             excludedMessageIds: [],
@@ -88,7 +100,7 @@ describe("CapabilityRegistry", () => {
             {
                 query: "what did alice say in reflexoes",
                 authorId: "u-alice",
-                channelIds: "c-reflexoes",
+                channelIds: ["c-reflexoes"],
             }
         );
 

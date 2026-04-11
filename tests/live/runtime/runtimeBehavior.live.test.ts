@@ -238,10 +238,21 @@ describeLive("live runtime behavior", () => {
                 targetAuthorId: "111111111111111111",
                 targetChannelIds: ["123456789012345678"],
                 continuation: {
+                    history: {
+                        perChannelOldestMessageId: { "123456789012345678": "m1" },
+                        continuationAvailable: true,
+                    },
+                    semantic: {
+                        cursor: null,
+                        continuationAvailable: false,
+                    },
                     perChannelOldestMessageId: { "123456789012345678": "m1" },
                     continuationAvailable: true,
                 },
                 exhaustion: {
+                    historyExhaustedChannelIds: [],
+                    historyExhausted: false,
+                    semanticExhausted: true,
                     exhaustedChannelIds: [],
                     exhausted: false,
                 },
@@ -249,6 +260,7 @@ describeLive("live runtime behavior", () => {
                     beforeTimestamp: null,
                     afterTimestamp: null,
                 },
+                accumulatedUniqueCount: 1,
                 beforeTimestamp: null,
                 afterTimestamp: null,
                 excludedMessageIds: [],
@@ -421,6 +433,17 @@ describeLive("live runtime behavior", () => {
                 targetAuthorId: null,
                 targetChannelIds: ["c-bot-commands", "c-automation"],
                 continuation: {
+                    history: {
+                        perChannelOldestMessageId: {
+                            "c-bot-commands": "m1",
+                            "c-automation": "m2",
+                        },
+                        continuationAvailable: true,
+                    },
+                    semantic: {
+                        cursor: null,
+                        continuationAvailable: false,
+                    },
                     perChannelOldestMessageId: {
                         "c-bot-commands": "m1",
                         "c-automation": "m2",
@@ -428,6 +451,9 @@ describeLive("live runtime behavior", () => {
                     continuationAvailable: true,
                 },
                 exhaustion: {
+                    historyExhaustedChannelIds: [],
+                    historyExhausted: false,
+                    semanticExhausted: true,
                     exhaustedChannelIds: [],
                     exhausted: false,
                 },
@@ -435,6 +461,7 @@ describeLive("live runtime behavior", () => {
                     beforeTimestamp: null,
                     afterTimestamp: null,
                 },
+                accumulatedUniqueCount: 2,
                 beforeTimestamp: null,
                 afterTimestamp: null,
                 excludedMessageIds: [],

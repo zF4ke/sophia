@@ -423,7 +423,100 @@ describe("runtime planning", () => {
         expect(step.nextCapability).toBe("retrieve_messages");
         expect(step.arguments).toMatchObject({
             query: "que serviços estão disponíveis nesse servidor?",
-            channelIds: "c-bots,c-logs",
+            channelIds: ["c-bots", "c-logs"],
+        });
+    });
+
+    it("continues the active retrieval session with stable until-yesterday bounds", () => {
+        const step = fallbackStepDecision({
+            question: "continue",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: {
+                query: "atlas",
+                resolvedIds: ["c-atlas"],
+                entries: [],
+                exactIdMatch: false,
+                confidence: "high",
+            },
+            activeResolvedChannelIds: ["c-atlas"],
+            activeRetrievalSession: {
+                mode: "history",
+                channelIds: ["c-atlas"],
+                authorId: null,
+                beforeTimestamp: 1_700_000_000_000,
+                afterTimestamp: null,
+                historyCursorByChannel: { "c-atlas": "101" },
+                semanticCursor: null,
+                seenMessageIds: ["105", "104"],
+                accumulatedUniqueCount: 2,
+                exhaustedChannelIds: [],
+                historyExhausted: false,
+                semanticExhausted: true,
+                continuationAvailable: true,
+            },
+            candidateCapabilities: ["retrieve_messages"],
+            toolHistory: [],
+        });
+
+        expect(step).toEqual({
+            nextCapability: "retrieve_messages",
+            arguments: {
+                query: "continue",
+                mode: "history",
+                limit: 8,
+                channelIds: ["c-atlas"],
+                beforeTimestamp: 1_700_000_000_000,
+                cursor: {
+                    history: { "c-atlas": "101" },
+                },
+                excludedMessageIds: ["105", "104"],
+            },
+            reason: "Continue the active scoped history read without restarting from the beginning.",
+            learnedExpectation: "Return the next non-duplicate page from the active retrieval session.",
+        });
+    });
+
+    it("resets the active retrieval session when the user changes scope mid-session", () => {
+        const step = fallbackStepDecision({
+            question: "continue in <#123456789012345678>",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: {
+                query: "atlas",
+                resolvedIds: ["c-atlas"],
+                entries: [],
+                exactIdMatch: false,
+                confidence: "high",
+            },
+            activeResolvedChannelIds: ["c-atlas"],
+            activeRetrievalSession: {
+                mode: "history",
+                channelIds: ["c-atlas"],
+                authorId: null,
+                beforeTimestamp: null,
+                afterTimestamp: null,
+                historyCursorByChannel: { "c-atlas": "101" },
+                semanticCursor: null,
+                seenMessageIds: ["105", "104"],
+                accumulatedUniqueCount: 2,
+                exhaustedChannelIds: [],
+                historyExhausted: false,
+                semanticExhausted: true,
+                continuationAvailable: true,
+            },
+            candidateCapabilities: ["resolve_channel_targets", "retrieve_messages", "list_guild_structure"],
+            toolHistory: [],
+        });
+
+        expect(step).toEqual({
+            nextCapability: "resolve_channel_targets",
+            arguments: { targetText: "123456789012345678" },
+            reason: "Resolve the exact channel or category reference before broader retrieval.",
+            learnedExpectation:
+                "Return exact message-channel ids for the current guild target.",
         });
     });
 
@@ -529,11 +622,19 @@ describe("runtime planning", () => {
                         weakResultCount: 0,
                         historyMessageCount: 0,
                         semanticMatchCount: 0,
-                        sourceOrigin: "live_refresh",
-                        continuationAvailable: false,
+                    accumulatedUniqueCount: 0,
+                    sourceOrigin: "live_refresh",
+                    continuationAvailable: false,
+                    historyContinuationAvailable: false,
+                    historyCursorByChannel: {},
+                    semanticContinuationAvailable: false,
+                    semanticCursor: null,
                         exhaustedChannelIds: [],
+                        historyExhausted: false,
+                        semanticExhausted: false,
                         beforeTimestamp: null,
                         afterTimestamp: null,
+                        activeChannelIds: [],
                     },
                 },
             ],

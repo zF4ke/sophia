@@ -26,7 +26,7 @@ The stable code catalog is `src/shared/promptCatalog.ts`.
 - `runtime/judge_evidence`
   Decides whether the current evidence bundle is enough to stop or continue, with explicit history-vs-semantic evidence tradeoffs.
 - `runtime/synthesize_answer`
-  Produces the final user-facing answer from the current mode, confidence, laneed evidence, and conversational recovery rules.
+  Produces the final user-facing answer from the current mode, confidence, laneed evidence, conversational recovery rules, and explicit stop metadata such as budget stop detail and continuation availability.
 - `runtime/debug_summary`
   Reserved for optional graph-aware debug summarization.
 

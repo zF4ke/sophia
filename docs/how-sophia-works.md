@@ -182,6 +182,13 @@ It can return:
 - exhaustion state for the current scoped read
 - normalized before/after time bounds when the question implies a time window
 
+Semantic paging is deterministic inside one scoped session:
+- rank by `totalScore` descending
+- break ties by `createdTimestamp` descending
+- break remaining ties by `messageId` descending
+
+That cursor is kept in the active retrieval session so "continue" does not reshuffle earlier semantic pages if new messages arrive later.
+
 Default behavior:
 - if the user is asking what a channel or category contains, history is the default lane
 - semantic matches are supplemental when the user is asking for a specific concept inside that same scope

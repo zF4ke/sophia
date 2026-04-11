@@ -9,6 +9,7 @@ import type {
     MultiLaneRetrievalResult,
     RetrievedChunk,
     RetrievalMode,
+    SemanticContinuationCursor,
 } from "@/shared/appTypes";
 
 const MAX_CHANNEL_ESCALATIONS = 2;
@@ -97,6 +98,19 @@ function buildCursorMap(
     return next;
 }
 
+function buildSemanticCursor(results: RetrievedChunk[]): SemanticContinuationCursor | null {
+    const last = results[results.length - 1];
+    if (!last) {
+        return null;
+    }
+
+    return {
+        lastScore: last.totalScore,
+        lastCreatedTimestamp: last.createdTimestamp,
+        lastMessageId: last.messageId,
+    };
+}
+
 async function buildExhaustion(
     guildId: string | null,
     channelIds: string[],
@@ -133,6 +147,21 @@ async function buildExhaustion(
     return {
         exhaustedChannelIds,
         exhausted: channelIds.length > 0 && exhaustedChannelIds.length === channelIds.length,
+    };
+}
+
+function buildLaneExhaustion(
+    historyExhaustion: { exhaustedChannelIds: string[]; exhausted: boolean },
+    semanticExhausted: boolean
+) {
+    return {
+        historyExhaustedChannelIds: historyExhaustion.exhaustedChannelIds,
+        historyExhausted: historyExhaustion.exhausted,
+        semanticExhausted,
+        exhaustedChannelIds: historyExhaustion.exhaustedChannelIds,
+        exhausted:
+            historyExhaustion.exhausted &&
+            semanticExhausted,
     };
 }
 
@@ -174,7 +203,10 @@ export class UnifiedMessageRetrieval {
         mode?: RetrievalMode;
         beforeTimestamp?: number | null;
         afterTimestamp?: number | null;
-        cursor?: Record<string, string | null>;
+        cursor?: {
+            history?: Record<string, string | null>;
+            semantic?: SemanticContinuationCursor | null;
+        };
         excludedMessageIds?: string[];
         onProgress?: (toolName: string, summary: string) => Promise<void> | void;
     }): Promise<MultiLaneRetrievalResult> {
@@ -186,6 +218,8 @@ export class UnifiedMessageRetrieval {
                 : options.currentChannelId
                   ? [options.currentChannelId]
                   : [];
+        const historyCursor = options.cursor?.history || {};
+        const semanticCursor = options.cursor?.semantic || null;
         const scope = {
             guildId: options.guild?.id || null,
             channelIds: scopedChannelIds.length ? scopedChannelIds : undefined,
@@ -193,6 +227,7 @@ export class UnifiedMessageRetrieval {
             beforeTimestamp: options.beforeTimestamp ?? undefined,
             afterTimestamp: options.afterTimestamp ?? undefined,
             excludedMessageIds: options.excludedMessageIds,
+            semanticCursor,
         };
 
         let historyMessages =
@@ -204,7 +239,7 @@ export class UnifiedMessageRetrieval {
                       authorId: options.authorId || null,
                       beforeTimestamp: options.beforeTimestamp ?? null,
                       afterTimestamp: options.afterTimestamp ?? null,
-                      perChannelOldestMessageId: options.cursor,
+                      perChannelOldestMessageId: historyCursor,
                       excludedMessageIds: options.excludedMessageIds,
                       limit,
                   })).map<RetrievedChunk>((message) => ({
@@ -285,7 +320,7 @@ export class UnifiedMessageRetrieval {
                               authorId: options.authorId || null,
                               beforeTimestamp: options.beforeTimestamp ?? null,
                               afterTimestamp: options.afterTimestamp ?? null,
-                              perChannelOldestMessageId: options.cursor,
+                              perChannelOldestMessageId: historyCursor,
                               excludedMessageIds: options.excludedMessageIds,
                               limit,
                           })).map<RetrievedChunk>((message) => ({
@@ -327,20 +362,38 @@ export class UnifiedMessageRetrieval {
 
         const combinedResults = buildCombinedResults(historyMessages, semanticMatches, limit);
         const strength = summarizeStrength(mode === "history" ? historyMessages : combinedResults);
-        const continuation = {
-            perChannelOldestMessageId: buildCursorMap(
-                searchedChannelIds,
-                historyMessages,
-                options.cursor || {}
-            ),
-            continuationAvailable: Boolean(historyMessages.length),
-        };
-        const exhaustion = await buildExhaustion(
+        const historyContinuationCursor = buildCursorMap(
+            searchedChannelIds,
+            historyMessages,
+            historyCursor
+        );
+        const semanticContinuationCursor = buildSemanticCursor(semanticMatches);
+        const historyExhaustion = await buildExhaustion(
             options.guild?.id || null,
             searchedChannelIds,
             historyMessages,
             crawlResults
         );
+        const semanticExhausted =
+            mode === "history" ? true : semanticMatches.length < limit;
+        const exhaustion = buildLaneExhaustion(historyExhaustion, semanticExhausted);
+        const historyContinuationAvailable =
+            !historyExhaustion.exhausted && historyMessages.length > 0;
+        const semanticContinuationAvailable =
+            mode !== "history" && !semanticExhausted && semanticMatches.length > 0;
+        const continuation = {
+            history: {
+                perChannelOldestMessageId: historyContinuationCursor,
+                continuationAvailable: historyContinuationAvailable,
+            },
+            semantic: {
+                cursor: semanticContinuationCursor,
+                continuationAvailable: semanticContinuationAvailable,
+            },
+            perChannelOldestMessageId: historyContinuationCursor,
+            continuationAvailable:
+                historyContinuationAvailable || semanticContinuationAvailable,
+        };
 
         const evidenceSufficient =
             mode === "history"
@@ -374,6 +427,10 @@ export class UnifiedMessageRetrieval {
                 beforeTimestamp: options.beforeTimestamp ?? null,
                 afterTimestamp: options.afterTimestamp ?? null,
             },
+            accumulatedUniqueCount: new Set([
+                ...(options.excludedMessageIds || []),
+                ...combinedResults.map((row) => row.messageId),
+            ]).size,
             beforeTimestamp: options.beforeTimestamp ?? null,
             afterTimestamp: options.afterTimestamp ?? null,
             excludedMessageIds: options.excludedMessageIds || [],

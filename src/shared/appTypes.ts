@@ -83,12 +83,29 @@ export interface RetrievedChunk {
 
 export type RetrievalMode = "history" | "semantic" | "mixed";
 
+export interface SemanticContinuationCursor {
+    lastScore: number;
+    lastCreatedTimestamp: number;
+    lastMessageId: string;
+}
+
 export interface RetrievalContinuation {
+    history: {
+        perChannelOldestMessageId: Record<string, string | null>;
+        continuationAvailable: boolean;
+    };
+    semantic: {
+        cursor: SemanticContinuationCursor | null;
+        continuationAvailable: boolean;
+    };
     perChannelOldestMessageId: Record<string, string | null>;
     continuationAvailable: boolean;
 }
 
 export interface RetrievalExhaustion {
+    historyExhaustedChannelIds: string[];
+    historyExhausted: boolean;
+    semanticExhausted: boolean;
     exhaustedChannelIds: string[];
     exhausted: boolean;
 }
@@ -120,6 +137,7 @@ export interface MultiLaneRetrievalResult {
     continuation: RetrievalContinuation;
     exhaustion: RetrievalExhaustion;
     accumulatedWindow: RetrievalAccumulatedWindow;
+    accumulatedUniqueCount: number;
     beforeTimestamp: number | null;
     afterTimestamp: number | null;
     excludedMessageIds: string[];

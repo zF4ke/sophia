@@ -5,6 +5,7 @@ import type {
     GuildStructureEntry,
     GroundedAnswerMode,
     RetrievalMode,
+    SemanticContinuationCursor,
     RequestClassification,
     ResolvedChannelTarget,
     ResolvedMemberIdentity,
@@ -24,6 +25,14 @@ export type StopReason =
     | "insufficient_evidence";
 export type RetrievalSourceOrigin = "none" | "cache" | "live_refresh" | "cache_after_refresh";
 export type EvidenceStrength = "strong" | "weak" | "metadata";
+export type ToolArgumentValue =
+    | string
+    | number
+    | boolean
+    | null
+    | ToolArgumentValue[]
+    | { [key: string]: ToolArgumentValue };
+export type ToolArguments = Record<string, ToolArgumentValue | undefined>;
 
 export interface ReplyContext {
     messageId: string;
@@ -101,16 +110,24 @@ export interface RetrievalSummary {
     weakResultCount: number;
     historyMessageCount: number;
     semanticMatchCount: number;
+    accumulatedUniqueCount: number;
     sourceOrigin: RetrievalSourceOrigin;
     continuationAvailable: boolean;
+    historyContinuationAvailable: boolean;
+    semanticContinuationAvailable: boolean;
+    historyCursorByChannel: Record<string, string | null>;
+    semanticCursor: SemanticContinuationCursor | null;
     exhaustedChannelIds: string[];
+    historyExhausted: boolean;
+    semanticExhausted: boolean;
     beforeTimestamp: number | null;
     afterTimestamp: number | null;
+    activeChannelIds: string[];
 }
 
 export interface ToolInvocationRecord {
     tool: DiscordToolName;
-    arguments: Record<string, string | number | undefined>;
+    arguments: ToolArguments;
     summary: string;
     learned: string;
     confidenceImproved: boolean;
@@ -140,9 +157,13 @@ export interface ActiveRetrievalSession {
     authorId: string | null;
     beforeTimestamp: number | null;
     afterTimestamp: number | null;
-    perChannelOldestMessageId: Record<string, string | null>;
+    historyCursorByChannel: Record<string, string | null>;
+    semanticCursor: SemanticContinuationCursor | null;
     seenMessageIds: string[];
+    accumulatedUniqueCount: number;
     exhaustedChannelIds: string[];
+    historyExhausted: boolean;
+    semanticExhausted: boolean;
     continuationAvailable: boolean;
 }
 
@@ -219,7 +240,7 @@ export interface EvidenceDecision {
 
 export interface StepDecision {
     nextCapability: DiscordToolName | null;
-    arguments: Record<string, string | number | undefined>;
+    arguments: ToolArguments;
     reason: string;
     learnedExpectation: string;
 }

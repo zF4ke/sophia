@@ -536,8 +536,29 @@ export class DiscordMemoryService {
             .sort(
                 (left, right) =>
                     right.totalScore - left.totalScore ||
-                    right.createdTimestamp - left.createdTimestamp
+                    right.createdTimestamp - left.createdTimestamp ||
+                    right.messageId.localeCompare(left.messageId)
             )
+            .filter((row) => {
+                const cursor = scope.semanticCursor;
+                if (!cursor) {
+                    return true;
+                }
+
+                if (row.totalScore < cursor.lastScore) {
+                    return true;
+                }
+                if (row.totalScore > cursor.lastScore) {
+                    return false;
+                }
+                if (row.createdTimestamp < cursor.lastCreatedTimestamp) {
+                    return true;
+                }
+                if (row.createdTimestamp > cursor.lastCreatedTimestamp) {
+                    return false;
+                }
+                return row.messageId.localeCompare(cursor.lastMessageId) < 0;
+            })
             .slice(0, limit);
     }
 

@@ -9,6 +9,8 @@ import type {
     PlanDecision,
     RuntimeMode,
     StepDecision,
+    ToolArguments,
+    ToolArgumentValue,
     ToolInvocationRecord,
     TurnInput,
 } from "@/runtime/contracts";
@@ -140,9 +142,11 @@ function parseNaturalTimeBounds(question: string): {
     const compact = normalize(question);
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
 
     const explicitDate = compact.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
     const explicitTimestamp = explicitDate ? Date.parse(`${explicitDate[1]}T00:00:00`) : NaN;
+    const hasUpperBoundWord = /\b(before|until|ate|até)\b/i.test(compact);
 
     if (/\b(last week|ultima semana|última semana)\b/i.test(compact)) {
         return {
@@ -156,14 +160,20 @@ function parseNaturalTimeBounds(question: string): {
         };
     }
     if (/\b(yesterday|ontem)\b/i.test(compact)) {
-        const yesterdayStart = startOfToday - 24 * 60 * 60 * 1000;
+        if (hasUpperBoundWord) {
+            return {
+                beforeTimestamp: /before yesterday|before ontem/.test(compact)
+                    ? startOfYesterday
+                    : startOfToday,
+            };
+        }
         return {
-            afterTimestamp: yesterdayStart,
+            afterTimestamp: startOfYesterday,
             beforeTimestamp: startOfToday,
         };
     }
     if (!Number.isNaN(explicitTimestamp)) {
-        if (/\b(before|until|ate|até)\b/i.test(compact)) {
+        if (hasUpperBoundWord) {
             return { beforeTimestamp: explicitTimestamp + 24 * 60 * 60 * 1000 };
         }
         if (/\b(after|since|depois|desde)\b/i.test(compact)) {
@@ -241,19 +251,42 @@ function sanitizeConfidence(value: unknown, fallback: GroundedAnswerMode): Groun
         : fallback;
 }
 
+function sanitizeToolArgumentValue(value: unknown): ToolArgumentValue | undefined {
+    if (
+        value == null ||
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+    ) {
+        return value as ToolArgumentValue;
+    }
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => sanitizeToolArgumentValue(item))
+            .filter((item): item is ToolArgumentValue => item !== undefined);
+    }
+    if (typeof value === "object") {
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+                .map(([key, raw]) => [key, sanitizeToolArgumentValue(raw)])
+                .filter(([, raw]) => raw !== undefined)
+        ) as ToolArgumentValue;
+    }
+    return undefined;
+}
+
 function sanitizeArguments(
     value: unknown
-): Record<string, string | number | undefined> {
+): ToolArguments {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return {};
     }
 
-    const entries = Object.entries(value as Record<string, unknown>).filter(
-        ([, raw]) =>
-            raw === undefined || typeof raw === "string" || typeof raw === "number"
-    );
-
-    return Object.fromEntries(entries) as Record<string, string | number | undefined>;
+    return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+            .map(([key, raw]) => [key, sanitizeToolArgumentValue(raw)])
+            .filter(([, raw]) => raw !== undefined)
+    ) as ToolArguments;
 }
 
 function extractLatestRetrieval(toolHistory: ToolInvocationRecord[]) {
@@ -802,6 +835,17 @@ function normalizeStepDecision(
     const activeChannelTarget = state.activeChannelTarget || latestResolvedChannelTarget;
     const activeRetrievalSession = state.activeRetrievalSession;
     const timeBounds = parseNaturalTimeBounds(state.question);
+    const resetRetrievalSession =
+        Boolean(
+            structuralChannel &&
+                activeChannelTarget?.query &&
+                normalize(structuralChannel) !== normalize(activeChannelTarget.query)
+        ) ||
+        Boolean(
+            resolvedChannelIds.length &&
+                activeRetrievalSession?.channelIds.length &&
+                JSON.stringify(resolvedChannelIds) !== JSON.stringify(activeRetrievalSession.channelIds)
+        );
 
     if (nextCapability === "resolve_member_identity") {
         return {
@@ -893,7 +937,7 @@ function normalizeStepDecision(
                     ? { authorId: resolvedMember?.resolvedId || activeMember?.resolvedId }
                     : {}),
                 ...(resolvedChannelIds.length
-                    ? { channelIds: resolvedChannelIds.join(",") }
+                    ? { channelIds: resolvedChannelIds }
                     : {}),
                 ...((typeof argumentsObject.beforeTimestamp === "number"
                     ? argumentsObject.beforeTimestamp
@@ -915,15 +959,21 @@ function normalizeStepDecision(
                                   : timeBounds.afterTimestamp ?? activeRetrievalSession?.afterTimestamp) as number,
                       }
                     : {}),
-                ...(activeRetrievalSession?.perChannelOldestMessageId &&
-                Object.keys(activeRetrievalSession.perChannelOldestMessageId).length
+                ...(!resetRetrievalSession &&
+                activeRetrievalSession?.historyCursorByChannel &&
+                Object.keys(activeRetrievalSession.historyCursorByChannel).length
                     ? {
-                          cursor: JSON.stringify(activeRetrievalSession.perChannelOldestMessageId),
+                          cursor: ({
+                              history: activeRetrievalSession.historyCursorByChannel,
+                              ...(activeRetrievalSession.semanticCursor
+                                  ? { semantic: activeRetrievalSession.semanticCursor }
+                                  : {}),
+                          } as unknown as ToolArgumentValue),
                       }
                     : {}),
-                ...(activeRetrievalSession?.seenMessageIds?.length
+                ...(!resetRetrievalSession && activeRetrievalSession?.seenMessageIds?.length
                     ? {
-                          excludedMessageIds: JSON.stringify(activeRetrievalSession.seenMessageIds),
+                          excludedMessageIds: activeRetrievalSession.seenMessageIds,
                       }
                     : {}),
             },
@@ -1063,9 +1113,16 @@ export function fallbackStepDecision(
     const structuralChannel = extractStructuralChannelReference(state.question, state.replyContext);
     const activeChannelTarget = state.activeChannelTarget || latestResolvedChannelTarget;
     const activeRetrievalSession = state.activeRetrievalSession;
+    const changedScope =
+        Boolean(
+            structuralChannel &&
+                activeChannelTarget?.query &&
+                normalize(structuralChannel) !== normalize(activeChannelTarget.query)
+        );
 
     if (
         activeRetrievalSession?.continuationAvailable &&
+        !changedScope &&
         state.candidateCapabilities.includes("retrieve_messages") &&
         looksLikeContinuation(state.question)
     ) {
@@ -1076,6 +1133,19 @@ export function fallbackStepDecision(
             },
             reason: "Continue the active scoped history read without restarting from the beginning.",
             learnedExpectation: "Return the next non-duplicate page from the active retrieval session.",
+        });
+    }
+
+    if (
+        changedScope &&
+        structuralChannel &&
+        state.candidateCapabilities.includes("resolve_channel_targets")
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "resolve_channel_targets",
+            arguments: { targetText: structuralChannel },
+            reason: "Resolve the exact channel or category reference before broader retrieval.",
+            learnedExpectation: "Return exact message-channel ids for the current guild target.",
         });
     }
 
@@ -1147,7 +1217,7 @@ export function fallbackStepDecision(
             nextCapability: "retrieve_messages",
             arguments: {
                 query: state.question,
-                channelIds: resolvedChannelIds.join(","),
+                channelIds: resolvedChannelIds,
             },
             reason: "Use the resolved channel scope to retrieve Discord messages before answering.",
             learnedExpectation: "Return scoped message evidence from the resolved category or channel area.",
