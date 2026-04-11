@@ -253,4 +253,93 @@ describe("UnifiedMessageRetrieval", () => {
         ).toBe(5);
         expect(page3.continuation.history.continuationAvailable).toBe(false);
     });
+
+    it("does not inject crawl previews for strict temporal lookups", async () => {
+        vi.spyOn(DiscordChannelCrawlService, "crawlChannelMessages").mockResolvedValue({
+            channelId: "c-comandos",
+            channelName: "comandos",
+            messagesFetched: 3,
+            messagesStored: 3,
+            oldestFetchedMessageId: "preview-1",
+            exhausted: false,
+            queryHint: "youtube",
+            backgroundIngestQueued: true,
+            previewMessages: [
+                {
+                    messageId: "preview-1",
+                    authorId: "u-open",
+                    authorName: "Openrosen",
+                    content: "random recent message outside requested day",
+                    createdTimestamp: Date.now(),
+                    jumpLink: "https://discord.com/channels/g1/c-comandos/preview-1",
+                },
+            ],
+        } as any);
+        vi.spyOn(DiscordChannelCrawlService, "waitForBackgroundIngest").mockResolvedValue(
+            undefined
+        );
+
+        const result = await UnifiedMessageRetrieval.retrieve({
+            guild: { id: "g1" } as any,
+            question: "link do youtube",
+            channelIds: ["c-comandos"],
+            mode: "history",
+            afterTimestamp: Date.parse("2025-02-09T00:00:00Z"),
+            beforeTimestamp: Date.parse("2025-02-10T00:00:00Z"),
+            limit: 10,
+        });
+
+        expect(result.historyMessages).toEqual([]);
+        expect(result.combinedResults).toEqual([]);
+        expect(result.sourceOrigin).toBe("live_refresh");
+        expect(result.continuation.history.continuationAvailable).toBe(true);
+        expect(result.continuation.continuationAvailable).toBe(true);
+        expect(result.continuation.history.perChannelOldestMessageId["c-comandos"]).toBeTruthy();
+    });
+
+    it("retries strict scoped retrieval without exclusions when continuation inputs hide all rows", async () => {
+        const historySpy = vi
+            .spyOn(DiscordMemoryService, "getChannelHistoryPageAsync")
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+                {
+                    id: "m-artist",
+                    guildId: "g1",
+                    channelId: "c-comandos",
+                    channelName: "comandos",
+                    authorId: "u-open",
+                    authorName: "Openrosen",
+                    content: "a foto parecia o m4rkim",
+                    attachmentsJson: "[]",
+                    referenceMessageId: null,
+                    createdTimestamp: 1707510000000,
+                    jumpLink: "https://discord.com/channels/g1/c-comandos/m-artist",
+                    isBot: 0,
+                },
+            ] as any);
+
+        const result = await UnifiedMessageRetrieval.retrieve({
+            guild: null,
+            question: "de quem era?",
+            channelIds: ["c-comandos"],
+            mode: "history",
+            authorId: "u-open",
+            afterTimestamp: Date.parse("2026-02-09T00:00:00Z"),
+            beforeTimestamp: Date.parse("2026-02-10T00:00:00Z"),
+            excludedMessageIds: ["m-artist"],
+            limit: 5,
+        });
+
+        expect(historySpy).toHaveBeenCalledTimes(2);
+        expect(result.historyMessages.map((row) => row.messageId)).toEqual(["m-artist"]);
+        expect(result.retrievalDiagnostics).toEqual(
+            expect.objectContaining({
+                strictScopedQuery: true,
+                continuationInputsApplied: true,
+                scopedEmptyRetryAttempted: true,
+                scopedEmptyRetryRecovered: true,
+                retryStrategy: "without_excluded",
+            })
+        );
+    });
 });

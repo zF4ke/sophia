@@ -14,6 +14,8 @@ Sophia uses one bounded graph runtime with one retrieval loop.
 8. `synthesize_answer`
 9. `persist_run`
 
+`load_memory` now restores not only prior turn summaries and active retrieval session metadata, but also reusable evidence reconstructed from recent persisted tool outputs.
+
 ## Conversation Entry
 
 All conversational entrypoints feed the same runtime:
@@ -38,6 +40,15 @@ Planner-visible capabilities:
 - ordered scoped history messages are the default lane
 - semantic matches are a second lane from the same scoped channels
 - retrieval can continue across turns through a persisted scoped session without rereading duplicate messages
+
+Continuation inputs are intentionally gated:
+- cursor + excluded message ids are reused only for explicit continuation intent
+- fresh follow-up turns in the same scope do not automatically inherit dedupe exclusions
+
+For strict scoped reads (author/time bounded), retrieval performs guarded empty-result recovery:
+- retry once without excluded ids
+- retry once without cursor when needed
+- record diagnostics in tool output and debug timeline
 
 `resolve_member_identity`, `list_guild_structure`, and `resolve_channel_targets` are the current-guild discovery layer. The others are live metadata capabilities.
 
@@ -68,3 +79,6 @@ For channel and category questions, the expected evidence order is:
 4. supplement with scoped semantic matches only when needed
 
 When evidence is weak, the runtime should continue the conversation with the best grounded interpretation it can produce, then ask a targeted follow-up or continue retrieval instead of stopping cold.
+
+Safety override:
+- if confidence is `insufficient` and there is no strong message evidence, synthesis must avoid speculative factual/entity claims.

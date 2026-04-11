@@ -777,6 +777,8 @@ export class Runtime {
                 let activeChannelTarget = state.activeChannelTarget;
                 let activeResolvedChannelIds = [...state.activeResolvedChannelIds];
                 let activeRetrievalSession = state.activeRetrievalSession;
+                const reconstructedEvidence: EvidenceItem[] = [];
+                const seenEvidence = new Set<string>();
 
                 for (const run of [...recentToolRuns].reverse()) {
                     try {
@@ -785,6 +787,7 @@ export class Runtime {
                         const resolvedChannel = extractResolvedChannelTarget(parsedOutput);
                         const retrieval = getRetrievalSummary(parsedOutput);
                         const retrievalSession = extractActiveRetrievalSession(parsedOutput);
+                        const evidenceItems = extractEvidence(parsedOutput);
 
                         if (resolvedMember) {
                             activeMemberTarget = resolvedMember;
@@ -801,19 +804,41 @@ export class Runtime {
                                 retrievalSession
                             );
                         }
+
+                        for (const item of evidenceItems) {
+                            const key = [
+                                item.tool,
+                                item.jumpLink || "",
+                                item.channelId || "",
+                                item.authorId || "",
+                                item.createdTimestamp || "",
+                                item.content,
+                            ].join("::");
+                            if (seenEvidence.has(key)) {
+                                continue;
+                            }
+                            seenEvidence.add(key);
+                            reconstructedEvidence.push(item);
+                        }
                     } catch {
                         continue;
                     }
                 }
+                const evidence = reconstructedEvidence.slice(-24);
                 const input = this.requestContext.get(state.requestId);
                 await input?.debugSession?.setContextPreview?.({
                     recentChannelMessages: channelContext.map((m) => `${m.authorName}: ${m.content}`),
-                    evidencePreview: [],
+                    evidencePreview: evidence.slice(0, 6).map((item) => {
+                        const channelLabel = item.channelName ? `#${item.channelName}` : "?";
+                        const authorLabel = item.authorName || "?";
+                        return `[${item.tool}] ${channelLabel} · ${authorLabel}: ${item.content}`;
+                    }),
                     recentTurns: recentTurns.map((t) => `Q: ${t.question} | A: ${t.answer}`),
                 });
                 return {
                     recentTurns,
                     channelContext,
+                    evidence,
                     activeMemberTarget,
                     activeChannelTarget,
                     activeResolvedChannelIds,
@@ -821,7 +846,7 @@ export class Runtime {
                     traceEvents: appendTrace(
                         state,
                         "load_memory",
-                        `Loaded ${recentTurns.length} prior conversation turn(s), ${channelContext.length} recent channel message(s), and ${recentToolRuns.length} recent tool run(s).`
+                        `Loaded ${recentTurns.length} prior conversation turn(s), ${channelContext.length} recent channel message(s), ${recentToolRuns.length} recent tool run(s), and reused ${evidence.length} evidence item(s).`
                     ),
                 };
             })
@@ -895,7 +920,10 @@ export class Runtime {
                         timestamp: Date.now(),
                     });
 
-                    if (evidenceDecision.sufficient && toolHistory.length > 0) {
+                    const evidenceCounts = countEvidence({ evidence });
+                    const hasReusableMessageEvidence = evidenceCounts.messageEvidenceCount > 0;
+
+                    if (evidenceDecision.sufficient && (toolHistory.length > 0 || hasReusableMessageEvidence)) {
                         confidence = evidenceDecision.confidence;
                         stopReason = "evidence_sufficient";
                         break;
@@ -1028,6 +1056,34 @@ export class Runtime {
                             timestamp: Date.now(),
                         }
                     );
+                    if (tool === "retrieve_messages") {
+                        const diagnostics =
+                            output.data && typeof output.data === "object"
+                                ? (output.data as Record<string, unknown>).retrievalDiagnostics
+                                : null;
+                        if (diagnostics && typeof diagnostics === "object") {
+                            const scopedEmptyRetryAttempted = Boolean(
+                                (diagnostics as Record<string, unknown>).scopedEmptyRetryAttempted
+                            );
+                            const scopedEmptyRetryRecovered = Boolean(
+                                (diagnostics as Record<string, unknown>).scopedEmptyRetryRecovered
+                            );
+                            const retryStrategy = String(
+                                (diagnostics as Record<string, unknown>).retryStrategy || "none"
+                            );
+                            traceEvents.push({
+                                label: "retrieval_diagnostics",
+                                detail:
+                                    `continuationInput=${
+                                        step.arguments.cursor || step.arguments.excludedMessageIds
+                                            ? "yes"
+                                            : "no"
+                                    }; retryAttempted=${scopedEmptyRetryAttempted ? "yes" : "no"}; ` +
+                                    `retryRecovered=${scopedEmptyRetryRecovered ? "yes" : "no"}; strategy=${retryStrategy}`,
+                                timestamp: Date.now(),
+                            });
+                        }
+                    }
 
                     await DiscordMemoryService.recordToolRun(
                         state.requestId,
@@ -1078,8 +1134,10 @@ export class Runtime {
                     actorId: state.actorId,
                     candidateCapabilities: state.candidateCapabilities,
                 });
-                if (stopReason === "insufficient_evidence" && finalEvidenceDecision.sufficient) {
+                if (finalEvidenceDecision.sufficient) {
                     stopReason = "evidence_sufficient";
+                } else if (stopReason === "evidence_sufficient") {
+                    stopReason = "insufficient_evidence";
                 }
                 confidence = finalEvidenceDecision.confidence;
                 traceEvents.push({
@@ -1113,6 +1171,34 @@ export class Runtime {
                 };
             })
             .addNode("synthesize_answer", async (state: RuntimeState) => {
+                const evidenceCounts = countEvidence(state);
+                const shouldForceInsufficientGuard =
+                    state.mode === "research" &&
+                    state.confidence === "insufficient" &&
+                    evidenceCounts.strongMessageEvidenceCount === 0;
+
+                if (shouldForceInsufficientGuard) {
+                    const responseDraft = buildConversationalRecovery({
+                        question: state.question,
+                        confidence: "insufficient",
+                        evidence: [],
+                        replyContext: state.replyContext,
+                        priorTurns: state.recentTurns,
+                        stopReason: state.stopReason,
+                    });
+
+                    return {
+                        responseDraft,
+                        confidence: "insufficient" as GroundedAnswerMode,
+                        stopReason: state.stopReason || "insufficient_evidence",
+                        traceEvents: appendTrace(
+                            state,
+                            "synthesize_answer",
+                            "confidence=insufficient; web=off; enforced=no-guess guard"
+                        ),
+                    };
+                }
+
                 const effectiveConfidence =
                     state.mode === "research" && state.confidence === "insufficient"
                         ? answerConfidenceForInsufficient(state)

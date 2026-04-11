@@ -193,14 +193,19 @@ const capabilities: RuntimeCapability[] = [
                       : result.semanticMatchCount
                         ? "semantic evidence"
                         : "no message evidence";
+                        const diagnosticsSuffix = result.retrievalDiagnostics?.scopedEmptyRetryAttempted
+                                ? ` (scoped retry: ${result.retrievalDiagnostics.retryStrategy}, recovered=${
+                                            result.retrievalDiagnostics.scopedEmptyRetryRecovered ? "yes" : "no"
+                                    })`
+                                : "";
 
             return {
                 tool: "retrieve_messages",
                 summary: result.combinedResults.length
-                    ? `${qualityLabel}; ${result.historyMessageCount} history and ${result.semanticMatchCount} semantic result(s) ${result.liveEscalated ? "after refreshing Discord history" : "from cached Discord history"}.`
+                                        ? `${qualityLabel}; ${result.historyMessageCount} history and ${result.semanticMatchCount} semantic result(s) ${result.liveEscalated ? "after refreshing Discord history" : "from cached Discord history"}.${diagnosticsSuffix}`
                     : result.liveEscalated
-                      ? "No relevant messages found even after refreshing Discord history."
-                      : "No relevant cached messages found yet.",
+                                            ? `No relevant messages found even after refreshing Discord history.${diagnosticsSuffix}`
+                                            : `No relevant cached messages found yet.${diagnosticsSuffix}`,
                 data: result,
             };
         },

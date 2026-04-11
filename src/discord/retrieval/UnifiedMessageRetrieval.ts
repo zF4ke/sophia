@@ -84,13 +84,16 @@ function buildHistoryPreviewResults(
 function buildCursorMap(
     channelIds: string[],
     historyMessages: RetrievedChunk[],
-    previous: Record<string, string | null>
+    previous: Record<string, string | null>,
+    crawlOldestByChannel: Record<string, string | null>
 ): Record<string, string | null> {
     const next = { ...previous };
     for (const channelId of channelIds) {
         const channelRows = historyMessages.filter((row) => row.channelId === channelId);
         if (channelRows.length) {
             next[channelId] = channelRows[0]?.messageId || null;
+        } else if (crawlOldestByChannel[channelId]) {
+            next[channelId] = crawlOldestByChannel[channelId];
         } else if (!(channelId in next)) {
             next[channelId] = null;
         }
@@ -220,6 +223,12 @@ export class UnifiedMessageRetrieval {
                   : [];
         const historyCursor = options.cursor?.history || {};
         const semanticCursor = options.cursor?.semantic || null;
+        const hasHistoryCursor = Object.keys(historyCursor).length > 0;
+        const hasExcludedMessageIds = Boolean(options.excludedMessageIds?.length);
+        const strictScopedQuery =
+            options.authorId != null ||
+            options.beforeTimestamp != null ||
+            options.afterTimestamp != null;
         const scope = {
             guildId: options.guild?.id || null,
             channelIds: scopedChannelIds.length ? scopedChannelIds : undefined,
@@ -230,10 +239,37 @@ export class UnifiedMessageRetrieval {
             semanticCursor,
         };
 
+        async function fetchHistoryMessages(options: {
+            guildId: string | null;
+            channelIds: string[];
+            authorId: string | null;
+            beforeTimestamp: number | null;
+            afterTimestamp: number | null;
+            perChannelOldestMessageId: Record<string, string | null>;
+            excludedMessageIds?: string[];
+            limit: number;
+        }): Promise<RetrievedChunk[]> {
+            return (await DiscordMemoryService.getChannelHistoryPageAsync(options)).map<RetrievedChunk>((message) => ({
+                messageId: message.id,
+                channelId: message.channelId,
+                channelName: message.channelName,
+                guildId: message.guildId,
+                authorId: message.authorId,
+                authorName: message.authorName,
+                content: message.content,
+                createdTimestamp: message.createdTimestamp,
+                jumpLink: message.jumpLink,
+                lexicalScore: 0,
+                semanticScore: 0,
+                recencyScore: 1,
+                totalScore: 1,
+            }));
+        }
+
         let historyMessages =
             mode === "semantic"
                 ? []
-                : (await DiscordMemoryService.getChannelHistoryPageAsync({
+                : await fetchHistoryMessages({
                       guildId: options.guild?.id || null,
                       channelIds: scopedChannelIds,
                       authorId: options.authorId || null,
@@ -242,21 +278,7 @@ export class UnifiedMessageRetrieval {
                       perChannelOldestMessageId: historyCursor,
                       excludedMessageIds: options.excludedMessageIds,
                       limit,
-                  })).map<RetrievedChunk>((message) => ({
-                      messageId: message.id,
-                      channelId: message.channelId,
-                      channelName: message.channelName,
-                      guildId: message.guildId,
-                      authorId: message.authorId,
-                      authorName: message.authorName,
-                      content: message.content,
-                      createdTimestamp: message.createdTimestamp,
-                      jumpLink: message.jumpLink,
-                      lexicalScore: 0,
-                      semanticScore: 0,
-                      recencyScore: 1,
-                      totalScore: 1,
-                  }));
+                  });
         let semanticMatches =
             mode === "history"
                 ? []
@@ -268,6 +290,9 @@ export class UnifiedMessageRetrieval {
         let sourceOrigin: MultiLaneRetrievalResult["sourceOrigin"] =
             historyMessages.length || semanticMatches.length ? "cache" : "none";
         const crawlResults: ChannelCrawlResult[] = [];
+        let retryStrategy: "none" | "without_excluded" | "without_cursor" = "none";
+        let scopedEmptyRetryAttempted = false;
+        let scopedEmptyRetryRecovered = false;
 
         if (options.guild && shouldEscalateLive(mode, historyMessages, semanticMatches, scopedChannelIds)) {
             const rankedChannels = scopedChannelIds.length
@@ -314,7 +339,7 @@ export class UnifiedMessageRetrieval {
                 historyMessages =
                     mode === "semantic"
                         ? []
-                        : (await DiscordMemoryService.getChannelHistoryPageAsync({
+                        : await fetchHistoryMessages({
                               guildId: options.guild?.id || null,
                               channelIds: searchedChannelIds,
                               authorId: options.authorId || null,
@@ -323,21 +348,7 @@ export class UnifiedMessageRetrieval {
                               perChannelOldestMessageId: historyCursor,
                               excludedMessageIds: options.excludedMessageIds,
                               limit,
-                          })).map<RetrievedChunk>((message) => ({
-                              messageId: message.id,
-                              channelId: message.channelId,
-                              channelName: message.channelName,
-                              guildId: message.guildId,
-                              authorId: message.authorId,
-                              authorName: message.authorName,
-                              content: message.content,
-                              createdTimestamp: message.createdTimestamp,
-                              jumpLink: message.jumpLink,
-                              lexicalScore: 0,
-                              semanticScore: 0,
-                              recencyScore: 1,
-                              totalScore: 1,
-                          }));
+                          });
                 semanticMatches =
                     mode === "history"
                         ? []
@@ -349,7 +360,11 @@ export class UnifiedMessageRetrieval {
                               },
                               limit
                           );
-                if (!historyMessages.length && searchedChannelIds.length) {
+                const allowPreviewFallback =
+                    options.authorId == null &&
+                    options.beforeTimestamp == null &&
+                    options.afterTimestamp == null;
+                if (!historyMessages.length && searchedChannelIds.length && allowPreviewFallback) {
                     historyMessages = buildHistoryPreviewResults(
                         crawlResults,
                         options.guild?.id || null,
@@ -360,12 +375,56 @@ export class UnifiedMessageRetrieval {
             }
         }
 
+        if (mode !== "semantic" && strictScopedQuery && !historyMessages.length) {
+            if (hasExcludedMessageIds || hasHistoryCursor) {
+                scopedEmptyRetryAttempted = true;
+            }
+
+            if (hasExcludedMessageIds) {
+                const retriedWithoutExcluded = await fetchHistoryMessages({
+                    guildId: options.guild?.id || null,
+                    channelIds: searchedChannelIds,
+                    authorId: options.authorId || null,
+                    beforeTimestamp: options.beforeTimestamp ?? null,
+                    afterTimestamp: options.afterTimestamp ?? null,
+                    perChannelOldestMessageId: historyCursor,
+                    limit,
+                });
+                if (retriedWithoutExcluded.length) {
+                    historyMessages = retriedWithoutExcluded;
+                    retryStrategy = "without_excluded";
+                    scopedEmptyRetryRecovered = true;
+                }
+            }
+
+            if (!historyMessages.length && hasHistoryCursor) {
+                const retriedWithoutCursor = await fetchHistoryMessages({
+                    guildId: options.guild?.id || null,
+                    channelIds: searchedChannelIds,
+                    authorId: options.authorId || null,
+                    beforeTimestamp: options.beforeTimestamp ?? null,
+                    afterTimestamp: options.afterTimestamp ?? null,
+                    perChannelOldestMessageId: {},
+                    limit,
+                });
+                if (retriedWithoutCursor.length) {
+                    historyMessages = retriedWithoutCursor;
+                    retryStrategy = "without_cursor";
+                    scopedEmptyRetryRecovered = true;
+                }
+            }
+        }
+
         const combinedResults = buildCombinedResults(historyMessages, semanticMatches, limit);
+        const crawlOldestByChannel = Object.fromEntries(
+            crawlResults.map((crawl) => [crawl.channelId, crawl.oldestFetchedMessageId || null])
+        );
         const strength = summarizeStrength(mode === "history" ? historyMessages : combinedResults);
         const historyContinuationCursor = buildCursorMap(
             searchedChannelIds,
             historyMessages,
-            historyCursor
+            historyCursor,
+            crawlOldestByChannel
         );
         const semanticContinuationCursor = buildSemanticCursor(semanticMatches);
         const historyExhaustion = await buildExhaustion(
@@ -378,7 +437,7 @@ export class UnifiedMessageRetrieval {
             mode === "history" ? true : semanticMatches.length < limit;
         const exhaustion = buildLaneExhaustion(historyExhaustion, semanticExhausted);
         const historyContinuationAvailable =
-            !historyExhaustion.exhausted && historyMessages.length > 0;
+            !historyExhaustion.exhausted && (historyMessages.length > 0 || strictScopedQuery);
         const semanticContinuationAvailable =
             mode !== "history" && !semanticExhausted && semanticMatches.length > 0;
         const continuation = {
@@ -434,6 +493,13 @@ export class UnifiedMessageRetrieval {
             beforeTimestamp: options.beforeTimestamp ?? null,
             afterTimestamp: options.afterTimestamp ?? null,
             excludedMessageIds: options.excludedMessageIds || [],
+            retrievalDiagnostics: {
+                strictScopedQuery,
+                continuationInputsApplied: hasHistoryCursor || hasExcludedMessageIds,
+                scopedEmptyRetryAttempted,
+                scopedEmptyRetryRecovered,
+                retryStrategy,
+            },
         };
     }
 }

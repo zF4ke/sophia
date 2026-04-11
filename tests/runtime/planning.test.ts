@@ -6,6 +6,7 @@ import {
     guessPlan,
     planNextStep,
     planWithModel,
+    summarizeEvidence,
 } from "@/runtime/planning";
 import type { TurnInput, TurnIntent } from "@/runtime/contracts";
 
@@ -280,6 +281,34 @@ describe("runtime planning", () => {
         });
     });
 
+    it("generic step fallback resolves named member references before broader retrieval", () => {
+        const step = fallbackStepDecision({
+            question:
+                "9 de fevereiro o openrosen mandou um link do youtube no canal de comandos, ele referiu de quem era?",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
+            candidateCapabilities: [
+                "resolve_member_identity",
+                "resolve_channel_targets",
+                "retrieve_messages",
+            ],
+            toolHistory: [],
+        });
+
+        expect(step).toEqual({
+            nextCapability: "resolve_member_identity",
+            arguments: { query: "openrosen" },
+            reason: "Resolve the exact member reference before broader retrieval.",
+            learnedExpectation:
+                "Return the best current-guild identity match or historical fallback.",
+        });
+    });
+
     it("generic step fallback reuses named channel references from the replied message", () => {
         const step = fallbackStepDecision({
             question: "tenta de novo",
@@ -451,6 +480,65 @@ describe("runtime planning", () => {
         });
     });
 
+    it("skips structure inspection for forensic date/member lookups and retrieves immediately", () => {
+        const step = fallbackStepDecision({
+            question:
+                "9 de fevereiro o openrosen mandou um link no canal comandos. ele referiu de quem era?",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: {
+                query: "openrosen",
+                resolvedId: "u-open",
+                displayName: "Openrosen",
+                username: "oneperson",
+                globalName: null,
+                nickname: null,
+                isBot: false,
+                isCurrentGuildMember: true,
+                source: "live_search",
+                confidence: "high",
+                roles: [],
+            },
+            activeChannelTarget: {
+                query: "comandos",
+                resolvedIds: ["c-comandos"],
+                entries: [],
+                exactIdMatch: false,
+                confidence: "high",
+            },
+            activeResolvedChannelIds: ["c-comandos"],
+            activeRetrievalSession: null,
+            turnIntent: intentWith({
+                beforeTimestamp: Date.parse("2026-02-10T00:00:00Z"),
+                afterTimestamp: Date.parse("2026-02-09T00:00:00Z"),
+            }),
+            candidateCapabilities: [
+                "resolve_member_identity",
+                "list_guild_structure",
+                "retrieve_messages",
+            ],
+            toolHistory: [
+                {
+                    tool: "resolve_member_identity",
+                    arguments: { query: "openrosen" },
+                    summary: "resolved",
+                    learned: "resolved",
+                    confidenceImproved: true,
+                    output: { tool: "resolve_member_identity", summary: "resolved", data: {} },
+                    durationMs: 1,
+                },
+            ],
+        });
+
+        expect(step.nextCapability).toBe("retrieve_messages");
+        expect(step.arguments).toMatchObject({
+            channelIds: ["c-comandos"],
+            authorId: "u-open",
+            afterTimestamp: Date.parse("2026-02-09T00:00:00Z"),
+            beforeTimestamp: Date.parse("2026-02-10T00:00:00Z"),
+        });
+    });
+
     it("continues the active retrieval session with stable until-yesterday bounds", () => {
         const step = fallbackStepDecision({
             question: "continue",
@@ -501,6 +589,62 @@ describe("runtime planning", () => {
             reason: "Continue the active scoped history read without restarting from the beginning.",
             learnedExpectation: "Return the next non-duplicate page from the active retrieval session.",
         });
+    });
+
+    it("does not auto-apply cursor or exclusions on a fresh follow-up without continuation intent", () => {
+        const step = fallbackStepDecision({
+            question: "ele comentou de quem era?",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: {
+                query: "openrosen",
+                resolvedId: "u-open",
+                displayName: "Openrosen",
+                username: "oneperson",
+                globalName: null,
+                nickname: null,
+                isBot: false,
+                isCurrentGuildMember: true,
+                source: "live_search",
+                confidence: "high",
+                roles: [],
+            },
+            activeChannelTarget: {
+                query: "comandos",
+                resolvedIds: ["c-comandos"],
+                entries: [],
+                exactIdMatch: false,
+                confidence: "high",
+            },
+            activeResolvedChannelIds: ["c-comandos"],
+            turnIntent: intentWith({ continuation: false }),
+            activeRetrievalSession: {
+                mode: "history",
+                channelIds: ["c-comandos"],
+                authorId: "u-open",
+                beforeTimestamp: Date.parse("2026-02-10T00:00:00Z"),
+                afterTimestamp: Date.parse("2026-02-09T00:00:00Z"),
+                historyCursorByChannel: { "c-comandos": "100" },
+                semanticCursor: null,
+                seenMessageIds: ["104", "103", "102"],
+                accumulatedUniqueCount: 3,
+                exhaustedChannelIds: [],
+                historyExhausted: false,
+                semanticExhausted: true,
+                continuationAvailable: true,
+            },
+            candidateCapabilities: ["retrieve_messages"],
+            toolHistory: [],
+        });
+
+        expect(step.nextCapability).toBe("retrieve_messages");
+        expect(step.arguments).toMatchObject({
+            query: "ele comentou de quem era?",
+            channelIds: ["c-comandos"],
+            authorId: "u-open",
+        });
+        expect(step.arguments).not.toHaveProperty("cursor");
+        expect(step.arguments).not.toHaveProperty("excludedMessageIds");
     });
 
     it("resets the active retrieval session when the user changes scope mid-session", () => {
@@ -581,6 +725,67 @@ describe("runtime planning", () => {
             learnedExpectation:
                 "Return exact message-channel ids for the named current-guild target.",
         });
+    });
+
+    it("parses ISO-like timestamp strings from model step arguments into numeric bounds", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            nextCapability: "retrieve_messages",
+            arguments: {
+                beforeTimestamp: "2025-02-10T00:00:00Z",
+                afterTimestamp: "2025-02-09T00:00:00Z",
+            },
+            reason: "Read bounded history.",
+            learnedExpectation: "Find relevant rows within the requested window.",
+        } as any);
+
+        const step = await planNextStep({
+            question: "o que aconteceu no canal comandos?",
+            goal: "Find bounded message history.",
+            successCriteria: "Use grounded evidence in the requested date window.",
+            confidence: "best_effort",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: {
+                query: "comandos",
+                resolvedIds: ["c-comandos"],
+                entries: [],
+                exactIdMatch: false,
+                confidence: "high",
+            },
+            activeResolvedChannelIds: ["c-comandos"],
+            activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
+            candidateCapabilities: ["retrieve_messages"],
+            toolHistory: [],
+        });
+
+        expect(step.nextCapability).toBe("retrieve_messages");
+        expect(step.arguments).toMatchObject({
+            channelIds: ["c-comandos"],
+            beforeTimestamp: Date.parse("2025-02-10T00:00:00Z"),
+            afterTimestamp: Date.parse("2025-02-09T00:00:00Z"),
+        });
+    });
+
+    it("includes ISO timestamps in summarized evidence when available", () => {
+        const summary = summarizeEvidence({
+            evidence: [
+                {
+                    tool: "retrieve_messages",
+                    summary: "",
+                    content: "example",
+                    evidenceRole: "history_evidence",
+                    strength: "strong",
+                    sourceOrigin: "cache",
+                    createdTimestamp: Date.parse("2025-02-09T10:11:12Z"),
+                    channelName: "comandos",
+                    authorName: "Openrosen",
+                },
+            ],
+        });
+
+        expect(summary).toContain("@2025-02-09T10:11:12.000Z");
     });
 
     it("treats direct requester resolution as sufficient evidence", () => {

@@ -64,6 +64,9 @@ This is retrieval continuity.
 
 Sophia stores observed and fetched Discord messages locally so future searches can be answered faster without always hitting Discord first.
 
+`load_memory` now also reconstructs reusable evidence from recent persisted tool outputs.
+That lets follow-up turns answer immediately when the needed scoped message evidence was already retrieved in the same conversation.
+
 ## How She Knows Who Is Talking And Who Said What
 
 Sophia keeps requester identity and evidence identity separate.
@@ -151,6 +154,28 @@ It then returns one plan:
 - `candidateCapabilities`
 - `confidence`
 
+### Intent Arbitration Diagram
+
+```mermaid
+flowchart TD
+    A[Question + active session] --> B[Deterministic intent extraction]
+    A --> C[Model intent block from plan_turn]
+    B --> D[mergeIntent arbitration]
+    C --> D
+    D --> E[TurnIntent]
+    E --> F[continuation true/false]
+    E --> G[retrievalMode history/semantic/mixed]
+    E --> H[before/after time bounds]
+    F --> I[planNextStep arguments]
+    G --> I
+    H --> I
+```
+
+This is the main composition boundary now:
+- deterministic intent remains the reliability guardrail
+- model intent fills gaps and broad paraphrases
+- merged `TurnIntent` drives continuation, lane preference, and time bounds in step shaping
+
 ### `run_research_loop`
 
 If she needs Discord evidence, she runs a bounded loop with registry-driven capabilities.
@@ -170,6 +195,46 @@ For category/channel questions, the intended chain is:
 3. retrieve scoped messages from the resolved child channels
 
 The runtime now defaults to enough research passes to complete that chain even when the channel is not indexed yet and `retrieve_messages` has to do a cache-first miss followed by live Discord escalation.
+
+### Capability Composition Diagram
+
+```mermaid
+flowchart LR
+    Q[User question] --> P[plan_turn]
+    P --> C1[resolve_channel_targets]
+    P --> C2[resolve_member_identity]
+    P --> C3[list_guild_structure]
+    P --> C4[retrieve_messages]
+    P --> C5[get_member_profile]
+    P --> C6[list_members]
+    P --> C7[get_guild_context]
+
+    C1 --> C3
+    C3 --> C4
+    C2 --> C5
+    C2 --> C4
+
+    C4 --> J[judge_evidence]
+    C5 --> J
+    C6 --> J
+    C7 --> J
+    C3 --> J
+
+    J -->|sufficient| S[synthesize_answer]
+    J -->|insufficient| P2[planNextStep]
+    P2 --> C1
+    P2 --> C2
+    P2 --> C3
+    P2 --> C4
+    P2 --> C5
+    P2 --> C6
+    P2 --> C7
+```
+
+Read this as a capability composer, not a fixed script:
+- different questions activate different subgraphs
+- composition is bounded by budgets, loop guards, and capability validation
+- retrieval sessions let repeated turns continue composition statefully
 
 ## How `retrieve_messages` Works Now
 
@@ -193,6 +258,16 @@ Default behavior:
 - if the user is asking what a channel or category contains, history is the default lane
 - semantic matches are supplemental when the user is asking for a specific concept inside that same scope
 - continuation reuses the same scoped retrieval session instead of restarting from scratch
+
+Cross-turn continuation is now explicit:
+- cursor and seen-id exclusion inputs are reused only when the turn intent is continuation-style (`continue`, `de novo`, `again`, etc.)
+- fresh follow-up questions in the same scope do not automatically inherit prior exclusions
+- this prevents follow-up turns from hiding messages that were just found in the previous turn
+
+For strict scoped retrieval (author and/or time bounded), the retrieval lane now has a guarded recovery path:
+- if continuation inputs return an empty page, retry once without exclusions
+- if still empty and a cursor was applied, retry once without cursor
+- emit retrieval diagnostics so debug traces show when a retry recovered evidence
 
 ### Retrieval Lanes Diagram
 
@@ -220,6 +295,33 @@ flowchart TD
     G --> H[pull older non-duplicate page]
     D -->|no| I[synthesize answer]
 ```
+
+### Research Stop Conditions Diagram
+
+```mermaid
+flowchart TD
+    A[run_research_loop pass] --> B[judge_evidence]
+    B -->|sufficient| C[evidence_sufficient]
+    B -->|insufficient| D[planNextStep]
+    D --> E{next capability valid?}
+    E -->|no| F[no_useful_next_step]
+    E -->|yes| G[execute capability]
+    G --> H{budget/latency/repeat guard hit?}
+    H -->|yes| I[budget_exhausted or confidence_plateau]
+    H -->|no| A
+    C --> Z[synthesize_answer]
+    F --> Z
+    I --> Z
+```
+
+This is why Sophia can compose reliably without becoming an uncontrolled agent loop:
+- she can chain capabilities adaptively
+- she always exits through explicit stop reasons
+- synthesis gets those stop signals and can disclose partial coverage when continuation remains available
+
+Synthesis now has an additional guard:
+- when confidence is `insufficient` and there is no strong message evidence, Sophia must avoid speculative factual/entity guesses
+- she should ask a targeted follow-up or propose a concrete next retrieval step instead
 
 ### Category And Channel Questions
 

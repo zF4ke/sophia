@@ -54,10 +54,57 @@ const TIME_PATTERNS = {
         /\b(depois|desde)\b/i,
     ],
     explicitDate: /\b(20\d{2}-\d{2}-\d{2})\b/,
+    dayMonthDate:
+        /\b(0?[1-9]|[12]\d|3[01])\s*(?:de\s+)?(jan(?:eiro)?|fev(?:ereiro)?|mar(?:co)?|abr(?:il)?|mai(?:o)?|jun(?:ho)?|jul(?:ho)?|ago(?:sto)?|set(?:embro)?|out(?:ubro)?|nov(?:embro)?|dez(?:embro)?|january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|october|oct|november|nov|december|dec)(?:\s*(?:de\s*)?(20\d{2}))?\b/i,
     beforeYesterday: [
         /before yesterday/i,
         /before ontem/i,
     ],
+};
+
+const MONTH_ALIASES: Record<string, number> = {
+    jan: 0,
+    janeiro: 0,
+    january: 0,
+    fev: 1,
+    fevereiro: 1,
+    feb: 1,
+    february: 1,
+    mar: 2,
+    marco: 2,
+    march: 2,
+    abr: 3,
+    abril: 3,
+    apr: 3,
+    april: 3,
+    mai: 4,
+    maio: 4,
+    may: 4,
+    jun: 5,
+    junho: 5,
+    june: 5,
+    jul: 6,
+    julho: 6,
+    july: 6,
+    ago: 7,
+    agosto: 7,
+    aug: 7,
+    august: 7,
+    set: 8,
+    setembro: 8,
+    sep: 8,
+    september: 8,
+    out: 9,
+    outubro: 9,
+    oct: 9,
+    october: 9,
+    nov: 10,
+    novembro: 10,
+    november: 10,
+    dez: 11,
+    dezembro: 11,
+    dec: 11,
+    december: 11,
 };
 
 // ---------------------------------------------------------------------------
@@ -124,6 +171,7 @@ function extractDeterministicTimeBounds(compact: string): {
     afterTimestamp?: number;
 } {
     const now = new Date();
+    const nowMs = now.getTime();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
 
@@ -131,6 +179,7 @@ function extractDeterministicTimeBounds(compact: string): {
     const explicitTimestamp = explicitDateMatch
         ? Date.parse(`${explicitDateMatch[1]}T00:00:00`)
         : NaN;
+    const dayMonthDateMatch = compact.match(TIME_PATTERNS.dayMonthDate);
     const hasUpperBound = matchesAny(compact, TIME_PATTERNS.upperBound);
 
     if (matchesAny(compact, TIME_PATTERNS.lastWeek)) {
@@ -164,6 +213,40 @@ function extractDeterministicTimeBounds(compact: string): {
         }
         if (matchesAny(compact, TIME_PATTERNS.lowerBound)) {
             return { afterTimestamp: explicitTimestamp };
+        }
+        return {
+            afterTimestamp: explicitTimestamp,
+            beforeTimestamp: explicitTimestamp + 24 * 60 * 60 * 1000,
+        };
+    }
+
+    if (dayMonthDateMatch) {
+        const day = Number(dayMonthDateMatch[1]);
+        const rawMonth = normalize(dayMonthDateMatch[2] || "").replace(/\.$/, "");
+        const month = MONTH_ALIASES[rawMonth];
+        if (Number.isFinite(day) && day >= 1 && day <= 31 && month != null) {
+            const explicitYear = dayMonthDateMatch[3] ? Number(dayMonthDateMatch[3]) : null;
+            const inferredYear =
+                explicitYear ??
+                (() => {
+                    const thisYearStart = new Date(now.getFullYear(), month, day).getTime();
+                    // If date hasn't happened yet this year, assume previous year.
+                    return thisYearStart > nowMs ? now.getFullYear() - 1 : now.getFullYear();
+                })();
+
+            const start = new Date(inferredYear, month, day).getTime();
+            const end = start + 24 * 60 * 60 * 1000;
+
+            if (hasUpperBound) {
+                return { beforeTimestamp: end };
+            }
+            if (matchesAny(compact, TIME_PATTERNS.lowerBound)) {
+                return { afterTimestamp: start };
+            }
+            return {
+                afterTimestamp: start,
+                beforeTimestamp: end,
+            };
         }
     }
 

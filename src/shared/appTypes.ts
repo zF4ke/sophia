@@ -141,6 +141,13 @@ export interface MultiLaneRetrievalResult {
     beforeTimestamp: number | null;
     afterTimestamp: number | null;
     excludedMessageIds: string[];
+    retrievalDiagnostics?: {
+        strictScopedQuery: boolean;
+        continuationInputsApplied: boolean;
+        scopedEmptyRetryAttempted: boolean;
+        scopedEmptyRetryRecovered: boolean;
+        retryStrategy: "none" | "without_excluded" | "without_cursor";
+    };
 }
 
 export interface ChannelCandidate {
@@ -247,6 +254,7 @@ export interface ChannelCrawlResult {
     messagesFetched: number;
     messagesStored: number;
     exhausted: boolean;
+    oldestFetchedMessageId?: string | null;
     queryHint: string | null;
     backgroundIngestQueued?: boolean;
     previewMessages?: Array<{

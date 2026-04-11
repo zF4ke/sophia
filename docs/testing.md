@@ -20,6 +20,10 @@ It keeps the model mocked so the runtime can be validated deterministically:
 - debug rendering
 - storage behavior
 - runtime guardrails
+- follow-up evidence reuse across turns
+- continuation input gating (no automatic cross-turn exclusions without explicit continuation intent)
+- strict scoped empty-result recovery retries in retrieval
+- insufficient-confidence no-speculation guard behavior
 
 These tests are not trying to prove that a remote model will always choose the perfect plan. They are there to prove that the runtime, tool contracts, and orchestration stay correct.
 
@@ -68,3 +72,8 @@ Add new live stories when changing:
 - synthesis prompts
 - tool-composition behavior
 - answer style after grounded retrieval
+
+Recent deterministic regression additions are in:
+- `tests/runtime/runtimeUserStories.test.ts` (follow-up can answer from reused prior evidence without rerunning tools)
+- `tests/runtime/planning.test.ts` (fresh follow-ups do not auto-apply cursor/exclusions)
+- `tests/discord/UnifiedMessageRetrieval.test.ts` (strict scoped retry recovers hidden rows)

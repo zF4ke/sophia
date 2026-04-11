@@ -166,6 +166,25 @@ describe("extractDeterministicIntent", () => {
             expect(intent.afterTimestamp).toBe(Date.parse("2024-06-01T00:00:00"));
         });
 
+        it("parses Portuguese day-month expressions as exact one-day windows", () => {
+            const intent = extractDeterministicIntent("9 de fevereiro o openrosen mandou isso");
+            expect(intent.afterTimestamp).toBeDefined();
+            expect(intent.beforeTimestamp).toBeDefined();
+            const dayMs = 24 * 60 * 60 * 1000;
+            expect(intent.beforeTimestamp! - intent.afterTimestamp!).toBe(dayMs);
+        });
+
+        it("infers current or previous year for day-month expressions without explicit year", () => {
+            const now = new Date();
+            const thisYear = now.getFullYear();
+            const thisYearStart = new Date(thisYear, 1, 9).getTime();
+            const expectedYear = thisYearStart > Date.now() ? thisYear - 1 : thisYear;
+
+            const intent = extractDeterministicIntent("9 de fevereiro");
+            expect(intent.afterTimestamp).toBe(new Date(expectedYear, 1, 9).getTime());
+            expect(intent.beforeTimestamp).toBe(new Date(expectedYear, 1, 10).getTime());
+        });
+
         it("returns no time bounds for generic questions", () => {
             const intent = extractDeterministicIntent("who is alice");
             expect(intent.beforeTimestamp).toBeUndefined();

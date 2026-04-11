@@ -56,9 +56,124 @@ describe("runtime user stories", () => {
         (Runtime as any).requestContext = new Map();
 
         vi.spyOn(DiscordMemoryService, "getRecentRuntimeRunsAsync").mockResolvedValue([]);
+        vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
+    });
+
+    it("answers a follow-up directly from reused prior retrieval evidence without rerunning tools", async () => {
+        const followUpToolRun = {
+            requestId: "req-previous",
+            toolName: "retrieve_messages",
+            argumentsJson: JSON.stringify({
+                query: "9 de fevereiro openrosen youtube",
+                channelIds: ["c-comandos"],
+                authorId: "u-open",
+            }),
+            summary: "ordered history evidence; 2 history and 0 semantic result(s) from cached Discord history.",
+            learned: "Openrosen mencionou que parecia M4rkim.",
+            outputJson: JSON.stringify({
+                tool: "retrieve_messages",
+                summary: "ordered history evidence",
+                data: {
+                    mode: "history",
+                    sourceOrigin: "cache",
+                    targetAuthorId: "u-open",
+                    targetChannelIds: ["c-comandos"],
+                    historyMessages: [
+                        {
+                            messageId: "m1",
+                            channelId: "c-comandos",
+                            channelName: "comandos",
+                            guildId: "g1",
+                            authorId: "u-open",
+                            authorName: "Openrosen",
+                            content: "A foto parecia o M4rkim nessa thumb.",
+                            createdTimestamp: 1707510000000,
+                            jumpLink: "https://discord.com/channels/g1/c-comandos/m1",
+                            lexicalScore: 4,
+                            semanticScore: 0,
+                            recencyScore: 0,
+                            totalScore: 4,
+                        },
+                    ],
+                    semanticMatches: [],
+                    combinedResults: [
+                        {
+                            messageId: "m1",
+                            channelId: "c-comandos",
+                            channelName: "comandos",
+                            guildId: "g1",
+                            authorId: "u-open",
+                            authorName: "Openrosen",
+                            content: "A foto parecia o M4rkim nessa thumb.",
+                            createdTimestamp: 1707510000000,
+                            jumpLink: "https://discord.com/channels/g1/c-comandos/m1",
+                            lexicalScore: 4,
+                            semanticScore: 0,
+                            recencyScore: 0,
+                            totalScore: 4,
+                        },
+                    ],
+                    continuation: {
+                        history: {
+                            perChannelOldestMessageId: { "c-comandos": "m1" },
+                            continuationAvailable: true,
+                        },
+                        semantic: {
+                            cursor: null,
+                            continuationAvailable: false,
+                        },
+                        continuationAvailable: true,
+                    },
+                },
+            }),
+            createdTimestamp: Date.now() - 5_000,
+        };
+
+        vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([
+            followUpToolRun as any,
+        ]);
+
+        vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
+            const traceLabel = options?.traceContext?.traceLabel;
+            if (traceLabel === "runtime_plan_turn") {
+                return {
+                    mode: "research",
+                    reason: "Use prior scoped evidence if available.",
+                    goal: "Answer the follow-up from grounded context.",
+                    successCriteria: "Avoid redundant retrieval when evidence already covers the question.",
+                    candidateCapabilities: ["retrieve_messages"],
+                    confidence: "best_effort",
+                } as any;
+            }
+            if (traceLabel === "runtime_judge_evidence") {
+                const prompt = String((_messages?.[1] as any)?.content || "");
+                if (prompt.includes("M4rkim") && prompt.includes("Openrosen")) {
+                    return {
+                        sufficient: true,
+                        confidence: "confident",
+                        reason: "Prior message evidence already answers the follow-up.",
+                    } as any;
+                }
+                return fallback as any;
+            }
+            return fallback as any;
+        });
+
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
+            "Sim, ele comparou a foto com o M4rkim."
+        );
+
+        const result = await Runtime.answer(
+            createInput({
+                question: "ele comentou com qual artista parecia?",
+            })
+        );
+
+        expect(result.answer).toBe("Sim, ele comparou a foto com o M4rkim.");
+        expect(result.toolRuns).toEqual([]);
     });
 
     it("answers requester identity naturally after resolving the requester exactly", async () => {

@@ -79,6 +79,14 @@ function extractStructuralMemberReference(
     question: string,
     replyContext?: Pick<TurnInput, "replyContext">["replyContext"] | null
 ): string | null {
+    const namedMemberMatch = question.match(
+        /\b(?:o|a)?\s*([\p{L}\p{N}_.-]{3,32})\s+(?:mandou|enviou|postou|disse|falou|citou|mencionou)\b/iu
+    )?.[1];
+
+    if (namedMemberMatch) {
+        return namedMemberMatch;
+    }
+
     return (
         extractMemberMentionId(question) ||
         extractBareSnowflake(question) ||
@@ -201,6 +209,18 @@ function sanitizeToolArgumentValue(value: unknown): ToolArgumentValue | undefine
         ) as ToolArgumentValue;
     }
     return undefined;
+}
+
+function parseFlexibleTimestamp(value: unknown): number | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value !== "string" || !value.trim()) {
+        return undefined;
+    }
+
+    const parsed = Date.parse(value.trim());
+    return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 function sanitizeArguments(
@@ -460,7 +480,11 @@ export function summarizeEvidence(state: Pick<GraphState, "evidence">): string {
                   ]
                       .filter(Boolean)
                       .join(" · ");
-                  return `${item.tool}: ${meta ? `[${meta}] ` : ""}${item.content}`;
+                  const timestamp =
+                      item.createdTimestamp != null
+                          ? ` @${new Date(item.createdTimestamp).toISOString()}`
+                          : "";
+                  return `${item.tool}: ${meta ? `[${meta}] ` : ""}${item.content}${timestamp}`;
               })
               .join("\n")
         : "No Discord evidence collected.";
@@ -475,6 +499,11 @@ export function countEvidence(state: Pick<GraphState, "evidence">) {
                 item.evidenceRole === "semantic_evidence"
             ) {
                 acc.messageEvidenceCount += 1;
+                if (item.strength === "strong") {
+                    acc.strongMessageEvidenceCount += 1;
+                } else if (item.strength === "weak") {
+                    acc.weakMessageEvidenceCount += 1;
+                }
             }
             if (
                 item.evidenceRole === "live_evidence" ||
@@ -484,7 +513,12 @@ export function countEvidence(state: Pick<GraphState, "evidence">) {
             }
             return acc;
         },
-        { messageEvidenceCount: 0, liveEvidenceCount: 0 }
+        {
+            messageEvidenceCount: 0,
+            strongMessageEvidenceCount: 0,
+            weakMessageEvidenceCount: 0,
+            liveEvidenceCount: 0,
+        }
     );
 }
 
@@ -778,6 +812,8 @@ function normalizeStepDecision(
     const activeMember = state.activeMemberTarget;
     const activeChannelTarget = state.activeChannelTarget || latestResolvedChannelTarget;
     const activeRetrievalSession = state.activeRetrievalSession;
+    const explicitBeforeTimestamp = parseFlexibleTimestamp(argumentsObject.beforeTimestamp);
+    const explicitAfterTimestamp = parseFlexibleTimestamp(argumentsObject.afterTimestamp);
     const timeBounds = {
         beforeTimestamp: state.turnIntent?.beforeTimestamp ?? undefined,
         afterTimestamp: state.turnIntent?.afterTimestamp ?? undefined,
@@ -793,6 +829,8 @@ function normalizeStepDecision(
                 activeRetrievalSession?.channelIds.length &&
                 JSON.stringify(resolvedChannelIds) !== JSON.stringify(activeRetrievalSession.channelIds)
         );
+    const shouldContinueSession =
+        !resetRetrievalSession && state.turnIntent?.continuation === true;
 
     if (nextCapability === "resolve_member_identity") {
         return {
@@ -835,6 +873,30 @@ function normalizeStepDecision(
     }
 
     if (nextCapability === "retrieve_messages") {
+        const forensicScopedLookup = Boolean(
+            timeBounds.beforeTimestamp != null ||
+                timeBounds.afterTimestamp != null ||
+                structuralMember
+        );
+
+        if (
+            structuralMember &&
+            !resolvedMember?.resolvedId &&
+            !activeMember?.resolvedId &&
+            state.candidateCapabilities.includes("resolve_member_identity") &&
+            !hasToolRun(state.toolHistory, "resolve_member_identity")
+        ) {
+            return normalizeStepDecision(state, {
+                nextCapability: "resolve_member_identity",
+                arguments: {
+                    query: structuralMember,
+                },
+                reason: "Resolve the referenced member before scoped retrieval.",
+                learnedExpectation:
+                    "Return the best current-guild identity match so retrieval can use a strict author scope.",
+            });
+        }
+
         if (
             structuralChannel &&
             !resolvedChannelIds.length &&
@@ -853,6 +915,7 @@ function normalizeStepDecision(
 
         if (
             resolvedChannelIds.length &&
+            !forensicScopedLookup &&
             state.candidateCapabilities.includes("list_guild_structure") &&
             !hasToolRun(state.toolHistory, "list_guild_structure")
         ) {
@@ -865,6 +928,15 @@ function normalizeStepDecision(
                 learnedExpectation: "Confirm the visible child channels before reading scoped messages.",
             });
         }
+
+        const resolvedBeforeTimestamp =
+            timeBounds.beforeTimestamp ??
+            explicitBeforeTimestamp ??
+            activeRetrievalSession?.beforeTimestamp;
+        const resolvedAfterTimestamp =
+            timeBounds.afterTimestamp ??
+            explicitAfterTimestamp ??
+            activeRetrievalSession?.afterTimestamp;
 
         return {
             nextCapability,
@@ -886,27 +958,17 @@ function normalizeStepDecision(
                 ...(resolvedChannelIds.length
                     ? { channelIds: resolvedChannelIds }
                     : {}),
-                ...((typeof argumentsObject.beforeTimestamp === "number"
-                    ? argumentsObject.beforeTimestamp
-                    : timeBounds.beforeTimestamp ?? activeRetrievalSession?.beforeTimestamp) != null
+                ...(resolvedBeforeTimestamp != null
                     ? {
-                          beforeTimestamp:
-                              (typeof argumentsObject.beforeTimestamp === "number"
-                                  ? argumentsObject.beforeTimestamp
-                                  : timeBounds.beforeTimestamp ?? activeRetrievalSession?.beforeTimestamp) as number,
+                          beforeTimestamp: resolvedBeforeTimestamp,
                       }
                     : {}),
-                ...((typeof argumentsObject.afterTimestamp === "number"
-                    ? argumentsObject.afterTimestamp
-                    : timeBounds.afterTimestamp ?? activeRetrievalSession?.afterTimestamp) != null
+                ...(resolvedAfterTimestamp != null
                     ? {
-                          afterTimestamp:
-                              (typeof argumentsObject.afterTimestamp === "number"
-                                  ? argumentsObject.afterTimestamp
-                                  : timeBounds.afterTimestamp ?? activeRetrievalSession?.afterTimestamp) as number,
+                          afterTimestamp: resolvedAfterTimestamp,
                       }
                     : {}),
-                ...(!resetRetrievalSession &&
+                ...(shouldContinueSession &&
                 activeRetrievalSession?.historyCursorByChannel &&
                 Object.keys(activeRetrievalSession.historyCursorByChannel).length
                     ? {
@@ -918,7 +980,7 @@ function normalizeStepDecision(
                           } as unknown as ToolArgumentValue),
                       }
                     : {}),
-                ...(!resetRetrievalSession && activeRetrievalSession?.seenMessageIds?.length
+                    ...(shouldContinueSession && activeRetrievalSession?.seenMessageIds?.length
                     ? {
                           excludedMessageIds: activeRetrievalSession.seenMessageIds,
                       }
@@ -1067,6 +1129,13 @@ export function fallbackStepDecision(
                 activeChannelTarget?.query &&
                 normalize(structuralChannel) !== normalize(activeChannelTarget.query)
         );
+    const forensicScopedLookup =
+        resolvedChannelIds.length > 0 &&
+        Boolean(
+            state.turnIntent?.beforeTimestamp != null ||
+                state.turnIntent?.afterTimestamp != null ||
+                structuralMember
+        );
 
     if (
         activeRetrievalSession?.continuationAvailable &&
@@ -1142,21 +1211,6 @@ export function fallbackStepDecision(
     }
 
     if (
-        (activeChannelTarget || resolvedChannelIds.length) &&
-        state.candidateCapabilities.includes("list_guild_structure") &&
-        !hasToolRun(state.toolHistory, "list_guild_structure")
-    ) {
-        return normalizeStepDecision(state, {
-            nextCapability: "list_guild_structure",
-            arguments: {
-                targetText: activeChannelTarget?.query || structuralChannel || state.question,
-            },
-            reason: "Inspect the matched category or channel structure before summarizing it.",
-            learnedExpectation: "Return the matched structure plus visible child channels.",
-        });
-    }
-
-    if (
         resolvedChannelIds.length &&
         state.candidateCapabilities.includes("retrieve_messages") &&
         !hasToolRun(state.toolHistory, "retrieve_messages")
@@ -1169,6 +1223,22 @@ export function fallbackStepDecision(
             },
             reason: "Use the resolved channel scope to retrieve Discord messages before answering.",
             learnedExpectation: "Return scoped message evidence from the resolved category or channel area.",
+        });
+    }
+
+    if (
+        !forensicScopedLookup &&
+        (activeChannelTarget || resolvedChannelIds.length) &&
+        state.candidateCapabilities.includes("list_guild_structure") &&
+        !hasToolRun(state.toolHistory, "list_guild_structure")
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "list_guild_structure",
+            arguments: {
+                targetText: activeChannelTarget?.query || structuralChannel || state.question,
+            },
+            reason: "Inspect the matched category or channel structure before summarizing it.",
+            learnedExpectation: "Return the matched structure plus visible child channels.",
         });
     }
 
@@ -1261,7 +1331,10 @@ export function answerConfidenceForInsufficient(
     state: Pick<GraphState, "evidence">
 ): GroundedAnswerMode {
     const summary = countEvidence(state);
-    if (summary.messageEvidenceCount > 0 || summary.liveEvidenceCount > 0) {
+    if (summary.strongMessageEvidenceCount > 0) {
+        return "best_effort";
+    }
+    if (summary.messageEvidenceCount >= 2) {
         return "best_effort";
     }
     return "insufficient";
