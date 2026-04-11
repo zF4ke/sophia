@@ -43,6 +43,13 @@ function buildInitialState(question: string): DebugTraceState {
                 timestamp: Date.now(),
             },
         ],
+        collapsedSections: {
+            request: false,
+            conversation: false,
+            retrieval: false,
+            context: false,
+            timeline: false,
+        },
         startedAt: Date.now(),
         failureMessage: null,
     };

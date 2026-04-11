@@ -1,5 +1,11 @@
-import { ContainerBuilder, TextDisplayBuilder } from "discord.js";
-import type { DebugTraceState } from "@/discord/debug/types";
+import {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ContainerBuilder,
+    TextDisplayBuilder,
+} from "discord.js";
+import type { DebugSectionKey, DebugTraceState } from "@/discord/debug/types";
 
 const TIMELINE_VISIBLE_ROWS = 25;
 const MAX_LINE_LENGTH = 120;
@@ -9,6 +15,9 @@ const RETRIEVAL_SECTION_BUDGET = 900;
 const CONTEXT_SECTION_BUDGET = 700;
 const TIMELINE_SECTION_BUDGET = 1500;
 const FAILURE_SECTION_BUDGET = 240;
+const TRACE_TOGGLE_PREFIX = "debug:trace:toggle:";
+const TRACE_EXPAND_ALL_ID = "debug:trace:expand_all";
+const TRACE_COLLAPSE_ALL_ID = "debug:trace:collapse_all";
 
 function formatDuration(startedAt: number): string {
     const elapsedMs = Math.max(0, Date.now() - startedAt);
@@ -87,7 +96,67 @@ function buildTimelineLines(state: DebugTraceState): string[] {
         : ["- Waiting for runtime activity."];
 }
 
-export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
+function buildToggleRows(
+    state: DebugTraceState
+): Array<ActionRowBuilder<ButtonBuilder>> {
+    const sectionLabels: Array<{ key: DebugSectionKey; label: string }> = [
+        { key: "request", label: "Request" },
+        { key: "conversation", label: "Conversation" },
+        { key: "retrieval", label: "Retrieval" },
+        { key: "context", label: "Context" },
+        { key: "timeline", label: "Timeline" },
+    ];
+
+    const sectionButtons = sectionLabels.map(({ key, label }) =>
+        new ButtonBuilder()
+            .setCustomId(`${TRACE_TOGGLE_PREFIX}${key}`)
+            .setLabel(label)
+            .setStyle(
+                state.collapsedSections[key] ? ButtonStyle.Secondary : ButtonStyle.Primary
+            )
+    );
+
+    return [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(...sectionButtons),
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+                .setCustomId(TRACE_EXPAND_ALL_ID)
+                .setLabel("Expand All")
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId(TRACE_COLLAPSE_ALL_ID)
+                .setLabel("Collapse All")
+                .setStyle(ButtonStyle.Secondary)
+        ),
+    ];
+}
+
+export function parseDebugTraceSectionToggle(customId: string): DebugSectionKey | null {
+    if (!customId.startsWith(TRACE_TOGGLE_PREFIX)) {
+        return null;
+    }
+
+    const section = customId.slice(TRACE_TOGGLE_PREFIX.length);
+    return section === "request" ||
+        section === "conversation" ||
+        section === "retrieval" ||
+        section === "context" ||
+        section === "timeline"
+        ? section
+        : null;
+}
+
+export function isDebugTraceExpandAll(customId: string): boolean {
+    return customId === TRACE_EXPAND_ALL_ID;
+}
+
+export function isDebugTraceCollapseAll(customId: string): boolean {
+    return customId === TRACE_COLLAPSE_ALL_ID;
+}
+
+export function renderDebugTrace(
+    state: DebugTraceState
+): Array<ContainerBuilder | ActionRowBuilder<ButtonBuilder>> {
     const accentColor =
         state.status === "failed"
             ? 0xed4245
@@ -179,11 +248,27 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
 
     const timelineEntries = buildTimelineLines(state);
 
-    const containers = [
-        buildSection("## Sophia Debug · Request", overviewLines, accentColor, REQUEST_SECTION_BUDGET),
-        buildSection("## Sophia Debug · Conversation", conversationLines, accentColor, CONVERSATION_SECTION_BUDGET),
-        buildSection("## Sophia Debug · Retrieval", retrievalLines, accentColor, RETRIEVAL_SECTION_BUDGET),
+    const containers: Array<ContainerBuilder | ActionRowBuilder<ButtonBuilder>> = [
+        ...buildToggleRows(state),
     ];
+
+    overviewLines.splice(4, 0, formatLabelValue("Stop Condition", state.stopReason ?? "pending"));
+
+    if (!state.collapsedSections.request) {
+        containers.push(
+            buildSection("## Sophia Debug · Request", overviewLines, accentColor, REQUEST_SECTION_BUDGET)
+        );
+    }
+    if (!state.collapsedSections.conversation) {
+        containers.push(
+            buildSection("## Sophia Debug · Conversation", conversationLines, accentColor, CONVERSATION_SECTION_BUDGET)
+        );
+    }
+    if (!state.collapsedSections.retrieval) {
+        containers.push(
+            buildSection("## Sophia Debug · Retrieval", retrievalLines, accentColor, RETRIEVAL_SECTION_BUDGET)
+        );
+    }
 
     if (state.contextPreview) {
         const contextLines: string[] = [];
@@ -211,16 +296,18 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
                     .map((turn) => `- ${trimPreview(turn, 120)}`)
             );
         }
-        if (contextLines.length) {
+        if (contextLines.length && !state.collapsedSections.context) {
             containers.push(
                 buildSection("## Sophia Debug · Context", contextLines, accentColor, CONTEXT_SECTION_BUDGET)
             );
         }
     }
 
-    containers.push(
-        buildSection("## Sophia Debug · Timeline", timelineEntries, accentColor, TIMELINE_SECTION_BUDGET),
-    );
+    if (!state.collapsedSections.timeline) {
+        containers.push(
+            buildSection("## Sophia Debug · Timeline", timelineEntries, accentColor, TIMELINE_SECTION_BUDGET),
+        );
+    }
 
     if (state.failureMessage) {
         containers.push(

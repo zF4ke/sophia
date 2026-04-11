@@ -56,6 +56,13 @@ describe("renderDebugTrace", () => {
                     timestamp: Date.now(),
                 },
             ],
+            collapsedSections: {
+                request: false,
+                conversation: false,
+                retrieval: false,
+                context: false,
+                timeline: false,
+            },
             startedAt: Date.now() - 1000,
             failureMessage: null,
         }).map((container) => container.toJSON());
@@ -78,6 +85,8 @@ describe("renderDebugTrace", () => {
         expect(rendered).toContain("Channels Searched");
         expect(rendered).toContain("<#c1>");
         expect(rendered).toContain("Timeline");
+        expect(rendered).toContain("Expand All");
+        expect(rendered).toContain("Collapse All");
     });
 
     it("renders a failure section", () => {
@@ -117,6 +126,13 @@ describe("renderDebugTrace", () => {
                     timestamp: Date.now(),
                 },
             ],
+            collapsedSections: {
+                request: false,
+                conversation: false,
+                retrieval: false,
+                context: false,
+                timeline: false,
+            },
             startedAt: Date.now() - 1000,
             failureMessage: "SQLITE_ERROR: timeout",
         }).map((container) => container.toJSON());
@@ -175,6 +191,13 @@ describe("renderDebugTrace", () => {
                     timestamp: Date.now(),
                 },
             ],
+            collapsedSections: {
+                request: false,
+                conversation: false,
+                retrieval: false,
+                context: false,
+                timeline: false,
+            },
             startedAt: Date.now() - 2000,
             failureMessage: null,
         }).map((container) => container.toJSON());
@@ -213,11 +236,83 @@ describe("renderDebugTrace", () => {
             contextPreview: null,
             recentEvents: [],
             timeline: [],
+            collapsedSections: {
+                request: false,
+                conversation: false,
+                retrieval: false,
+                context: false,
+                timeline: false,
+            },
             startedAt: Date.now() - 500,
             failureMessage: null,
         }).map((container) => container.toJSON());
 
         const rendered = JSON.stringify(json);
         expect(rendered).not.toContain("Sophia Debug · Context");
+    });
+
+    it("shows stop condition prominently and can collapse the timeline section", () => {
+        const json = renderDebugTrace({
+            questionPreview: "teste",
+            status: "completed",
+            stage: "Completed",
+            requesterLabel: "F4zke",
+            trigger: "reply",
+            classificationMode: "discord_grounded",
+            runtimeMode: "research",
+            selectedCapabilities: ["resolve_channel_targets", "retrieve_messages"],
+            toolCallCount: 2,
+            groundingSummary: {
+                messageEvidenceCount: 0,
+                liveEvidenceCount: 3,
+                sufficient: false,
+            },
+            retrievalSummary: {
+                cacheHit: false,
+                liveEscalated: true,
+                searchedChannelIds: ["c1", "c2", "c3", "c4", "c5", "c6", "c7"],
+                fetchedChannelIds: ["c1"],
+                cacheEnriched: true,
+                evidenceSufficient: false,
+                strongResultCount: 0,
+                weakResultCount: 0,
+                sourceOrigin: "live_refresh",
+            },
+            groundedAnswerMode: "best_effort",
+            stopReason: "budget_exhausted",
+            checkpointThreadId: "g1:c1:channel",
+            conversationContext: {
+                threadId: "g1:c1:channel",
+                kind: "reply_chain",
+                replyAnchorMessageId: "m1",
+                replyContext: null,
+            },
+            webStatus: "enabled",
+            contextPreview: null,
+            recentEvents: [],
+            timeline: [
+                {
+                    label: "stop",
+                    detail: "Reached the latency budget.",
+                    tone: "warning",
+                    timestamp: Date.now(),
+                },
+            ],
+            collapsedSections: {
+                request: false,
+                conversation: false,
+                retrieval: false,
+                context: false,
+                timeline: true,
+            },
+            startedAt: Date.now() - 500,
+            failureMessage: null,
+        }).map((container) => container.toJSON());
+
+        const rendered = JSON.stringify(json);
+        expect(rendered).toContain("Stop Condition");
+        expect(rendered).toContain("budget_exhausted");
+        expect(rendered).not.toContain("Sophia Debug · Timeline");
+        expect(rendered).toContain("+1 more");
     });
 });

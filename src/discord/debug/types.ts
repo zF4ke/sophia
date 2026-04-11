@@ -9,6 +9,13 @@ import type {
     TurnTrigger,
 } from "@/runtime/contracts";
 
+export type DebugSectionKey =
+    | "request"
+    | "conversation"
+    | "retrieval"
+    | "context"
+    | "timeline";
+
 export interface DebugTimelineEntry {
     label: string;
     detail: string;
@@ -49,6 +56,7 @@ export interface DebugTraceState {
     } | null;
     recentEvents: string[];
     timeline: DebugTimelineEntry[];
+    collapsedSections: Record<DebugSectionKey, boolean>;
     startedAt: number;
     failureMessage: string | null;
 }

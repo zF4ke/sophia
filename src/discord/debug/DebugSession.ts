@@ -1,6 +1,7 @@
 import { Message, MessageFlags } from "discord.js";
 import { renderDebugTrace } from "@/discord/debug/renderDebugTrace";
 import type {
+    DebugSectionKey,
     DebugSessionReporter,
     DebugTimelineEntry,
     DebugTraceState,
@@ -51,6 +52,7 @@ function inferTone(event: string): DebugTimelineEntry["tone"] {
 }
 
 export class DebugSession implements DebugSessionReporter {
+    private static readonly sessions = new Map<string, DebugSession>();
     private readonly state: DebugTraceState;
     private updateQueue: Promise<void> = Promise.resolve();
 
@@ -87,9 +89,47 @@ export class DebugSession implements DebugSessionReporter {
                     timestamp: Date.now(),
                 },
             ],
+            collapsedSections: {
+                request: false,
+                conversation: false,
+                retrieval: false,
+                context: false,
+                timeline: false,
+            },
             startedAt: Date.now(),
             failureMessage: null,
         };
+        DebugSession.sessions.set(message.id, this);
+    }
+
+    public static getByMessageId(messageId: string): DebugSession | null {
+        return this.sessions.get(messageId) || null;
+    }
+
+    public async toggleSection(section: DebugSectionKey): Promise<void> {
+        await this.mutate(
+            "Toggling debug section",
+            `Toggled ${section} section`,
+            (state) => {
+                state.collapsedSections[section] = !state.collapsedSections[section];
+            }
+        );
+    }
+
+    public async setAllSectionsCollapsed(collapsed: boolean): Promise<void> {
+        await this.mutate(
+            collapsed ? "Collapsing debug sections" : "Expanding debug sections",
+            collapsed ? "Collapsed all debug sections" : "Expanded all debug sections",
+            (state) => {
+                for (const key of Object.keys(state.collapsedSections) as DebugSectionKey[]) {
+                    state.collapsedSections[key] = collapsed;
+                }
+            }
+        );
+    }
+
+    public buildComponents() {
+        return renderDebugTrace(this.state);
     }
 
     public async setClassifying(): Promise<void> {
@@ -311,7 +351,7 @@ export class DebugSession implements DebugSessionReporter {
                 mutateState?.(this.state);
 
                 await this.message.edit({
-                    components: renderDebugTrace(this.state),
+                    components: this.buildComponents(),
                     flags: MessageFlags.IsComponentsV2,
                 });
             })
