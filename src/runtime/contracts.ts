@@ -21,7 +21,6 @@ export type StopReason =
     | "confidence_plateau"
     | "no_useful_next_step"
     | "insufficient_evidence";
-export type CostTier = "low" | "medium" | "high";
 export type RetrievalSourceOrigin = "none" | "cache" | "live_refresh" | "cache_after_refresh";
 export type EvidenceStrength = "strong" | "weak" | "metadata";
 
@@ -173,7 +172,6 @@ export interface GraphState {
         maxResearchPasses: number;
         maxRepeatedCallSignature: number;
         maxLatencyBudgetMs: number;
-        maxCostTier: CostTier;
     };
 }
 

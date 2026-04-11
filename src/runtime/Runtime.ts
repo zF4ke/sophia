@@ -1027,7 +1027,6 @@ export class Runtime {
                 maxResearchPasses: config.runtime.maxResearchPasses,
                 maxRepeatedCallSignature: config.runtime.maxRepeatedCallSignature,
                 maxLatencyBudgetMs: config.runtime.maxLatencyBudgetMs,
-                maxCostTier: config.runtime.maxCostTier,
             },
         };
 

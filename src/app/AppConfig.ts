@@ -59,9 +59,6 @@ export function getAppConfig(): AppConfig {
                 process.env.RUNTIME_MAX_REPEATED_CALL_SIGNATURE || 1
             ),
             maxLatencyBudgetMs: Number(process.env.RUNTIME_MAX_LATENCY_BUDGET_MS || 15000),
-            maxCostTier:
-                (process.env.RUNTIME_MAX_COST_TIER as "low" | "medium" | "high") ||
-                "medium",
         },
     };
 }

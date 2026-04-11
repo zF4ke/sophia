@@ -46,7 +46,6 @@ export interface AppConfig {
         maxResearchPasses: number;
         maxRepeatedCallSignature: number;
         maxLatencyBudgetMs: number;
-        maxCostTier: "low" | "medium" | "high";
     };
 }
 

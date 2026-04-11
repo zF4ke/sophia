@@ -25,7 +25,6 @@ vi.mock("@/app/AppConfig", () => ({
             maxResearchPasses: 2,
             maxRepeatedCallSignature: 1,
             maxLatencyBudgetMs: 15000,
-            maxCostTier: "medium",
         },
     }),
 }));
