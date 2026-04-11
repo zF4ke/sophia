@@ -38,8 +38,8 @@ export class UIService {
         messageHeader: string,
         response: string,
         ephemeral = false
-    ): Promise<void> {
-        await InteractionMessenger.sendLongResponse(
+    ): Promise<Message[]> {
+        return InteractionMessenger.sendLongResponse(
             interaction,
             messageHeader,
             response,
@@ -47,8 +47,8 @@ export class UIService {
         );
     }
 
-    public static async sendLongMessage(message: Message, response: string): Promise<void> {
-        await ChannelMessenger.sendLongMessage(message, response);
+    public static async sendLongMessage(message: Message, response: string): Promise<Message[]> {
+        return ChannelMessenger.sendLongMessage(message, response);
     }
 
     protected static createNavigationRow(
@@ -87,3 +87,4 @@ export class UIService {
         );
     }
 }
+

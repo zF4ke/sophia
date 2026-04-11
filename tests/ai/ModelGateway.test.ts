@@ -10,7 +10,6 @@ vi.mock("@/app/AppConfig", () => ({
         discordToken: "discord-token",
         openRouterApiKey: "openrouter-key",
         openRouterBaseUrl: "https://openrouter.test/api/v1",
-        port: 3000,
         modelProfileName: "test",
         modelProfile: {
             chatModel: "test-model",
@@ -18,6 +17,15 @@ vi.mock("@/app/AppConfig", () => ({
             embeddingModel: "test-embedding",
             temperature: 0.2,
             maxOutputTokens: 256,
+        },
+        runtime: {
+            operationalDbPath: "storage/runtime/operational.sqlite",
+            checkpointDbPath: "storage/runtime/checkpoints.sqlite",
+            maxToolCalls: 6,
+            maxResearchPasses: 2,
+            maxRepeatedCallSignature: 1,
+            maxLatencyBudgetMs: 15000,
+            maxCostTier: "medium",
         },
     }),
 }));
@@ -239,3 +247,5 @@ describe("ModelGateway", () => {
         });
     });
 });
+
+

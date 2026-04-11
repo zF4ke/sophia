@@ -1,15 +1,11 @@
-import type {
-    Channel,
-    Client,
-    Guild,
-    GuildMember,
-    GuildTextBasedChannel,
-} from "discord.js";
+import type { Guild, GuildMember } from "discord.js";
 import { withDiscordRateLimitRetry } from "@/discord/live/discordRateLimitRetry";
+import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type {
     LiveMemberListResult,
     MemberListSort,
     MemberProfileResult,
+    ResolvedMemberIdentity,
 } from "@/shared/appTypes";
 
 function normalizeMemberLookupValue(value: string): string {
@@ -18,6 +14,15 @@ function normalizeMemberLookupValue(value: string): string {
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "");
+}
+
+function extractExactId(value: string): string | null {
+    const trimmed = value.trim();
+    const mentionMatch = trimmed.match(/^<@!?(\d+)>$/);
+    if (mentionMatch) {
+        return mentionMatch[1] || null;
+    }
+    return /^\d{6,25}$/.test(trimmed) ? trimmed : null;
 }
 
 function getMemberSearchFields(member: GuildMember): string[] {
@@ -61,8 +66,45 @@ function memberMatchesQuery(member: GuildMember, query: string): boolean {
     );
 }
 
+function mapResolvedMemberIdentity(
+    query: string,
+    member: GuildMember,
+    source: ResolvedMemberIdentity["source"],
+    confidence: ResolvedMemberIdentity["confidence"]
+): ResolvedMemberIdentity {
+    return {
+        query,
+        resolvedId: member.id,
+        displayName: member.displayName,
+        username: member.user.username,
+        globalName: member.user.globalName ?? null,
+        nickname: member.nickname ?? null,
+        isBot: Boolean(member.user.bot),
+        isCurrentGuildMember: true,
+        source,
+        confidence,
+        roles: member.roles.cache
+            .filter((role) => role.name !== "@everyone")
+            .map((role) => role.name)
+            .slice(0, 10),
+    };
+}
+
 async function fetchAllMembers(guild: Guild): Promise<void> {
     await withDiscordRateLimitRetry(() => guild.members.fetch());
+}
+
+async function fetchMemberById(guild: Guild, memberId: string): Promise<GuildMember | null> {
+    const cached = guild.members.cache.get(memberId);
+    if (cached) {
+        return cached;
+    }
+
+    try {
+        return await withDiscordRateLimitRetry(() => guild.members.fetch(memberId));
+    } catch {
+        return null;
+    }
 }
 
 async function searchMembers(guild: Guild, query: string): Promise<GuildMember[]> {
@@ -90,24 +132,19 @@ async function searchMembers(guild: Guild, query: string): Promise<GuildMember[]
     return [...results.values()].filter((member) => memberMatchesQuery(member, query));
 }
 
-async function resolveMemberCandidates(
-    guild: Guild,
-    query: string
-): Promise<GuildMember[]> {
-    const direct = guild.members.cache.get(query);
-    if (direct) {
-        return [direct];
+function findExactNormalizedMember(guild: Guild, query: string): GuildMember | null {
+    const normalizedQuery = normalizeMemberLookupValue(query);
+    if (!normalizedQuery) {
+        return null;
     }
 
-    const searched = await searchMembers(guild, query);
-    if (searched.length) {
-        return searched;
-    }
-
-    await fetchAllMembers(guild);
-    return guild.members.cache
-        .filter((candidate) => memberMatchesQuery(candidate, query))
-        .toJSON();
+    return (
+        guild.members.cache.find((candidate) =>
+            getMemberSearchFields(candidate).some(
+                (field) => normalizeMemberLookupValue(field) === normalizedQuery
+            )
+        ) || null
+    );
 }
 
 export class DiscordLiveService {
@@ -121,6 +158,7 @@ export class DiscordLiveService {
             return null;
         }
 
+        await withDiscordRateLimitRetry(() => guild.channels.fetch());
         return {
             id: guild.id,
             name: guild.name,
@@ -129,38 +167,133 @@ export class DiscordLiveService {
         };
     }
 
-    public static async getMemberProfile(
+    public static async resolveMemberIdentity(
         guild: Guild | null,
-        nameOrId: string
-    ): Promise<MemberProfileResult | null> {
+        query: string
+    ): Promise<ResolvedMemberIdentity | null> {
         if (!guild) {
             return null;
         }
 
-        let member = guild.members.cache.get(nameOrId) || null;
-        if (!member) {
-            const candidates = await resolveMemberCandidates(guild, nameOrId);
-            member =
-                candidates.find((candidate) =>
-                    normalizeMemberLookupValue(candidate.user.username) ===
-                        normalizeMemberLookupValue(nameOrId) ||
-                    normalizeMemberLookupValue(candidate.displayName) ===
-                        normalizeMemberLookupValue(nameOrId) ||
-                    normalizeMemberLookupValue(candidate.nickname ?? "") ===
-                        normalizeMemberLookupValue(nameOrId)
-                ) ||
-                candidates[0] ||
-                null;
+        const trimmed = query.trim();
+        const exactId = extractExactId(trimmed);
+        if (exactId) {
+            const byId = await fetchMemberById(guild, exactId);
+            if (byId) {
+                return mapResolvedMemberIdentity(trimmed, byId, "live_id", "exact");
+            }
         }
 
-        if (!member) {
+        const cached = guild.members.cache.get(trimmed);
+        if (cached) {
+            return mapResolvedMemberIdentity(trimmed, cached, "live_id", "exact");
+        }
+
+        const exactNormalized = findExactNormalizedMember(guild, trimmed);
+        if (exactNormalized) {
+            return mapResolvedMemberIdentity(trimmed, exactNormalized, "live_exact", "exact");
+        }
+
+        const searched = await searchMembers(guild, trimmed);
+        const searchedExact =
+            searched.find((candidate) =>
+                getMemberSearchFields(candidate).some(
+                    (field) => normalizeMemberLookupValue(field) === normalizeMemberLookupValue(trimmed)
+                )
+            ) ||
+            searched.find((candidate) => memberMatchesQuery(candidate, trimmed)) ||
+            null;
+        if (searchedExact) {
+            if (!guild.members.cache.has(searchedExact.id)) {
+                guild.members.cache.set(searchedExact.id, searchedExact);
+            }
+            return mapResolvedMemberIdentity(trimmed, searchedExact, "live_search", "high");
+        }
+
+        await fetchAllMembers(guild);
+        const fullScanExact = findExactNormalizedMember(guild, trimmed);
+        if (fullScanExact) {
+            return mapResolvedMemberIdentity(trimmed, fullScanExact, "live_exact", "exact");
+        }
+
+        const fullScanMatch =
+            guild.members.cache.find((candidate) => memberMatchesQuery(candidate, trimmed)) || null;
+        if (fullScanMatch) {
+            return mapResolvedMemberIdentity(trimmed, fullScanMatch, "live_search", "high");
+        }
+
+        const historical = await DiscordMemoryService.resolveHistoricalAuthorAsync(guild.id, trimmed);
+        if (!historical) {
             return null;
         }
 
-        const fetchedUser = await member.user.fetch(true).catch(() => member.user);
+        return {
+            query: trimmed,
+            resolvedId: historical.authorId,
+            displayName: historical.authorName,
+            username: historical.authorName,
+            globalName: null,
+            nickname: null,
+            isBot: historical.isBot,
+            isCurrentGuildMember: false,
+            source: "historical_author",
+            confidence: exactId === historical.authorId ? "exact" : "medium",
+            roles: [],
+        };
+    }
 
+    public static async getMemberProfile(
+        guild: Guild | null,
+        nameOrId: string
+    ): Promise<MemberProfileResult | null> {
+        const resolved = await this.resolveMemberIdentity(guild, nameOrId);
+        if (!resolved) {
+            return null;
+        }
+
+        if (!resolved.isCurrentGuildMember || !guild) {
+            return {
+                id: resolved.resolvedId,
+                query: resolved.query,
+                username: resolved.username,
+                displayName: resolved.displayName,
+                globalName: resolved.globalName,
+                nickname: resolved.nickname,
+                roles: [],
+                bannerUrl: null,
+                accentColor: null,
+                bio: null,
+                isBot: resolved.isBot,
+                isCurrentGuildMember: false,
+                source: resolved.source,
+                confidence: resolved.confidence,
+            };
+        }
+
+        const member = guild.members.cache.get(resolved.resolvedId) || (await fetchMemberById(guild, resolved.resolvedId));
+        if (!member) {
+            return {
+                id: resolved.resolvedId,
+                query: resolved.query,
+                username: resolved.username,
+                displayName: resolved.displayName,
+                globalName: resolved.globalName,
+                nickname: resolved.nickname,
+                roles: resolved.roles,
+                bannerUrl: null,
+                accentColor: null,
+                bio: null,
+                isBot: resolved.isBot,
+                isCurrentGuildMember: false,
+                source: resolved.source,
+                confidence: resolved.confidence,
+            };
+        }
+
+        const fetchedUser = await member.user.fetch(true).catch(() => member.user);
         return {
             id: member.id,
+            query: resolved.query,
             username: member.user.username,
             displayName: member.displayName,
             globalName: fetchedUser.globalName ?? null,
@@ -172,6 +305,10 @@ export class DiscordLiveService {
             bannerUrl: fetchedUser.bannerURL() ?? member.displayBannerURL() ?? null,
             accentColor: fetchedUser.hexAccentColor ?? null,
             bio: null,
+            isBot: Boolean(member.user.bot),
+            isCurrentGuildMember: true,
+            source: resolved.source,
+            confidence: resolved.confidence,
         };
     }
 
@@ -198,16 +335,20 @@ export class DiscordLiveService {
         }
 
         const normalized = options.filters?.trim() || "";
-        if (normalized) {
+        const exactId = normalized ? extractExactId(normalized) : null;
+        if (exactId) {
+            await fetchMemberById(guild, exactId);
+        } else if (normalized) {
             const searched = await searchMembers(guild, normalized);
             searched.forEach((member) => {
                 if (!guild.members.cache.has(member.id)) {
                     guild.members.cache.set(member.id, member);
                 }
             });
-        } else {
-            await fetchAllMembers(guild);
         }
+
+        await fetchAllMembers(guild);
+
         const limit = Math.max(1, Math.min(250, options.limit ?? 100));
         const offset = Math.max(0, options.offset ?? 0);
         const sort = options.sort ?? "joined_at";
@@ -218,7 +359,7 @@ export class DiscordLiveService {
                     return true;
                 }
 
-                return memberMatchesQuery(member, normalized);
+                return member.id === normalized || memberMatchesQuery(member, normalized);
             })
             .toJSON()
             .sort((left, right) => {
@@ -240,6 +381,7 @@ export class DiscordLiveService {
             joinedTimestamp: member.joinedTimestamp ?? null,
             globalName: member.user.globalName ?? null,
             nickname: member.nickname ?? null,
+            isBot: Boolean(member.user.bot),
         }));
 
         return {
@@ -252,24 +394,5 @@ export class DiscordLiveService {
             sort,
             filters: options.filters?.trim() || null,
         };
-    }
-
-    public static listReadableGuildChannels(guild: Guild | null): Array<{
-        id: string;
-        name: string;
-        type: string;
-    }> {
-        if (!guild || !guild.channels?.cache) {
-            return [];
-        }
-
-        return guild.channels.cache
-            .filter((channel) => "viewable" in channel && channel.viewable)
-            .map((channel) => ({
-                id: channel.id,
-                name: channel.name,
-                type: String(channel.type),
-            }))
-            .slice(0, 50);
     }
 }

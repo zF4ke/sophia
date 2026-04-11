@@ -1,26 +1,37 @@
-# Commands And Admin Operations
+# Commands And Admin
 
-## Core Commands
+## Main Conversation Surface
 
-- `/ask` general assistant entrypoint with automatic Discord retrieval when needed
-- `/find` targeted evidence search across indexed messages
-- `/context` grounded answer path
-- `/talk` conversational command path
-- `/nth` fetch the Nth indexed historical message in a channel
-- `/debug` control the global live debug mode for Sophia responses
+Use these to talk to Sophia:
+- `/talk`
+- mention Sophia in a message
+- reply to a Sophia message
 
-## Admin Commands
+These all route to the same conversation runtime.
 
-- `/index` manage backfill, repair, clear, and status
-- `/access` open the admin-only access panel for admins, moderators, and command policies
-- `/cache` inspect local memory statistics
+## Specialized Workflow
 
-## Relevant Files
+- `/find`
+  Runs the specialized Discord retrieval workflow directly. It is separate from the conversation loop, but it uses the same retrieval, member-resolution, and guild-discovery primitives underneath.
+  Supports:
+  - `topic`
+  - optional explicit `channel`
+  - optional `target` for channel/category id or name
+  - optional `author` for member/bot id, mention, or name
 
-- `src/discord/commands/tools/`
-- `src/discord/commands/system/`
-- `src/discord/commands/system/access/access.command.ts`
-- `src/discord/commands/system/access/`
-- `src/security/`
+## Operator Commands
 
-The `access` command is a single command that opens a navigable component-based panel. Buttons, select menus, and the limits modal are handled from the files under `src/discord/commands/system/access/`.
+- `/nth`
+- `/index`
+- `/cache`
+- `/debug`
+- `/access`
+
+`/index status` exposes current-guild completeness data such as readable live channels/categories, cached-only remembered channels, and indexed channel counts.
+
+## Retired Surfaces
+
+- `/ask`
+- `/context`
+
+Those entrypoints are removed in favor of one shared conversation system.

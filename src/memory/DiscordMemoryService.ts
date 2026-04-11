@@ -1,29 +1,232 @@
-import { getAppConfig } from "@/app/AppConfig";
+import type { InArgs } from "@libsql/client";
 import type { Message } from "discord.js";
-import { ModelGateway } from "@/ai/ModelGateway";
 import { MessageEligibility } from "@/memory/ingest/MessageEligibility";
 import { MessageNormalizer } from "@/memory/ingest/MessageNormalizer";
 import { MessageChunker } from "@/memory/index/MessageChunker";
-import { CacheReadRepository } from "@/memory/repositories/CacheReadRepository";
-import { CacheWriteRepository } from "@/memory/repositories/CacheWriteRepository";
-import { MemoryReadRepository } from "@/memory/repositories/MemoryReadRepository";
-import { MemoryWriteRepository } from "@/memory/repositories/MemoryWriteRepository";
-import { ResponseCounterRepository } from "@/memory/repositories/ResponseCounterRepository";
-import { MemorySearchService } from "@/memory/search/MemorySearchService";
-import { SearchScopeClause } from "@/memory/search/SearchScopeClause";
 import type {
-    CachedToolResultRecord,
     ChannelCrawlState,
-    ConversationResolutionContextRecord,
-    ReusableGroundedContextRecord,
+    ChannelIndexState,
+    HistoricalAuthorRecord,
+    KnownChannelRecord,
     SearchMessageScope,
     StoredMessage,
 } from "@/memory/types";
+import { OperationalStore } from "@/runtime/storage/OperationalStore";
+import type { ConversationTurnSummary } from "@/runtime/contracts";
 import type { ChannelCandidate, RetrievedChunk } from "@/shared/appTypes";
 
-const EMBEDDING_BATCH_SIZE = 32;
+type ChannelSummary = {
+    channelId: string;
+    channelName: string;
+    messageCount: number;
+    firstMessageTimestamp: number | null;
+    lastMessageTimestamp: number | null;
+    recentAuthors: string[];
+};
+
+type RuntimeRunRecord = {
+    requestId: string;
+    threadId: string;
+    guildId: string | null;
+    channelId: string | null;
+    actorId: string;
+    trigger: string | null;
+    classificationMode: string;
+    runtimeMode: string;
+    stopReason: string;
+    confidence: string;
+    question: string;
+    answer: string;
+    traceEvents: Array<{ label: string; detail: string; timestamp: number }>;
+};
+
+const EMPTY_STATS = { messages: 0, chunks: 0, channels: 0 };
+
+function now() {
+    return Date.now();
+}
+
+function tokenize(query: string): string[] {
+    return query
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .split(/\s+/)
+        .map((term) => term.trim())
+        .filter((term) => term.length > 1);
+}
+
+function buildScopeSql(
+    scope: SearchMessageScope,
+    alias = "m"
+): { sql: string; args: InArgs } {
+    const clauses: string[] = [];
+    const args: InArgs = {};
+
+    if (scope.guildId !== undefined) {
+        clauses.push(`${alias}.guild_id ${scope.guildId === null ? "IS NULL" : "= :guildId"}`);
+        if (scope.guildId !== null) {
+            args.guildId = scope.guildId;
+        }
+    }
+
+    if (scope.channelIds?.length) {
+        const names = scope.channelIds.map((_, index) => `channelId${index}`);
+        clauses.push(
+            `${alias}.channel_id IN (${names.map((name) => `:${name}`).join(", ")})`
+        );
+        scope.channelIds.forEach((channelId, index) => {
+            args[`channelId${index}`] = channelId;
+        });
+    }
+
+    if (scope.authorIds?.length) {
+        const names = scope.authorIds.map((_, index) => `authorId${index}`);
+        clauses.push(
+            `${alias}.author_id IN (${names.map((name) => `:${name}`).join(", ")})`
+        );
+        scope.authorIds.forEach((authorId, index) => {
+            args[`authorId${index}`] = authorId;
+        });
+    }
+
+    return {
+        sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",
+        args,
+    };
+}
+
+function mapStoredMessage(row: Record<string, unknown>): StoredMessage {
+    return {
+        id: String(row.id),
+        guildId: row.guild_id == null ? null : String(row.guild_id),
+        channelId: String(row.channel_id),
+        channelName: String(row.channel_name),
+        authorId: String(row.author_id),
+        authorName: String(row.author_name),
+        content: String(row.content || ""),
+        attachmentsJson: String(row.attachments_json || "[]"),
+        referenceMessageId:
+            row.reference_message_id == null ? null : String(row.reference_message_id),
+        createdTimestamp: Number(row.created_timestamp || 0),
+        jumpLink: String(row.jump_link || ""),
+        isBot: Number(row.is_bot || 0),
+    };
+}
 
 export class DiscordMemoryService {
+    private static statsSnapshot = { ...EMPTY_STATS };
+    private static indexStateSnapshot = new Map<string, ChannelIndexState>();
+    private static knownChannelsSnapshot = new Map<string, KnownChannelRecord>();
+    private static crawlStateSnapshot = new Map<string, ChannelCrawlState>();
+    private static initialized = false;
+
+    private static async ensureInitialized(): Promise<void> {
+        await OperationalStore.initialize();
+        if (!this.initialized) {
+            await this.refreshSnapshots();
+            this.initialized = true;
+        }
+    }
+
+    private static async refreshSnapshots(): Promise<void> {
+        const client = OperationalStore.getClient();
+        const [statsResult, indexResult, channelsResult, crawlResult] = await Promise.all([
+            client.execute(`
+                SELECT
+                    (SELECT COUNT(*) FROM messages) AS messages,
+                    (SELECT COUNT(*) FROM message_chunks) AS chunks,
+                    (SELECT COUNT(*) FROM channels) AS channels
+            `),
+            client.execute(
+                `SELECT channel_id, last_message_id, last_indexed_timestamp FROM index_state`
+            ),
+            client.execute(
+                `SELECT channel_id, guild_id, channel_name, channel_type, parent_category_id, parent_category_name, last_seen_timestamp FROM channels`
+            ),
+            client.execute(
+                `SELECT channel_id, last_crawled_timestamp, oldest_fetched_message_id, exhausted FROM channel_crawl_state`
+            ),
+        ]);
+
+        const statsRow = statsResult.rows[0] as Record<string, unknown> | undefined;
+        this.statsSnapshot = statsRow
+            ? {
+                  messages: Number(statsRow.messages || 0),
+                  chunks: Number(statsRow.chunks || 0),
+                  channels: Number(statsRow.channels || 0),
+              }
+            : { ...EMPTY_STATS };
+
+        this.indexStateSnapshot = new Map(
+            indexResult.rows.map((row) => [
+                String(row.channel_id),
+                {
+                    channelId: String(row.channel_id),
+                    lastMessageId:
+                        row.last_message_id == null ? null : String(row.last_message_id),
+                    lastIndexedTimestamp:
+                        row.last_indexed_timestamp == null
+                            ? null
+                            : Number(row.last_indexed_timestamp),
+                },
+            ])
+        );
+
+        this.knownChannelsSnapshot = new Map(
+            channelsResult.rows.map((row) => [
+                String(row.channel_id),
+                {
+                    channelId: String(row.channel_id),
+                    guildId: row.guild_id == null ? null : String(row.guild_id),
+                    channelName: String(row.channel_name),
+                    channelType: row.channel_type == null ? null : String(row.channel_type),
+                    parentCategoryId:
+                        row.parent_category_id == null ? null : String(row.parent_category_id),
+                    parentCategoryName:
+                        row.parent_category_name == null ? null : String(row.parent_category_name),
+                    lastSeenTimestamp: Number(row.last_seen_timestamp || 0),
+                },
+            ])
+        );
+
+        this.crawlStateSnapshot = new Map(
+            crawlResult.rows.map((row) => [
+                String(row.channel_id),
+                {
+                    channelId: String(row.channel_id),
+                    lastCrawledTimestamp:
+                        row.last_crawled_timestamp == null
+                            ? null
+                            : Number(row.last_crawled_timestamp),
+                    oldestFetchedMessageId:
+                        row.oldest_fetched_message_id == null
+                            ? null
+                            : String(row.oldest_fetched_message_id),
+                    exhausted: Boolean(Number(row.exhausted || 0)),
+                },
+            ])
+        );
+    }
+
+    public static async resetForTests(): Promise<void> {
+        this.resetSnapshots();
+        await OperationalStore.reset();
+    }
+
+    public static async resetRuntimeState(): Promise<void> {
+        this.resetSnapshots();
+        await OperationalStore.reset();
+    }
+
+    private static resetSnapshots(): void {
+        this.initialized = false;
+        this.statsSnapshot = { ...EMPTY_STATS };
+        this.indexStateSnapshot.clear();
+        this.knownChannelsSnapshot.clear();
+        this.crawlStateSnapshot.clear();
+    }
+
     public static isEligibleMessage(message: Message): boolean {
         return MessageEligibility.isEligible(message);
     }
@@ -37,37 +240,211 @@ export class DiscordMemoryService {
     }
 
     public static async ingestStoredMessage(stored: StoredMessage): Promise<void> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const existingChunkCount = (
+            await client.execute({
+                sql: `SELECT COUNT(*) AS count FROM message_chunks WHERE message_id = :messageId`,
+                args: { messageId: stored.id },
+            })
+        ).rows[0] as Record<string, unknown> | undefined;
+        const previousChunkCount = Number(existingChunkCount?.count || 0);
         const chunks = MessageChunker.split(stored.content);
-        MemoryWriteRepository.upsertMessageWithChunks(stored, chunks);
 
-        const model = getAppConfig().modelProfile.embeddingModel;
-        for (let index = 0; index < chunks.length; index += EMBEDDING_BATCH_SIZE) {
-            const batch = chunks.slice(index, index + EMBEDDING_BATCH_SIZE);
-            const vectors = await ModelGateway.embedTexts(batch);
-            MemoryWriteRepository.upsertEmbeddings(stored.id, index, model, vectors);
+        await client.batch([
+            {
+                sql: `
+                    INSERT INTO messages (
+                        id, guild_id, channel_id, channel_name, author_id, author_name,
+                        content, attachments_json, reference_message_id, created_timestamp,
+                        jump_link, is_bot
+                    ) VALUES (
+                        :id, :guildId, :channelId, :channelName, :authorId, :authorName,
+                        :content, :attachmentsJson, :referenceMessageId, :createdTimestamp,
+                        :jumpLink, :isBot
+                    )
+                    ON CONFLICT(id) DO UPDATE SET
+                        guild_id = excluded.guild_id,
+                        channel_id = excluded.channel_id,
+                        channel_name = excluded.channel_name,
+                        author_id = excluded.author_id,
+                        author_name = excluded.author_name,
+                        content = excluded.content,
+                        attachments_json = excluded.attachments_json,
+                        reference_message_id = excluded.reference_message_id,
+                        created_timestamp = excluded.created_timestamp,
+                        jump_link = excluded.jump_link,
+                        is_bot = excluded.is_bot
+                `,
+                args: {
+                    id: stored.id,
+                    guildId: stored.guildId,
+                    channelId: stored.channelId,
+                    channelName: stored.channelName,
+                    authorId: stored.authorId,
+                    authorName: stored.authorName,
+                    content: stored.content,
+                    attachmentsJson: stored.attachmentsJson,
+                    referenceMessageId: stored.referenceMessageId,
+                    createdTimestamp: stored.createdTimestamp,
+                    jumpLink: stored.jumpLink,
+                    isBot: stored.isBot,
+                },
+            },
+            {
+                sql: `
+                    INSERT INTO channels (
+                        channel_id, guild_id, channel_name, channel_type,
+                        parent_category_id, parent_category_name, last_seen_timestamp
+                    )
+                    VALUES (
+                        :channelId, :guildId, :channelName, :channelType,
+                        :parentCategoryId, :parentCategoryName, :lastSeenTimestamp
+                    )
+                    ON CONFLICT(channel_id) DO UPDATE SET
+                        guild_id = excluded.guild_id,
+                        channel_name = excluded.channel_name,
+                        channel_type = COALESCE(excluded.channel_type, channels.channel_type),
+                        parent_category_id = COALESCE(excluded.parent_category_id, channels.parent_category_id),
+                        parent_category_name = COALESCE(excluded.parent_category_name, channels.parent_category_name),
+                        last_seen_timestamp = excluded.last_seen_timestamp
+                `,
+                args: {
+                    channelId: stored.channelId,
+                    guildId: stored.guildId,
+                    channelName: stored.channelName,
+                    channelType: null,
+                    parentCategoryId: null,
+                    parentCategoryName: null,
+                    lastSeenTimestamp: stored.createdTimestamp,
+                },
+            },
+            {
+                sql: `DELETE FROM message_chunks WHERE message_id = :messageId`,
+                args: { messageId: stored.id },
+            },
+            {
+                sql: `
+                    INSERT INTO index_state (channel_id, last_message_id, last_indexed_timestamp)
+                    VALUES (:channelId, :lastMessageId, :lastIndexedTimestamp)
+                    ON CONFLICT(channel_id) DO UPDATE SET
+                        last_message_id = excluded.last_message_id,
+                        last_indexed_timestamp = CASE
+                            WHEN index_state.last_indexed_timestamp IS NULL THEN excluded.last_indexed_timestamp
+                            WHEN excluded.last_indexed_timestamp > index_state.last_indexed_timestamp THEN excluded.last_indexed_timestamp
+                            ELSE index_state.last_indexed_timestamp
+                        END
+                `,
+                args: {
+                    channelId: stored.channelId,
+                    lastMessageId: stored.id,
+                    lastIndexedTimestamp: stored.createdTimestamp,
+                },
+            },
+        ]);
+
+        for (let index = 0; index < chunks.length; index += 1) {
+            await client.execute({
+                sql: `
+                    INSERT INTO message_chunks (
+                        chunk_id, message_id, channel_id, guild_id, chunk_index, content, created_timestamp
+                    ) VALUES (
+                        :chunkId, :messageId, :channelId, :guildId, :chunkIndex, :content, :createdTimestamp
+                    )
+                `,
+                args: {
+                    chunkId: `${stored.id}:${index}`,
+                    messageId: stored.id,
+                    channelId: stored.channelId,
+                    guildId: stored.guildId,
+                    chunkIndex: index,
+                    content: chunks[index],
+                    createdTimestamp: stored.createdTimestamp,
+                },
+            });
         }
 
-        MemoryWriteRepository.updateIndexState(
-            stored.channelId,
-            stored.id,
-            stored.createdTimestamp
-        );
+        this.knownChannelsSnapshot.set(stored.channelId, {
+            channelId: stored.channelId,
+            guildId: stored.guildId,
+            channelName: stored.channelName,
+            channelType: this.knownChannelsSnapshot.get(stored.channelId)?.channelType || null,
+            parentCategoryId: this.knownChannelsSnapshot.get(stored.channelId)?.parentCategoryId || null,
+            parentCategoryName: this.knownChannelsSnapshot.get(stored.channelId)?.parentCategoryName || null,
+            lastSeenTimestamp: stored.createdTimestamp,
+        });
+        this.indexStateSnapshot.set(stored.channelId, {
+            channelId: stored.channelId,
+            lastMessageId: stored.id,
+            lastIndexedTimestamp: stored.createdTimestamp,
+        });
+        this.statsSnapshot.messages += 1;
+        this.statsSnapshot.channels = this.knownChannelsSnapshot.size;
+        this.statsSnapshot.chunks = Math.max(0, this.statsSnapshot.chunks - previousChunkCount) + chunks.length;
     }
 
-    public static getIndexState(channelId?: string) {
-        return MemoryReadRepository.getIndexState(channelId);
+    public static async getIndexStateAsync(channelId?: string): Promise<ChannelIndexState[]> {
+        await this.ensureInitialized();
+        if (!channelId) {
+            return [...this.indexStateSnapshot.values()];
+        }
+        const state = this.indexStateSnapshot.get(channelId);
+        return state ? [state] : [];
+    }
+
+    public static getIndexState(channelId?: string): ChannelIndexState[] {
+        if (!channelId) {
+            return [...this.indexStateSnapshot.values()];
+        }
+        const state = this.indexStateSnapshot.get(channelId);
+        return state ? [state] : [];
+    }
+
+    public static async getChannelCrawlStateAsync(channelId?: string): Promise<ChannelCrawlState[]> {
+        await this.ensureInitialized();
+        if (!channelId) {
+            return [...this.crawlStateSnapshot.values()];
+        }
+        const state = this.crawlStateSnapshot.get(channelId);
+        return state ? [state] : [];
     }
 
     public static getChannelCrawlState(channelId?: string): ChannelCrawlState[] {
-        return MemoryReadRepository.getChannelCrawlState(channelId);
+        if (!channelId) {
+            return [...this.crawlStateSnapshot.values()];
+        }
+        const state = this.crawlStateSnapshot.get(channelId);
+        return state ? [state] : [];
+    }
+
+    public static async clearAllAsync(): Promise<void> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        await client.executeMultiple(`
+            DELETE FROM trace_events;
+            DELETE FROM conversation_messages;
+            DELETE FROM tool_runs;
+            DELETE FROM runtime_runs;
+            DELETE FROM message_chunks;
+            DELETE FROM messages;
+            DELETE FROM channels;
+            DELETE FROM index_state;
+            DELETE FROM channel_crawl_state;
+        `);
+        await this.refreshSnapshots();
     }
 
     public static clearAll(): void {
-        MemoryWriteRepository.clearAll();
+        void this.clearAllAsync();
+    }
+
+    public static async getStatsAsync(): Promise<{ messages: number; chunks: number; channels: number }> {
+        await this.ensureInitialized();
+        return { ...this.statsSnapshot };
     }
 
     public static getStats() {
-        return MemoryReadRepository.getStats();
+        return { ...this.statsSnapshot };
     }
 
     public static async searchMessagesAsync(
@@ -75,157 +452,645 @@ export class DiscordMemoryService {
         scope: SearchMessageScope = {},
         limit = 8
     ): Promise<RetrievedChunk[]> {
-        return MemorySearchService.searchMessages(query, scope, limit);
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const terms = tokenize(query);
+        const { sql: scopeSql, args } = buildScopeSql(scope, "m");
+        const rows = (
+            await client.execute({
+                sql: `
+                    SELECT
+                        mc.message_id,
+                        mc.channel_id,
+                        m.channel_name,
+                        m.guild_id,
+                        m.author_id,
+                        m.author_name,
+                        mc.content,
+                        mc.created_timestamp,
+                        m.jump_link
+                    FROM message_chunks mc
+                    INNER JOIN messages m ON m.id = mc.message_id
+                    ${scopeSql}
+                    ORDER BY mc.created_timestamp DESC
+                    LIMIT 500
+                `,
+                args,
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        return rows
+            .map((row) => {
+                const content = String(row.content || "");
+                const haystack = content.toLowerCase();
+                const lexicalScore = terms.reduce(
+                    (total, term) => total + (haystack.includes(term) ? 1 : 0),
+                    0
+                );
+                const recencyScore = Number(row.created_timestamp || 0) / 1_000_000_000_000;
+                return {
+                    messageId: String(row.message_id),
+                    channelId: String(row.channel_id),
+                    channelName: String(row.channel_name || ""),
+                    guildId: row.guild_id == null ? null : String(row.guild_id),
+                    authorId: String(row.author_id),
+                    authorName: String(row.author_name),
+                    content,
+                    createdTimestamp: Number(row.created_timestamp || 0),
+                    jumpLink: String(row.jump_link || ""),
+                    lexicalScore,
+                    semanticScore: 0,
+                    recencyScore,
+                    totalScore: lexicalScore + recencyScore,
+                } satisfies RetrievedChunk;
+            })
+            .filter((row) => (terms.length ? row.lexicalScore > 0 : true))
+            .sort(
+                (left, right) =>
+                    right.totalScore - left.totalScore ||
+                    right.createdTimestamp - left.createdTimestamp
+            )
+            .slice(0, limit);
     }
 
-    public static getMessageThread(messageId: string, window = 6) {
-        return MemoryReadRepository.getMessageThread(messageId, window);
+    public static async getRecentChannelMessagesAsync(
+        channelId: string,
+        limit = 10
+    ): Promise<StoredMessage[]> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const rows = (
+            await client.execute({
+                sql: `
+                    SELECT *
+                    FROM messages
+                    WHERE channel_id = :channelId
+                    ORDER BY created_timestamp DESC
+                    LIMIT :limit
+                `,
+                args: { channelId, limit: Math.max(1, limit) },
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        return rows.map(mapStoredMessage).reverse();
     }
 
-    public static getChannelSummary(channelId: string) {
-        return MemoryReadRepository.getChannelSummary(channelId);
-    }
+    public static async getMessageThreadAsync(
+        messageId: string,
+        window = 6
+    ): Promise<StoredMessage[]> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const anchorRow = (
+            await client.execute({
+                sql: `SELECT * FROM messages WHERE id = :messageId`,
+                args: { messageId },
+            })
+        ).rows[0] as Record<string, unknown> | undefined;
 
-    public static listRelevantChannels(
-        query: string,
-        scope: SearchMessageScope = {},
-        limit = 6
-    ) {
-        const ftsQuery = SearchScopeClause.toFtsQuery(query);
-        if (!ftsQuery) {
+        if (!anchorRow) {
             return [];
         }
 
-        const scopeClause = SearchScopeClause.build(scope);
-        return MemoryReadRepository.listRelevantChannels(
-            ftsQuery,
-            scopeClause.sql,
-            scopeClause.params,
-            limit
+        const anchor = mapStoredMessage(anchorRow);
+        const rows = (
+            await client.execute({
+                sql: `
+                    SELECT *
+                    FROM messages
+                    WHERE channel_id = :channelId
+                    ORDER BY ABS(created_timestamp - :anchorTs) ASC, created_timestamp ASC
+                    LIMIT :limit
+                `,
+                args: {
+                    channelId: anchor.channelId,
+                    anchorTs: anchor.createdTimestamp,
+                    limit: Math.max(1, window * 2 + 1),
+                },
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        return rows
+            .map(mapStoredMessage)
+            .sort((left, right) => left.createdTimestamp - right.createdTimestamp);
+    }
+
+    public static getMessageThread(_messageId: string, _window = 6): StoredMessage[] {
+        return [];
+    }
+
+    public static async getChannelSummaryAsync(channelId: string): Promise<ChannelSummary | null> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const summaryRow = (
+            await client.execute({
+                sql: `
+                    SELECT
+                        channel_id,
+                        MAX(channel_name) AS channel_name,
+                        COUNT(*) AS message_count,
+                        MIN(created_timestamp) AS first_message_timestamp,
+                        MAX(created_timestamp) AS last_message_timestamp
+                    FROM messages
+                    WHERE channel_id = :channelId
+                    GROUP BY channel_id
+                `,
+                args: { channelId },
+            })
+        ).rows[0] as Record<string, unknown> | undefined;
+
+        if (!summaryRow) {
+            return null;
+        }
+
+        const authorRows = (
+            await client.execute({
+                sql: `
+                    SELECT author_name
+                    FROM messages
+                    WHERE channel_id = :channelId
+                    ORDER BY created_timestamp DESC
+                    LIMIT 5
+                `,
+                args: { channelId },
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        return {
+            channelId: String(summaryRow.channel_id),
+            channelName: String(summaryRow.channel_name || ""),
+            messageCount: Number(summaryRow.message_count || 0),
+            firstMessageTimestamp:
+                summaryRow.first_message_timestamp == null
+                    ? null
+                    : Number(summaryRow.first_message_timestamp),
+            lastMessageTimestamp:
+                summaryRow.last_message_timestamp == null
+                    ? null
+                    : Number(summaryRow.last_message_timestamp),
+            recentAuthors: authorRows.map((row) => String(row.author_name || "")).filter(Boolean),
+        };
+    }
+
+    public static getChannelSummary(_channelId: string): ChannelSummary | null {
+        return null;
+    }
+
+    public static async listRelevantChannelsAsync(
+        query: string,
+        scope: SearchMessageScope = {},
+        limit = 6
+    ): Promise<ChannelCandidate[]> {
+        const results = await this.searchMessagesAsync(query, scope, 100);
+        const grouped = new Map<string, ChannelCandidate>();
+
+        for (const result of results) {
+            const existing = grouped.get(result.channelId);
+            if (existing) {
+                existing.hitCount += 1;
+                if (
+                    existing.lastIndexedTimestamp == null ||
+                    result.createdTimestamp > existing.lastIndexedTimestamp
+                ) {
+                    existing.lastIndexedTimestamp = result.createdTimestamp;
+                }
+                continue;
+            }
+
+            grouped.set(result.channelId, {
+                channelId: result.channelId,
+                channelName: result.channelName,
+                hitCount: 1,
+                isIndexed: true,
+                matchSource: "memory",
+                lastIndexedTimestamp: result.createdTimestamp,
+            });
+        }
+
+        return [...grouped.values()]
+            .sort(
+                (left, right) =>
+                    right.hitCount - left.hitCount ||
+                    (right.lastIndexedTimestamp || 0) - (left.lastIndexedTimestamp || 0)
+            )
+            .slice(0, limit);
+    }
+
+    public static listRelevantChannels(
+        _query: string,
+        _scope: SearchMessageScope = {},
+        _limit = 6
+    ): ChannelCandidate[] {
+        return [];
+    }
+
+    public static async getKnownChannelsAsync(guildId?: string | null): Promise<KnownChannelRecord[]> {
+        await this.ensureInitialized();
+        return [...this.knownChannelsSnapshot.values()].filter((channel) =>
+            guildId === undefined ? true : channel.guildId === guildId
         );
     }
 
     public static getKnownChannels(guildId?: string | null) {
-        return MemoryReadRepository.listKnownChannels(guildId);
+        return [...this.knownChannelsSnapshot.values()].filter((channel) =>
+            guildId === undefined ? true : channel.guildId === guildId
+        );
     }
 
-    public static upsertDiscoveredChannel(
+    public static async upsertDiscoveredChannel(
         channelId: string,
         guildId: string | null,
         channelName: string,
-        timestamp = Date.now()
-    ): void {
-        MemoryWriteRepository.upsertDiscoveredChannel(
+        timestamp = now(),
+        metadata?: {
+            channelType?: string | null;
+            parentCategoryId?: string | null;
+            parentCategoryName?: string | null;
+        }
+    ): Promise<void> {
+        await this.ensureInitialized();
+        await OperationalStore.getClient().execute({
+            sql: `
+                INSERT INTO channels (
+                    channel_id, guild_id, channel_name, channel_type,
+                    parent_category_id, parent_category_name, last_seen_timestamp
+                )
+                VALUES (
+                    :channelId, :guildId, :channelName, :channelType,
+                    :parentCategoryId, :parentCategoryName, :lastSeenTimestamp
+                )
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    guild_id = excluded.guild_id,
+                    channel_name = excluded.channel_name,
+                    channel_type = COALESCE(excluded.channel_type, channels.channel_type),
+                    parent_category_id = COALESCE(excluded.parent_category_id, channels.parent_category_id),
+                    parent_category_name = COALESCE(excluded.parent_category_name, channels.parent_category_name),
+                    last_seen_timestamp = excluded.last_seen_timestamp
+            `,
+            args: {
+                channelId,
+                guildId,
+                channelName,
+                channelType: metadata?.channelType || null,
+                parentCategoryId: metadata?.parentCategoryId || null,
+                parentCategoryName: metadata?.parentCategoryName || null,
+                lastSeenTimestamp: timestamp,
+            },
+        });
+
+        this.knownChannelsSnapshot.set(channelId, {
             channelId,
             guildId,
             channelName,
-            timestamp
-        );
+            channelType: metadata?.channelType || this.knownChannelsSnapshot.get(channelId)?.channelType || null,
+            parentCategoryId:
+                metadata?.parentCategoryId ||
+                this.knownChannelsSnapshot.get(channelId)?.parentCategoryId ||
+                null,
+            parentCategoryName:
+                metadata?.parentCategoryName ||
+                this.knownChannelsSnapshot.get(channelId)?.parentCategoryName ||
+                null,
+            lastSeenTimestamp: timestamp,
+        });
+        this.statsSnapshot.channels = this.knownChannelsSnapshot.size;
     }
 
-    public static updateChannelCrawlState(
+    public static async resolveHistoricalAuthorAsync(
+        guildId: string | null,
+        query: string
+    ): Promise<HistoricalAuthorRecord | null> {
+        await this.ensureInitialized();
+        const compactQuery = query
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "");
+        if (!compactQuery) {
+            return null;
+        }
+
+        const rows = (
+            await OperationalStore.getClient().execute({
+                sql: `
+                    SELECT
+                        author_id,
+                        author_name,
+                        guild_id,
+                        COUNT(*) AS message_count,
+                        MAX(created_timestamp) AS last_seen_timestamp,
+                        MAX(is_bot) AS is_bot
+                    FROM messages
+                    WHERE guild_id ${guildId === null ? "IS NULL" : "= :guildId"}
+                    GROUP BY author_id, author_name, guild_id
+                    ORDER BY last_seen_timestamp DESC
+                `,
+                args: guildId === null ? {} : { guildId },
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        const normalizedRows = rows
+            .map((row) => ({
+                authorId: String(row.author_id),
+                authorName: String(row.author_name || ""),
+                guildId: row.guild_id == null ? null : String(row.guild_id),
+                messageCount: Number(row.message_count || 0),
+                lastSeenTimestamp: Number(row.last_seen_timestamp || 0),
+                isBot: Boolean(Number(row.is_bot || 0)),
+                compactName: String(row.author_name || "")
+                    .normalize("NFD")
+                    .replace(/[\u0300-\u036f]/g, "")
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, ""),
+            }))
+            .filter((row) => row.authorId === query || row.compactName.includes(compactQuery))
+            .sort((left, right) => {
+                const exactLeft = left.authorId === query || left.compactName === compactQuery ? 1 : 0;
+                const exactRight = right.authorId === query || right.compactName === compactQuery ? 1 : 0;
+                if (exactRight !== exactLeft) {
+                    return exactRight - exactLeft;
+                }
+                if (right.messageCount !== left.messageCount) {
+                    return right.messageCount - left.messageCount;
+                }
+                return right.lastSeenTimestamp - left.lastSeenTimestamp;
+            });
+
+        const best = normalizedRows[0];
+        if (!best) {
+            return null;
+        }
+
+        return {
+            authorId: best.authorId,
+            authorName: best.authorName,
+            guildId: best.guildId,
+            messageCount: best.messageCount,
+            lastSeenTimestamp: best.lastSeenTimestamp,
+            isBot: best.isBot,
+        };
+    }
+
+    public static async updateChannelCrawlState(
         channelId: string,
         oldestFetchedMessageId: string | null,
         exhausted: boolean
-    ): void {
-        MemoryWriteRepository.updateChannelCrawlState(
+    ): Promise<void> {
+        await this.ensureInitialized();
+        const state: ChannelCrawlState = {
             channelId,
+            lastCrawledTimestamp: now(),
             oldestFetchedMessageId,
-            exhausted
-        );
+            exhausted,
+        };
+
+        await OperationalStore.getClient().execute({
+            sql: `
+                INSERT INTO channel_crawl_state (
+                    channel_id, last_crawled_timestamp, oldest_fetched_message_id, exhausted
+                ) VALUES (
+                    :channelId, :lastCrawledTimestamp, :oldestFetchedMessageId, :exhausted
+                )
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    last_crawled_timestamp = excluded.last_crawled_timestamp,
+                    oldest_fetched_message_id = excluded.oldest_fetched_message_id,
+                    exhausted = excluded.exhausted
+            `,
+            args: {
+                channelId,
+                lastCrawledTimestamp: state.lastCrawledTimestamp,
+                oldestFetchedMessageId,
+                exhausted: exhausted ? 1 : 0,
+            },
+        });
+
+        this.crawlStateSnapshot.set(channelId, state);
     }
 
-    public static getNthHistoricalMessage(channelId: string, position: number) {
-        return MemoryReadRepository.getNthHistoricalMessage(channelId, position);
+    public static async getNthHistoricalMessageAsync(
+        channelId: string,
+        position: number
+    ): Promise<StoredMessage | null> {
+        await this.ensureInitialized();
+        const row = (
+            await OperationalStore.getClient().execute({
+                sql: `
+                    SELECT *
+                    FROM messages
+                    WHERE channel_id = :channelId
+                    ORDER BY created_timestamp ASC
+                    LIMIT 1 OFFSET :offset
+                `,
+                args: {
+                    channelId,
+                    offset: Math.max(0, position - 1),
+                },
+            })
+        ).rows[0] as Record<string, unknown> | undefined;
+
+        return row ? mapStoredMessage(row) : null;
     }
 
-    public static recordToolRun(
+    public static getNthHistoricalMessage(_channelId: string, _position: number) {
+        return null;
+    }
+
+    public static async recordToolRun(
+        requestId: string,
         guildId: string | null,
         channelId: string | null,
         userId: string,
         question: string,
         toolName: string,
-        summary: string
-    ): void {
-        MemoryWriteRepository.recordToolRun(
-            guildId,
-            channelId,
-            userId,
-            question,
-            toolName,
-            summary
-        );
+        argumentsJson: string,
+        summary: string,
+        learned: string,
+        confidenceImproved: boolean,
+        durationMs: number
+    ): Promise<void> {
+        await this.ensureInitialized();
+        await OperationalStore.getClient().execute({
+            sql: `
+                INSERT INTO tool_runs (
+                    request_id, guild_id, channel_id, user_id, question, tool_name, arguments_json,
+                    summary, learned, confidence_improved, duration_ms, created_timestamp
+                ) VALUES (
+                    :requestId, :guildId, :channelId, :userId, :question, :toolName, :argumentsJson,
+                    :summary, :learned, :confidenceImproved, :durationMs, :createdTimestamp
+                )
+            `,
+            args: {
+                requestId,
+                guildId,
+                channelId,
+                userId,
+                question,
+                toolName,
+                argumentsJson,
+                summary,
+                learned,
+                confidenceImproved: confidenceImproved ? 1 : 0,
+                durationMs,
+                createdTimestamp: now(),
+            },
+        });
     }
 
-    public static repairIndexes(): void {
-        MemoryWriteRepository.repairIndexes();
+    public static async recordRuntimeRun(run: RuntimeRunRecord): Promise<void> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        await client.execute({
+            sql: `
+                INSERT INTO runtime_runs (
+                    request_id, thread_id, guild_id, channel_id, actor_id, trigger,
+                    classification_mode, runtime_mode, stop_reason, confidence,
+                    question, answer, created_timestamp
+                ) VALUES (
+                    :requestId, :threadId, :guildId, :channelId, :actorId, :trigger,
+                    :classificationMode, :runtimeMode, :stopReason, :confidence,
+                    :question, :answer, :createdTimestamp
+                )
+            `,
+            args: {
+                requestId: run.requestId,
+                threadId: run.threadId,
+                guildId: run.guildId,
+                channelId: run.channelId,
+                actorId: run.actorId,
+                trigger: run.trigger,
+                classificationMode: run.classificationMode,
+                runtimeMode: run.runtimeMode,
+                stopReason: run.stopReason,
+                confidence: run.confidence,
+                question: run.question,
+                answer: run.answer,
+                createdTimestamp: now(),
+            },
+        });
+
+        for (const event of run.traceEvents) {
+            await client.execute({
+                sql: `
+                    INSERT INTO trace_events (request_id, label, detail, created_timestamp)
+                    VALUES (:requestId, :label, :detail, :createdTimestamp)
+                `,
+                args: {
+                    requestId: run.requestId,
+                    label: event.label,
+                    detail: event.detail,
+                    createdTimestamp: event.timestamp,
+                },
+            });
+        }
     }
 
-    public static getReusableGroundedContext(options: {
+    public static async getRecentRuntimeRunsAsync(
+        threadId: string,
+        limit = 3
+    ): Promise<ConversationTurnSummary[]> {
+        await this.ensureInitialized();
+        const rows = (
+            await OperationalStore.getClient().execute({
+                sql: `
+                    SELECT
+                        request_id,
+                        question,
+                        answer,
+                        classification_mode,
+                        runtime_mode,
+                        stop_reason,
+                        confidence,
+                        created_timestamp
+                    FROM runtime_runs
+                    WHERE thread_id = :threadId
+                    ORDER BY created_timestamp DESC
+                    LIMIT :limit
+                `,
+                args: {
+                    threadId,
+                    limit: Math.max(1, limit),
+                },
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        return rows
+            .map((row) => ({
+                requestId: String(row.request_id),
+                question: String(row.question || ""),
+                answer: String(row.answer || ""),
+                classificationMode: String(row.classification_mode || ""),
+                runtimeMode: String(row.runtime_mode || ""),
+                stopReason: String(row.stop_reason || ""),
+                confidence: String(row.confidence || ""),
+                createdTimestamp: Number(row.created_timestamp || 0),
+            }))
+            .reverse();
+    }
+
+    public static getRecentRuntimeRuns(
+        _threadId: string,
+        _limit = 3
+    ): ConversationTurnSummary[] {
+        return [];
+    }
+
+    public static async recordConversationMessages(options: {
+        requestId: string;
+        threadId: string;
         guildId: string | null;
-        currentChannelId: string | null;
-        questionFingerprint: string;
-        routeIntent: string;
-        requireSufficient?: boolean;
-        currentResponseOrdinal?: number | null;
-        maxResponsesAgo?: number;
-    }): ReusableGroundedContextRecord | null {
-        return CacheReadRepository.getReusableGroundedContext(options);
+        channelId: string | null;
+        messageIds: string[];
+    }): Promise<void> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+
+        for (const messageId of options.messageIds) {
+            await client.execute({
+                sql: `
+                    INSERT INTO conversation_messages (
+                        message_id, request_id, thread_id, guild_id, channel_id, created_timestamp
+                    ) VALUES (
+                        :messageId, :requestId, :threadId, :guildId, :channelId, :createdTimestamp
+                    )
+                    ON CONFLICT(message_id) DO UPDATE SET
+                        request_id = excluded.request_id,
+                        thread_id = excluded.thread_id,
+                        guild_id = excluded.guild_id,
+                        channel_id = excluded.channel_id,
+                        created_timestamp = excluded.created_timestamp
+                `,
+                args: {
+                    messageId,
+                    requestId: options.requestId,
+                    threadId: options.threadId,
+                    guildId: options.guildId,
+                    channelId: options.channelId,
+                    createdTimestamp: now(),
+                },
+            });
+        }
     }
 
-    public static saveReusableGroundedContext(
-        context: ReusableGroundedContextRecord
-    ): void {
-        CacheWriteRepository.upsertReusableGroundedContext(context);
+    public static async resolveConversationThreadIdForMessage(
+        messageId: string
+    ): Promise<string | null> {
+        await this.ensureInitialized();
+        const row = (
+            await OperationalStore.getClient().execute({
+                sql: `
+                    SELECT thread_id
+                    FROM conversation_messages
+                    WHERE message_id = :messageId
+                `,
+                args: { messageId },
+            })
+        ).rows[0] as Record<string, unknown> | undefined;
+
+        return row?.thread_id == null ? null : String(row.thread_id);
     }
 
-    public static getRecentReusableGroundedContext(options: {
-        guildId: string | null;
-        currentChannelId: string | null;
-        routeIntent?: string;
-        requireSufficient?: boolean;
-        currentResponseOrdinal?: number | null;
-        maxResponsesAgo?: number;
-    }): ReusableGroundedContextRecord | null {
-        return CacheReadRepository.getRecentReusableGroundedContext(options);
-    }
-
-    public static getCachedToolResult(
-        cacheKey: string,
-        currentResponseOrdinal: number | null,
-        maxResponsesAgo: number
-    ): CachedToolResultRecord | null {
-        return CacheReadRepository.getCachedToolResult(
-            cacheKey,
-            currentResponseOrdinal,
-            maxResponsesAgo
-        );
-    }
-
-    public static saveCachedToolResult(entry: CachedToolResultRecord): void {
-        CacheWriteRepository.upsertCachedToolResult(entry);
-    }
-
-    public static pruneCacheEntries(now = Date.now()): void {
-        CacheWriteRepository.pruneExpired(now);
-    }
-
-    public static nextGuildResponseOrdinal(guildId: string | null): number | null {
-        return ResponseCounterRepository.nextGuildResponseOrdinal(guildId);
-    }
-
-    public static getConversationResolutionContext(options: {
-        guildId: string | null;
-        currentChannelId: string | null;
-        currentResponseOrdinal?: number | null;
-        maxResponsesAgo?: number;
-    }): ConversationResolutionContextRecord | null {
-        return CacheReadRepository.getConversationResolutionContext(options);
-    }
-
-    public static saveConversationResolutionContext(
-        context: ConversationResolutionContextRecord
-    ): void {
-        CacheWriteRepository.upsertConversationResolutionContext(context);
+    public static async repairIndexesAsync(): Promise<void> {
+        await this.ensureInitialized();
     }
 }
+

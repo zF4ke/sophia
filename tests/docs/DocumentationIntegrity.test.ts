@@ -37,21 +37,21 @@ describe("documentation integrity", () => {
         }
     });
 
-    it("keeps tool names synchronized across docs and the planning prompt", () => {
+    it("keeps tool names synchronized across docs and the runtime prompt catalog", () => {
         const agents = fs.readFileSync(path.join(projectRoot, "AGENTS.md"), "utf8");
         const promptCatalog = fs.readFileSync(
             path.join(projectRoot, "docs/prompt-catalog.md"),
             "utf8"
         );
-        const plannerPrompt = fs.readFileSync(
-            path.join(projectRoot, "resources/prompts/tasks/plan_discord_search.md"),
+        const runtimePlannerPrompt = fs.readFileSync(
+            path.join(projectRoot, "resources/prompts/runtime/plan_turn.md"),
             "utf8"
         );
 
         for (const toolName of DISCORD_TOOL_NAMES) {
             expect(agents).toContain(toolName);
             expect(promptCatalog).toContain(toolName);
-            expect(plannerPrompt).toContain(toolName);
+            expect(runtimePlannerPrompt).toContain(toolName);
         }
     });
 });

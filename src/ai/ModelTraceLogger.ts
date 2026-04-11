@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { AppPaths } from "@/app/AppPaths";
-import { FileSystemService } from "@/platform/storage/FileSystemService";
+import { FileSystemService } from "@/shared/storage/FileSystemService";
 
 type ChatMessage = {
     role: "system" | "user" | "assistant";
@@ -44,3 +44,4 @@ export class ModelTraceLogger {
         }
     }
 }
+

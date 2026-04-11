@@ -1,96 +1,118 @@
-# Sophia3
+# Sophia
 
-An agentic Discord assistant backed by local Discord memory, OpenRouter models, and bounded retrieval tools.
+Sophia is a Discord assistant built around one conversational runtime and one unified Discord retrieval pipeline.
 
-For engineering/runtime guidance, use `AGENTS.md`. For deeper reference docs, use `docs/`.
+## Public Surface
 
-## Features
+Main conversation entrypoints:
+- `/talk`
+- mentions
+- replies
 
-- **Agentic Answers**: Sophia decides when to answer directly and when to retrieve Discord evidence.
-- **Local Discord Memory**: Messages are stored locally in SQLite and searched with lexical plus embedding retrieval.
-- **Grounded Search**: Evidence search works across readable channels and returns clickable citations.
-- **Live Discord Tools**: Member and guild metadata are fetched live instead of being blindly persisted.
-- **Modern Interactions**: Current `discord.js` components with buttons and select menus for evidence browsing.
+Specialized workflow:
+- `/find`
 
-## Tech Stack
+Operator surfaces:
+- `/nth`
+- `/index`
+- `/cache`
+- `/debug`
+- `/access`
 
-- TypeScript
-- Discord.js
-- OpenRouter via the `openai` SDK
-- SQLite (`better-sqlite3`)
-- Express
-- Vitest
+`/ask` and `/context` are retired. Sophia now treats `/talk`, mentions, and replies as one conversation surface.
 
-## Project Structure
+## What Sophia Does
 
-```
-src/
-├── app/          # Bootstrap, runtime config, shared path registry
-├── agent/        # Classification, orchestration, prompt loading
-├── ai/           # Model gateway
-├── discord/      # Commands, events, UI, live Discord access, conversation helpers
-├── memory/       # Persistence, indexing, retrieval, ranking
-├── platform/     # Loaders, HTTP app, storage helpers
-├── security/     # Admin/moderator state, policies, rate limits
-└── shared/       # Cross-domain contracts and stable catalogs
-resources/        # Repo-tracked runtime assets such as prompts and model profiles
-storage/          # Mutable local runtime state
-tests/            # Test tree mirroring runtime domains
-```
+Sophia is conversational first. When a turn does not need Discord evidence, she should keep the conversation moving instead of shutting it down.
 
-## Services
+When a turn does depend on Discord, she uses a cache-first retrieval pipeline:
+1. search local indexed Discord messages
+2. if evidence is weak, refresh from live Discord history behind the scenes
+3. ingest the refreshed messages locally
+4. retry retrieval on the enriched cache
 
-### AI and Agent Services
-- `ModelGateway`: OpenRouter-backed model access
-- `PromptRegistry`: Filesystem-based prompt loading
-- `AgentOrchestrator`: Bounded tool loop and grounded answering
-- `RequestClassifier`: Direct-answer vs Discord-grounded routing
+That local storage is a Discord retrieval cache plus runtime state. It is not a separate memory-search product.
 
-### Core Services
-- `DiscordMemoryService`: Message ingestion, indexing, and retrieval facade
-- `DiscordBackfillService`: Historical indexing for channels and categories
-- `DiscordToolService`: Internal Discord tools for the agent
-- `ConversationService`: Message grouping and threading
-- `SecurityService`: Access control and permissions facade
-- `UIService`: User interface facade
-- `AppPaths`: Central path registry for resources, storage, commands, and events
+## Conversation Continuity
 
-## Getting Started
+Conversation identity is reply-chain first:
+- a native Discord thread keeps its own conversation key
+- replies to Sophia reuse the stored conversation thread when one exists
+- replies without a stored Sophia anchor fall back to the first real anchor message
+- otherwise Sophia uses a shared channel-level conversation key
 
-1. Install dependencies:
+This lets `/talk`, mentions, and replies behave like one continuous conversation even when multiple users join the same chain.
+
+## Grounding And Recovery
+
+Sophia should not dead-end a turn with a bare refusal when grounding is weak. The runtime is designed to:
+- give the best-effort interpretation from current context
+- mark uncertainty clearly when needed
+- ask a targeted follow-up or continue the retrieval path
+
+That applies to casual conversation, follow-up questions, and partially grounded channel questions.
+
+## Stable Capabilities
+
+The current stable capability ids are:
+- `retrieve_messages`
+- `resolve_member_identity`
+- `list_guild_structure`
+- `resolve_channel_targets`
+- `get_member_profile`
+- `list_members`
+- `get_guild_context`
+
+`retrieve_messages` is the main Discord evidence path. `resolve_member_identity`, `list_guild_structure`, and `resolve_channel_targets` are the current-guild discovery layer. The remaining capabilities are live metadata lookups.
+
+## Planning Model
+
+Sophia is model-led by default.
+
+The planner and next-step selector get:
+- the question
+- trigger type
+- reply context
+- recent turns
+- recent channel context
+- the capability registry
+
+The runtime still enforces:
+- capability validation
+- exact-id structural shortcuts
+- repeated-call protection
+- tool and latency budgets
+- refusal prevention for ordinary conversation
+
+If model planning fails, Sophia falls back to a small generic current-guild recovery ladder instead of brittle language-specific routing.
+
+## Storage
+
+Active runtime storage lives under `storage/runtime/` and is disposable local state.
+
+Current storage roles:
+- operational runtime state and traces
+- local message cache and indexing state
+- LangGraph checkpoints
+
+Legacy cache and storage artifacts are not part of the active runtime path.
+
+## Documentation
+
+Key docs:
+- `AGENTS.md`
+- `docs/architecture.md`
+- `docs/agent-loop.md`
+- `docs/memory-indexing.md`
+- `docs/prompt-catalog.md`
+- `docs/commands-and-admin.md`
+- `docs/cleanup-migration.md`
+- `docs/how-sophia-works.md`
+- `docs/ui.md`
+
+## Verification
+
+Run:
 ```bash
-npm install
+npm run check
 ```
-
-2. Configure environment variables:
-```env
-DISCORD_TOKEN=your_discord_token
-OPENROUTER_API_KEY=your_openrouter_api_key
-MODEL_PROFILE=balanced
-```
-Tracked runtime assets live under `resources/`. Mutable state is written under `storage/`.
-
-3. Start development server:
-```bash
-npm run dev
-```
-
-4. Run the bot:
-```bash
-npm start
-```
-
-## Commands
-
-### Core Commands
-- `/ask`: Ask Sophia a question
-- `/find`: Search stored Discord evidence
-- `/context`: Ask for a context-aware answer
-- `/talk`: Talk to Sophia directly
-- `/nth`: Retrieve the Nth indexed historical message
-- `/debug`: Toggle and inspect the global live debug mode
-- `/index`: Backfill, inspect, repair, or clear the local memory index
-
-### System Commands
-- `/access`: Open the admin access panel
-- `/cache`: Show local memory statistics

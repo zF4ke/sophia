@@ -1,26 +1,26 @@
 # UI Guidelines
 
-These rules exist to keep Sophia's Discord responses clean, readable, and human-facing instead of debug-shaped.
+These rules keep Sophia’s Discord responses clear, human-facing, and easy to scan.
 
 ## Principles
 
-- Prefer short cards over noisy walls of text.
+- Prefer short containers over noisy walls of text.
+- Keep conversational answers conversational.
 - Put labels and values on the same line for simple metrics.
-- Do not add decorative thumbnails or images unless they carry useful information.
 - Do not expose internal implementation jargon in user-facing copy.
 - Avoid filler sentences that explain the UI instead of the result.
-- Prefer plain channel or status lines over bullet-heavy formatting.
-- Keep status commands compact and easy to scan on desktop and mobile.
+- Use multiple containers when that makes the result easier to follow.
+- Keep status commands compact and readable on desktop and mobile.
 
 ## Good Defaults
 
-- For small status summaries, use a single `ContainerBuilder` with:
+- For small status summaries, use a primary container with:
   - a short title
   - one short explanatory sentence only when needed
-  - inline metrics such as `Mensagens salvas: 40`
+  - inline metrics such as `Messages saved: 40`
   - one short section for related items such as channels
 - Use accent colors sparingly to communicate rough state, not branding decoration.
-- Prefer Portuguese copy for bot-facing product text unless a command already has a strong reason to stay in English.
+- Prefer the language of the channel and the user when possible.
 
 ## Avoid
 
@@ -31,11 +31,10 @@ These rules exist to keep Sophia's Discord responses clean, readable, and human-
 
 ## Commands That Should Follow This
 
-- `/ping`
+- `/debug`
 - `/cache`
 - `/index status`
-- `/debug`
-- Other future status or diagnostics commands
+- future operator/status commands
 
 ## If You Change UI Patterns
 

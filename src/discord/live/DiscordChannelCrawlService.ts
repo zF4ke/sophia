@@ -1,8 +1,24 @@
-import { TextChannel, ThreadChannel, type Guild } from "discord.js";
+import { ChannelType, type Guild } from "discord.js";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type { ChannelCrawlResult } from "@/shared/appTypes";
 
-type CrawlableChannel = TextChannel | ThreadChannel;
+type CrawlableChannel = {
+    id: string;
+    name: string;
+    type: ChannelType | number | string;
+    viewable?: boolean;
+    parent?: {
+        id?: string | null;
+        name?: string | null;
+        parent?: {
+            id?: string | null;
+            name?: string | null;
+        } | null;
+    } | null;
+    messages: {
+        fetch: (options: { limit: number; before?: string }) => Promise<any>;
+    };
+};
 export const INTERACTIVE_CRAWL_LIMIT = 250;
 const PREVIEW_MESSAGE_LIMIT = 12;
 
@@ -15,6 +31,59 @@ function normalizeLookupValue(value: string): string {
         .toLowerCase()
         .replace(/[^a-z0-9_-]+/g, " ")
         .trim();
+}
+
+function isThreadLike(channel: { type?: ChannelType | number | string } | null | undefined): boolean {
+    return (
+        channel?.type === ChannelType.PublicThread ||
+        channel?.type === ChannelType.PrivateThread ||
+        channel?.type === ChannelType.AnnouncementThread ||
+        String(channel?.type) === String(ChannelType.PublicThread) ||
+        String(channel?.type) === String(ChannelType.PrivateThread) ||
+        String(channel?.type) === String(ChannelType.AnnouncementThread)
+    );
+}
+
+function isCrawlableChannel(channel: unknown): channel is CrawlableChannel {
+    if (!channel || typeof channel !== "object") {
+        return false;
+    }
+
+    const candidate = channel as Partial<CrawlableChannel>;
+    if (candidate.viewable === false) {
+        return false;
+    }
+
+    const type = candidate.type;
+    const isSupportedType =
+        type === ChannelType.GuildText ||
+        String(type) === String(ChannelType.GuildText) ||
+        isThreadLike(candidate as { type?: ChannelType | number | string });
+
+    return Boolean(
+        isSupportedType &&
+            candidate.id &&
+            candidate.name &&
+            candidate.messages &&
+            typeof candidate.messages.fetch === "function"
+    );
+}
+
+function getParentCategoryMeta(channel: CrawlableChannel): {
+    parentCategoryId: string | null;
+    parentCategoryName: string | null;
+} {
+    if (isThreadLike(channel)) {
+        return {
+            parentCategoryId: channel.parent?.parent?.id || null,
+            parentCategoryName: channel.parent?.parent?.name || null,
+        };
+    }
+
+    return {
+        parentCategoryId: channel.parent?.id || null,
+        parentCategoryName: channel.parent?.name || null,
+    };
 }
 
 export class DiscordChannelCrawlService {
@@ -40,26 +109,23 @@ export class DiscordChannelCrawlService {
         }
 
         return [...guild.channels.cache.values()]
-            .filter((channel) =>
-                (channel instanceof TextChannel || channel instanceof ThreadChannel) &&
-                channel.viewable
-            )
+            .filter((channel) => isCrawlableChannel(channel))
             .map((channel) => channel as CrawlableChannel)
             .sort((left, right) => left.name.localeCompare(right.name));
     }
 
-    public static rankCandidateChannels(
+    public static async rankCandidateChannels(
         guild: Guild | null,
         query: string,
         currentChannelId?: string | null
-    ): Array<{
+    ): Promise<Array<{
         channelId: string;
         channelName: string;
         guildId: string | null;
         isIndexed: boolean;
         matchSource: "memory" | "live_name";
         lastIndexedTimestamp: number | null;
-    }> {
+    }>> {
         const normalizedTerms = query
             .toLowerCase()
             .split(/\s+/)
@@ -67,7 +133,7 @@ export class DiscordChannelCrawlService {
             .filter((term) => term.length > 1);
 
         const knownChannels = new Map(
-            DiscordMemoryService.getKnownChannels(guild?.id || null).map((channel) => [
+            (await DiscordMemoryService.getKnownChannelsAsync(guild?.id || null)).map((channel) => [
                 channel.channelId,
                 channel,
             ])
@@ -168,7 +234,7 @@ export class DiscordChannelCrawlService {
         }
 
         const channel = guild.channels.cache.get(channelId);
-        if (!(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) {
+        if (!isCrawlableChannel(channel)) {
             return {
                 channelId,
                 channelName: channel?.name || channelId,
@@ -181,14 +247,20 @@ export class DiscordChannelCrawlService {
             };
         }
 
-        DiscordMemoryService.upsertDiscoveredChannel(
+        const parentMeta = getParentCategoryMeta(channel);
+        await DiscordMemoryService.upsertDiscoveredChannel(
             channel.id,
             guild.id,
             channel.name,
-            Date.now()
+            Date.now(),
+            {
+                channelType: String(channel.type),
+                parentCategoryId: parentMeta.parentCategoryId,
+                parentCategoryName: parentMeta.parentCategoryName,
+            }
         );
 
-        const crawlState = DiscordMemoryService.getChannelCrawlState(channel.id)[0] || null;
+        const crawlState = (await DiscordMemoryService.getChannelCrawlStateAsync(channel.id))[0] || null;
         if (crawlState?.exhausted) {
             await onProgress?.(
                 "crawl_channel_messages",
@@ -237,7 +309,7 @@ export class DiscordChannelCrawlService {
             );
         }
 
-        DiscordMemoryService.updateChannelCrawlState(channel.id, before || null, exhausted);
+        await DiscordMemoryService.updateChannelCrawlState(channel.id, before || null, exhausted);
         const previewMessages = buildPreviewMessages(fetchedMessages, queryHint);
         this.enqueueBackgroundIngest(fetchedMessages);
 

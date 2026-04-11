@@ -36,7 +36,7 @@ export class ModelGateway {
                 apiKey: config.openRouterApiKey,
                 baseURL: config.openRouterBaseUrl,
                 defaultHeaders: {
-                    "HTTP-Referer": "https://sophia3.local",
+                    "HTTP-Referer": "https://sophia.local",
                     "X-OpenRouter-Title": "Sophia3",
                 },
             });
@@ -230,3 +230,4 @@ export class ModelGateway {
         return lastUserMessage ? lastUserMessage.content.trim().slice(0, 200) : null;
     }
 }
+

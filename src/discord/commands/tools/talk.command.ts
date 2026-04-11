@@ -3,12 +3,13 @@ import {
     MessageFlags,
     SlashCommandBuilder,
 } from "discord.js";
-import { AgentOrchestrator } from "@/agent/AgentOrchestrator";
 import { DebugService } from "@/discord/debug/DebugService";
 import { ResponseActivityService } from "@/discord/responding/ResponseActivityIndicator";
-import { SecurityService } from "@/security/SecurityService";
 import { UIService } from "@/discord/ui/UIService";
 import { EMOJIS } from "@/discord/constants";
+import { ConversationAdapter } from "@/discord/conversation/ConversationAdapter";
+import { Runtime } from "@/runtime/Runtime";
+import { SecurityService } from "@/security/SecurityService";
 import type { BotClient } from "@/shared/appTypes";
 
 export = {
@@ -48,27 +49,25 @@ export = {
                 flags: ephemeral ? MessageFlags.Ephemeral : undefined,
             });
             activityIndicator = await ResponseActivityService.startForInteraction(interaction);
-            debugSession = await DebugService.startForInteraction(
+            debugSession = await DebugService.startForInteraction(interaction, message);
+
+            const input = await ConversationAdapter.fromInteraction({
                 interaction,
-                message
-            );
-
-            const result = await AgentOrchestrator.answerQuestion({
                 question: message,
-                user: interaction.user,
-                guild: interaction.guild,
-                currentChannelId: interaction.channelId,
                 debugSession,
-                conversationWebMode: "auto",
-                conversationSurface: "talk",
             });
-
-            await UIService.sendLongResponse(
+            const result = await Runtime.answer(input);
+            const sentMessages = await UIService.sendLongResponse(
                 interaction,
                 "",
                 UIService.formatAnswer(result.answer, result.citations),
                 ephemeral
             );
+            await ConversationAdapter.bindResponseMessages({
+                input,
+                result,
+                sentMessages,
+            });
         } catch (error) {
             console.error("Error in talk command:", error);
             await debugSession?.finishError(error);
@@ -84,3 +83,4 @@ export = {
         }
     },
 };
+

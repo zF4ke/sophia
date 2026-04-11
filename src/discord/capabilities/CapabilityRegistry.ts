@@ -1,0 +1,321 @@
+import { z } from "zod";
+import type { Guild } from "discord.js";
+import { DiscordGuildDiscoveryService } from "@/discord/live/DiscordGuildDiscoveryService";
+import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
+import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
+import { DISCORD_TOOL_EVIDENCE_ROLES, type DiscordToolName } from "@/shared/discordTools";
+import type { DiscordToolResult } from "@/shared/appTypes";
+import type { CapabilityManifest } from "@/runtime/contracts";
+
+type CapabilityContext = {
+    guild: Guild | null;
+    question: string;
+    currentChannelId?: string | null;
+    onProgress?: (toolName: string, summary: string) => Promise<void> | void;
+};
+
+type RuntimeCapability = CapabilityManifest & {
+    run(
+        context: CapabilityContext,
+        args: Record<string, string | number | undefined>
+    ): Promise<DiscordToolResult>;
+};
+
+const chunkResultSchema = z.object({
+    messageId: z.string(),
+    channelId: z.string(),
+    channelName: z.string(),
+    guildId: z.string().nullable(),
+    authorId: z.string(),
+    authorName: z.string(),
+    content: z.string(),
+    createdTimestamp: z.number(),
+    jumpLink: z.string(),
+    lexicalScore: z.number(),
+    semanticScore: z.number(),
+    recencyScore: z.number(),
+    totalScore: z.number(),
+});
+
+const capabilities: RuntimeCapability[] = [
+    {
+        id: "retrieve_messages",
+        kind: "tool",
+        description:
+            "Search cached Discord messages first, then automatically fetch live channel history if the cache is insufficient.",
+        inputSchema: z.object({
+            query: z.string(),
+            limit: z.number().int().positive().optional(),
+            channelIds: z.string().optional(),
+            authorId: z.string().optional(),
+        }),
+        outputSchema: z.object({
+            query: z.string(),
+            cacheHit: z.boolean(),
+            liveEscalated: z.boolean(),
+            searchedChannelIds: z.array(z.string()),
+            fetchedChannelIds: z.array(z.string()),
+            cacheEnriched: z.boolean(),
+            evidenceSufficient: z.boolean(),
+            strongResultCount: z.number(),
+            weakResultCount: z.number(),
+            sourceOrigin: z.enum(["none", "cache", "live_refresh", "cache_after_refresh"]),
+            targetAuthorId: z.string().nullable(),
+            targetChannelIds: z.array(z.string()),
+            results: z.array(chunkResultSchema),
+        }),
+        sideEffectLevel: "none",
+        authRequirements: [],
+        costClass: "normal",
+        latencyClass: "medium",
+        evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.retrieve_messages,
+        preconditions: ["guild context should exist for live escalation"],
+        postconditions: ["returns message evidence from the local cache after any needed live fetch"],
+        async run(context, args) {
+            const query = String(args.query || context.question);
+            const channelIds =
+                typeof args.channelIds === "string" && args.channelIds.trim()
+                    ? args.channelIds.split(",").map((value) => value.trim()).filter(Boolean)
+                    : undefined;
+            const authorId =
+                typeof args.authorId === "string" && args.authorId.trim()
+                    ? args.authorId.trim()
+                    : undefined;
+
+            const result = await UnifiedMessageRetrieval.retrieve({
+                guild: context.guild,
+                question: query,
+                currentChannelId: context.currentChannelId,
+                channelIds,
+                authorId,
+                limit: Number(args.limit || 8),
+                onProgress: context.onProgress,
+            });
+
+            const qualityLabel =
+                result.strongResultCount >= 2
+                    ? "strong grounded message evidence"
+                    : result.strongResultCount >= 1
+                      ? "partial message evidence"
+                      : result.results.length
+                        ? "weak message evidence"
+                        : "no message evidence";
+
+            return {
+                tool: "retrieve_messages",
+                summary: result.results.length
+                    ? `${qualityLabel}; ${result.results.length} result(s) ${result.liveEscalated ? "after refreshing Discord history" : "from cached Discord history"}.`
+                    : result.liveEscalated
+                      ? "No relevant messages found even after refreshing Discord history."
+                      : "No relevant cached messages found yet.",
+                data: result,
+            };
+        },
+    },
+    {
+        id: "resolve_member_identity",
+        kind: "tool",
+        description:
+            "Resolve a member or bot in the current guild using exact ids, live guild fetches, and same-guild historical message authors.",
+        inputSchema: z.object({
+            query: z.string(),
+        }),
+        outputSchema: z.any(),
+        sideEffectLevel: "none",
+        authRequirements: [],
+        costClass: "cheap",
+        latencyClass: "medium",
+        evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.resolve_member_identity,
+        preconditions: ["guild context should exist"],
+        postconditions: ["returns the best resolved member identity for the current guild"],
+        async run(context, args) {
+            const identity = await DiscordLiveService.resolveMemberIdentity(
+                context.guild,
+                String(args.query || context.question)
+            );
+            return {
+                tool: "resolve_member_identity",
+                summary: identity
+                    ? identity.isCurrentGuildMember
+                        ? `${identity.displayName} (@${identity.username}) resolved from the current guild.`
+                        : `${identity.displayName} was resolved from remembered guild history, not current live membership.`
+                    : "Member identity not resolved.",
+                data: identity,
+            };
+        },
+    },
+    {
+        id: "list_guild_structure",
+        kind: "tool",
+        description:
+            "List readable live channels and categories in the current guild plus cached-only remembered entries.",
+        inputSchema: z.object({}),
+        outputSchema: z.any(),
+        sideEffectLevel: "none",
+        authRequirements: [],
+        costClass: "cheap",
+        latencyClass: "medium",
+        evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
+        preconditions: ["guild context should exist"],
+        postconditions: ["returns current-guild structure and cached-only remembered entries"],
+        async run(context) {
+            const entries = await DiscordGuildDiscoveryService.listGuildStructure(context.guild);
+            return {
+                tool: "list_guild_structure",
+                summary: entries.length
+                    ? `Resolved ${entries.length} guild structure entries from live Discord and local memory.`
+                    : "Guild structure unavailable.",
+                data: {
+                    entries,
+                },
+            };
+        },
+    },
+    {
+        id: "resolve_channel_targets",
+        kind: "tool",
+        description:
+            "Resolve channel or category references in the current guild, including exact ids and category expansion.",
+        inputSchema: z.object({
+            targetText: z.string(),
+        }),
+        outputSchema: z.any(),
+        sideEffectLevel: "none",
+        authRequirements: [],
+        costClass: "cheap",
+        latencyClass: "medium",
+        evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.resolve_channel_targets,
+        preconditions: ["guild context should exist"],
+        postconditions: ["returns resolved message-channel targets for the current guild"],
+        async run(context, args) {
+            const resolved = await DiscordGuildDiscoveryService.resolveChannelTargets(
+                context.guild,
+                String(args.targetText || context.question),
+                context.currentChannelId
+            );
+            return {
+                tool: "resolve_channel_targets",
+                summary: resolved.entries.length
+                    ? `Resolved ${resolved.entries.length} guild structure target(s) with ${resolved.resolvedIds.length} message channel id(s).`
+                    : "No matching channel or category target was resolved.",
+                data: resolved,
+            };
+        },
+    },
+    {
+        id: "get_member_profile",
+        kind: "tool",
+        description: "Fetch a live guild member profile.",
+        inputSchema: z.object({
+            nameOrId: z.string(),
+        }),
+        outputSchema: z.any(),
+        sideEffectLevel: "none",
+        authRequirements: [],
+        costClass: "cheap",
+        latencyClass: "medium",
+        evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.get_member_profile,
+        preconditions: ["guild context should exist"],
+        postconditions: ["returns live member identity/profile evidence"],
+        async run(context, args) {
+            const profile = await DiscordLiveService.getMemberProfile(
+                context.guild,
+                String(args.nameOrId || context.question)
+            );
+            return {
+                tool: "get_member_profile",
+                summary: profile
+                    ? `${profile.displayName} (@${profile.username}) with ${profile.roles.length} visible roles.`
+                    : "Member not found.",
+                data: profile,
+            };
+        },
+    },
+    {
+        id: "list_members",
+        kind: "tool",
+        description: "List live guild members with optional filtering.",
+        inputSchema: z.object({
+            filters: z.string().optional(),
+            limit: z.number().int().positive().optional(),
+            offset: z.number().int().nonnegative().optional(),
+        }),
+        outputSchema: z.any(),
+        sideEffectLevel: "none",
+        authRequirements: [],
+        costClass: "normal",
+        latencyClass: "medium",
+        evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_members,
+        preconditions: ["guild context should exist"],
+        postconditions: ["returns live member list data"],
+        async run(context, args) {
+            const members = await DiscordLiveService.listMembers(context.guild, {
+                filters: typeof args.filters === "string" ? args.filters : undefined,
+                limit: typeof args.limit === "number" ? args.limit : undefined,
+                offset: typeof args.offset === "number" ? args.offset : undefined,
+                sort: "joined_at",
+            });
+            return {
+                tool: "list_members",
+                summary: members.returnedCount
+                    ? members.hasMore
+                        ? `Showing ${members.returnedCount} of ${members.totalCount} members in join order.`
+                        : `${members.returnedCount} members listed in join order.`
+                    : "No matching members found.",
+                data: members,
+            };
+        },
+    },
+    {
+        id: "get_guild_context",
+        kind: "tool",
+        description: "Fetch live guild metadata.",
+        inputSchema: z.object({}),
+        outputSchema: z.any(),
+        sideEffectLevel: "none",
+        authRequirements: [],
+        costClass: "cheap",
+        latencyClass: "fast",
+        evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.get_guild_context,
+        preconditions: ["guild context should exist"],
+        postconditions: ["returns live guild context data"],
+        async run(context) {
+            const guildContext = await DiscordLiveService.getGuildContext(context.guild);
+            return {
+                tool: "get_guild_context",
+                summary: guildContext
+                    ? `${guildContext.name}: ${guildContext.memberCount} members and ${guildContext.channelCount} channels.`
+                    : "Guild context unavailable.",
+                data: guildContext,
+            };
+        },
+    },
+];
+
+export class CapabilityRegistry {
+    public static list(): CapabilityManifest[] {
+        return capabilities.map(({ run, ...manifest }) => manifest);
+    }
+
+    public static get(id: DiscordToolName): RuntimeCapability {
+        const capability = capabilities.find((item) => item.id === id);
+        if (!capability) {
+            throw new Error(`Unknown capability "${id}".`);
+        }
+        return capability;
+    }
+
+    public static describeForPrompt(): string {
+        return this.list()
+            .map((capability) => {
+                const args = Object.entries((capability.inputSchema as z.ZodObject<any>).shape || {})
+                    .map(([name]) => name)
+                    .join(", ");
+                return [
+                    `${capability.id}: ${capability.description}`,
+                    `cost=${capability.costClass}; latency=${capability.latencyClass}; evidence=${capability.evidenceRole}; args=${args || "none"}`,
+                ].join("\n");
+            })
+            .join("\n\n");
+    }
+}

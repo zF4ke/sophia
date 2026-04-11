@@ -5,13 +5,17 @@ import {
     ContainerBuilder,
     MessageFlags,
     SlashCommandBuilder,
-    TextDisplayBuilder,
     TextChannel,
+    TextDisplayBuilder,
     ThreadChannel,
 } from "discord.js";
 import { buildMemoryStatusContainer } from "@/discord/commands/shared/buildMemoryStatusContainer";
+import { buildGuildCompletenessContainer } from "@/discord/commands/shared/buildGuildCompletenessContainer";
+import { buildRuntimeStorageContainer } from "@/discord/commands/shared/buildRuntimeStorageContainer";
 import { DiscordBackfillService } from "@/discord/live/DiscordBackfillService";
+import { DiscordGuildDiscoveryService } from "@/discord/live/DiscordGuildDiscoveryService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { RuntimeStorageService } from "@/runtime/storage/RuntimeStorageService";
 import { SecurityService } from "@/security/SecurityService";
 import { EMOJIS } from "@/discord/constants";
 import type { BotClient } from "@/shared/appTypes";
@@ -19,39 +23,33 @@ import type { BotClient } from "@/shared/appTypes";
 export = {
     data: new SlashCommandBuilder()
         .setName("index")
-        .setDescription("Gerenciar a memória local do Discord")
+        .setDescription("Manage local Discord retrieval data")
         .setContexts(0, 1, 2)
         .setIntegrationTypes(0, 1)
         .addSubcommand((subcommand) =>
-            subcommand
-                .setName("status")
-                .setDescription("Ver o estado atual do índice")
+            subcommand.setName("status").setDescription("Show current local retrieval status")
         )
         .addSubcommand((subcommand) =>
-            subcommand
-                .setName("clear")
-                .setDescription("Apagar toda a memória local indexada")
+            subcommand.setName("clear").setDescription("Reset runtime DBs, checkpoints, traces, and indexed messages")
         )
         .addSubcommand((subcommand) =>
-            subcommand
-                .setName("repair")
-                .setDescription("Reparar índices FTS e embeddings persistidos")
+            subcommand.setName("repair").setDescription("Reconnect and validate the local runtime storage")
         )
         .addSubcommand((subcommand) =>
             subcommand
                 .setName("backfill_channel")
-                .setDescription("Indexar histórico de um canal")
+                .setDescription("Index channel history")
                 .addChannelOption((option) =>
                     option
                         .setName("channel")
-                        .setDescription("Canal a indexar")
+                        .setDescription("Channel to index")
                         .addChannelTypes(ChannelType.GuildText, ChannelType.PublicThread, ChannelType.PrivateThread)
                         .setRequired(true)
                 )
                 .addIntegerOption((option) =>
                     option
                         .setName("limit")
-                        .setDescription("Quantidade máxima de mensagens")
+                        .setDescription("Maximum messages")
                         .setRequired(false)
                         .setMinValue(1)
                         .setMaxValue(5000)
@@ -60,18 +58,18 @@ export = {
         .addSubcommand((subcommand) =>
             subcommand
                 .setName("backfill_category")
-                .setDescription("Indexar histórico dos canais de uma categoria")
+                .setDescription("Index all channels in a category")
                 .addChannelOption((option) =>
                     option
                         .setName("category")
-                        .setDescription("Categoria a indexar")
+                        .setDescription("Category to index")
                         .addChannelTypes(ChannelType.GuildCategory)
                         .setRequired(true)
                 )
                 .addIntegerOption((option) =>
                     option
                         .setName("limit_per_channel")
-                        .setDescription("Quantidade máxima por canal")
+                        .setDescription("Maximum messages per channel")
                         .setRequired(false)
                         .setMinValue(1)
                         .setMaxValue(5000)
@@ -90,27 +88,37 @@ export = {
         const subcommand = interaction.options.getSubcommand();
 
         if (subcommand === "status") {
-            const stats = DiscordMemoryService.getStats();
-            const states = DiscordMemoryService.getIndexState();
+            const stats = await DiscordMemoryService.getStatsAsync();
+            const states = await DiscordMemoryService.getIndexStateAsync();
+            const runtimeStatus = RuntimeStorageService.getStatus();
+            const completeness = await DiscordGuildDiscoveryService.getGuildCompletenessSummary(
+                interaction.guild
+            );
             await interaction.editReply({
-                components: [buildMemoryStatusContainer(stats, states, 10)],
+                components: [
+                    buildMemoryStatusContainer(stats, states, 10),
+                    buildGuildCompletenessContainer(completeness),
+                    buildRuntimeStorageContainer(runtimeStatus),
+                ],
                 flags: MessageFlags.IsComponentsV2,
             });
             return;
         }
 
         if (subcommand === "clear") {
-            DiscordMemoryService.clearAll();
+            await RuntimeStorageService.resetAllRuntimeData();
+            await DiscordMemoryService.resetRuntimeState();
             await interaction.editReply({
                 components: [
                     new ContainerBuilder()
                         .setAccentColor(0xed4245)
                         .addTextDisplayComponents(
-                            new TextDisplayBuilder().setContent("## Memória local apagada"),
+                            new TextDisplayBuilder().setContent("## Runtime state reset"),
                             new TextDisplayBuilder().setContent(
-                                "Todas as mensagens e blocos indexados foram removidos."
+                                "Operational DB, checkpoint DB, traces, logs, and indexed Discord cache were deleted. The runtime will recreate clean storage on the next access."
                             )
                         ),
+                    buildRuntimeStorageContainer(RuntimeStorageService.getStatus()),
                 ],
                 flags: MessageFlags.IsComponentsV2,
             });
@@ -118,17 +126,22 @@ export = {
         }
 
         if (subcommand === "repair") {
-            DiscordMemoryService.repairIndexes();
+            await DiscordMemoryService.resetRuntimeState();
+            await DiscordMemoryService.repairIndexesAsync();
+            const stats = await DiscordMemoryService.getStatsAsync();
+            const states = await DiscordMemoryService.getIndexStateAsync();
             await interaction.editReply({
                 components: [
                     new ContainerBuilder()
                         .setAccentColor(0x57f287)
                         .addTextDisplayComponents(
-                            new TextDisplayBuilder().setContent("## Índices reparados"),
+                            new TextDisplayBuilder().setContent("## Runtime storage checked"),
                             new TextDisplayBuilder().setContent(
-                                "Os índices locais foram reconstruídos e verificados."
+                                "Local runtime storage was revalidated and snapshots were reloaded."
                             )
                         ),
+                    buildMemoryStatusContainer(stats, states, 10),
+                    buildRuntimeStorageContainer(RuntimeStorageService.getStatus()),
                 ],
                 flags: MessageFlags.IsComponentsV2,
             });
@@ -139,7 +152,7 @@ export = {
             const channel = interaction.options.getChannel("channel", true) as TextChannel | ThreadChannel;
             const limit = interaction.options.getInteger("limit") ?? 1000;
             const count = await DiscordBackfillService.backfillChannel(channel, interaction, limit);
-            await interaction.editReply(`Indexação concluída. ${count} mensagens processadas em ${channel.name}.`);
+            await interaction.editReply(`Indexing complete. ${count} messages processed in ${channel.name}.`);
             return;
         }
 
@@ -148,7 +161,7 @@ export = {
             const limit = interaction.options.getInteger("limit_per_channel") ?? 500;
             const result = await DiscordBackfillService.backfillCategory(category, interaction, limit);
             await interaction.editReply(
-                `Indexação concluída. ${result.messages} mensagens processadas em ${result.channels} canais.`
+                `Indexing complete. ${result.messages} messages processed across ${result.channels} channels.`
             );
         }
     },

@@ -1,4 +1,4 @@
-import { FileSystemService } from "@/platform/storage/FileSystemService";
+import { FileSystemService } from "@/shared/storage/FileSystemService";
 
 const SERVICE_NAME = "debug";
 const STATE_FILE = "state.json";
@@ -21,3 +21,4 @@ export class DebugStateStore {
         FileSystemService.writeJsonToPath(STATE_FILE, record, SERVICE_NAME);
     }
 }
+

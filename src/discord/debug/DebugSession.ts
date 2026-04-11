@@ -1,21 +1,21 @@
 import { Message, MessageFlags } from "discord.js";
 import { renderDebugTrace } from "@/discord/debug/renderDebugTrace";
-import type { DebugSessionReporter, DebugTraceState } from "@/discord/debug/types";
 import type {
-    GroundedAnswerMode,
-    GroundingDecisionMode,
-    GroundingSummary,
-    RetrievalControllerDecision,
-    WebStatus,
-} from "@/shared/appTypes";
+    DebugSessionReporter,
+    DebugTimelineEntry,
+    DebugTraceState,
+} from "@/discord/debug/types";
+import type { GroundedAnswerMode, WebStatus } from "@/shared/appTypes";
+import type { RetrievalSummary, RuntimeMode, StopReason, TurnTrigger } from "@/runtime/contracts";
 
-const MAX_EVENTS = 6;
+const MAX_EVENTS = 8;
 const MAX_PREVIEW_LENGTH = 140;
+const MAX_TIMELINE = 12;
 
 function normalizePreview(question: string): string {
     const compact = question.replace(/\s+/g, " ").trim();
     if (!compact) {
-        return "Sem texto.";
+        return "No text.";
     }
 
     return compact.length > MAX_PREVIEW_LENGTH
@@ -23,16 +23,31 @@ function normalizePreview(question: string): string {
         : compact;
 }
 
-function normalizeMode(mode: "direct_answer" | "discord_grounded"): string {
-    return mode === "direct_answer" ? "Resposta direta" : "Com grounding do Discord";
-}
-
 function normalizeError(error: unknown): string {
     if (error instanceof Error && error.message) {
         return error.message;
     }
 
-    return "Erro desconhecido";
+    return "Unknown error";
+}
+
+function inferTone(event: string): DebugTimelineEntry["tone"] {
+    const normalized = event.toLowerCase();
+    if (normalized.includes("error") || normalized.includes("failed")) {
+        return "error";
+    }
+    if (
+        normalized.includes("insufficient") ||
+        normalized.includes("weak") ||
+        normalized.includes("fallback") ||
+        normalized.includes("plateau")
+    ) {
+        return "warning";
+    }
+    if (normalized.includes("sufficient") || normalized.includes("completed")) {
+        return "success";
+    }
+    return "info";
 }
 
 export class DebugSession implements DebugSessionReporter {
@@ -43,98 +58,112 @@ export class DebugSession implements DebugSessionReporter {
         this.state = {
             questionPreview: normalizePreview(question),
             status: "running",
-            stage: "Iniciando",
-            mode: null,
-            controllerDecision: null,
-            toolNames: [],
+            stage: "Starting",
+            requesterLabel: null,
+            trigger: null,
+            classificationMode: null,
+            runtimeMode: null,
+            selectedCapabilities: [],
             toolCallCount: 0,
             groundingSummary: null,
-            groundingDecisionMode: null,
+            retrievalSummary: null,
             groundedAnswerMode: null,
-            contextCacheStatus: "none",
+            stopReason: null,
+            checkpointThreadId: null,
+            conversationContext: {
+                threadId: null,
+                kind: null,
+                replyAnchorMessageId: null,
+                replyContext: null,
+            },
             webStatus: null,
-            recentEvents: ["Iniciado"],
+            contextPreview: null,
+            recentEvents: ["Started"],
+            timeline: [
+                {
+                    label: "start",
+                    detail: "Debug session started.",
+                    tone: "info",
+                    timestamp: Date.now(),
+                },
+            ],
             startedAt: Date.now(),
+            failureMessage: null,
         };
     }
 
     public async setClassifying(): Promise<void> {
-        await this.mutate("Classificando pedido", "Classificando o pedido");
+        await this.mutate("Classifying request", "Classifying the turn");
     }
 
     public async setClassification(
         mode: "direct_answer" | "discord_grounded"
     ): Promise<void> {
-        const normalizedMode = normalizeMode(mode);
         await this.mutate(
-            "Classificação concluída",
-            `Modo escolhido: ${normalizedMode}`,
+            "Classification ready",
+            `Classification selected: ${mode}`,
             (state) => {
-                state.mode = normalizedMode;
+                state.classificationMode = mode;
             }
         );
+    }
+
+    public async setRequesterContext(requesterLabel: string, trigger: TurnTrigger): Promise<void> {
+        await this.mutate(
+            "Loading requester context",
+            `Requester: ${requesterLabel} via ${trigger}`,
+            (state) => {
+                state.requesterLabel = requesterLabel;
+                state.trigger = trigger;
+            }
+        );
+    }
+
+    public async setConversationContext(context: {
+        threadId: string;
+        kind: DebugTraceState["conversationContext"]["kind"];
+        replyAnchorMessageId?: string | null;
+        replyContext?: DebugTraceState["conversationContext"]["replyContext"];
+    }): Promise<void> {
+        await this.mutate(
+            "Resolving conversation identity",
+            `Conversation key: ${context.threadId}`,
+            (state) => {
+                state.checkpointThreadId = context.threadId;
+                state.conversationContext = {
+                    threadId: context.threadId,
+                    kind: context.kind ?? null,
+                    replyAnchorMessageId: context.replyAnchorMessageId || null,
+                    replyContext: context.replyContext || null,
+                };
+            }
+        );
+    }
+
+    public async setRuntimeMode(mode: RuntimeMode): Promise<void> {
+        await this.mutate("Routing runtime", `Runtime mode: ${mode}`, (state) => {
+            state.runtimeMode = mode;
+        });
+    }
+
+    public async setCheckpointThread(threadId: string): Promise<void> {
+        await this.mutate("Loading checkpoint", `Checkpoint thread: ${threadId}`, (state) => {
+            state.checkpointThreadId = threadId;
+        });
     }
 
     public async setPlanning(step: number): Promise<void> {
-        await this.mutate(
-            "Planejando próxima ação",
-            `Planejando passo ${step}`
-        );
-    }
-
-    public async setRouting(decision: RetrievalControllerDecision): Promise<void> {
-        const source = decision.source === "ai" ? "IA" : "determinística";
-        const target = decision.targetText ? ` · alvo ${decision.targetText}` : "";
-        await this.mutate(
-            "Roteando pedido",
-            `Controle: ${source} · ${decision.questionIntent}${target}`,
-            (state) => {
-                state.controllerDecision = decision;
-            }
-        );
-    }
-
-    public async setContextCacheStatus(
-        status: "none" | "seeded" | "reused"
-    ): Promise<void> {
-        const labels = {
-            none: "Cache de contexto: não",
-            seeded: "Cache de contexto: semeado",
-            reused: "Cache de contexto: reutilizado",
-        };
-
-        await this.mutate(
-            "Verificando cache de contexto",
-            labels[status],
-            (state) => {
-                state.contextCacheStatus = status;
-            }
-        );
+        await this.mutate("Planning next action", `Planning step ${step}`);
     }
 
     public async setWebStatus(status: WebStatus): Promise<void> {
-        const labels = {
-            off: "Web: desativada",
-            enabled: "Web: habilitada",
-            used: "Web: usada",
-        };
-
-        await this.mutate(
-            "Ajustando busca na web",
-            labels[status],
-            (state) => {
-                state.webStatus = status;
-            }
-        );
+        await this.mutate("Updating web policy", `Web mode: ${status}`, (state) => {
+            state.webStatus = status;
+        });
     }
 
     public async setToolRunning(toolName: string, details: string[] = []): Promise<void> {
-        await this.mutate(
-            `Usando ${toolName}`,
-            `Executando ${toolName}`,
-            undefined,
-            details
-        );
+        await this.mutate(`Running ${toolName}`, `Running ${toolName}`, undefined, details);
     }
 
     public async setToolResult(
@@ -143,67 +172,104 @@ export class DebugSession implements DebugSessionReporter {
         itemCount?: number
     ): Promise<void> {
         await this.mutate(
-            `Resultado de ${toolName}`,
+            `Tool result: ${toolName}`,
             itemCount === undefined
                 ? `${toolName}: ${summary}`
                 : `${toolName}: ${summary} (${itemCount})`,
             (state) => {
                 state.toolCallCount += 1;
-                if (!state.toolNames.includes(toolName)) {
-                    state.toolNames.push(toolName);
+                if (!state.selectedCapabilities.includes(toolName)) {
+                    state.selectedCapabilities.push(toolName);
                 }
             }
         );
     }
 
     public async setToolProgress(toolName: string, summary: string): Promise<void> {
+        await this.mutate(`Tool progress: ${toolName}`, `${toolName}: ${summary}`);
+    }
+
+    public async setRetrievalSummary(summary: RetrievalSummary): Promise<void> {
         await this.mutate(
-            `Usando ${toolName}`,
-            `${toolName}: ${summary}`
+            "Updating retrieval summary",
+            `Retrieval origin=${summary.sourceOrigin}; strong=${summary.strongResultCount}; weak=${summary.weakResultCount}`,
+            (state) => {
+                state.retrievalSummary = summary;
+            }
         );
     }
 
     public async setGroundingSummary(
-        summary: GroundingSummary,
-        decisionMode?: GroundingDecisionMode,
+        summary: { messageEvidenceCount: number; liveEvidenceCount: number; sufficient: boolean },
+        _decisionMode?: string,
         answerMode?: GroundedAnswerMode
     ): Promise<void> {
-        const cacheAwareEvent = summary.sufficient
-            ? `Base suficiente: mensagens ${summary.messageEvidenceCount} · contexto ao vivo ${summary.liveEvidenceCount}`
-            : `Base insuficiente: mensagens ${summary.messageEvidenceCount} · contexto ao vivo ${summary.liveEvidenceCount}`;
         await this.mutate(
-            "Avaliando evidências",
-            cacheAwareEvent,
+            "Judging evidence",
+            summary.sufficient
+                ? `Evidence sufficient: messages ${summary.messageEvidenceCount}, live ${summary.liveEvidenceCount}`
+                : `Evidence still weak: messages ${summary.messageEvidenceCount}, live ${summary.liveEvidenceCount}`,
             (state) => {
                 state.groundingSummary = summary;
-                state.groundingDecisionMode = decisionMode || null;
                 state.groundedAnswerMode = answerMode || null;
             }
         );
     }
 
-    public async setGenerating(): Promise<void> {
-        await this.mutate("Gerando resposta", "Gerando resposta final");
+    public async setStopReason(reason: StopReason): Promise<void> {
+        await this.mutate("Evaluating stop condition", `Stop reason: ${reason}`, (state) => {
+            state.stopReason = reason;
+        });
     }
 
-    public async finishSuccess(summary = "Resposta concluída"): Promise<void> {
+    public async setConfidence(confidence: GroundedAnswerMode): Promise<void> {
+        await this.mutate("Updating confidence", `Confidence: ${confidence}`, (state) => {
+            state.groundedAnswerMode = confidence;
+        });
+    }
+
+    public async setTraceEvent(label: string, detail: string): Promise<void> {
+        await this.mutate(label, detail);
+    }
+
+    public async setContextPreview(preview: {
+        recentChannelMessages: string[];
+        evidencePreview: string[];
+        recentTurns: string[];
+    }): Promise<void> {
         await this.mutate(
-            "Concluído",
+            "Loading context preview",
+            `Channel: ${preview.recentChannelMessages.length} msgs, Evidence: ${preview.evidencePreview.length}, Turns: ${preview.recentTurns.length}`,
+            (state) => {
+                state.contextPreview = preview;
+            }
+        );
+    }
+
+    public async setGenerating(): Promise<void> {
+        await this.mutate("Generating answer", "Generating the final user-facing answer");
+    }
+
+    public async finishSuccess(summary = "Response completed"): Promise<void> {
+        await this.mutate(
+            "Completed",
             summary,
             (state) => {
                 state.status = "completed";
-                state.stage = "Concluído";
+                state.stage = "Completed";
             }
         );
     }
 
     public async finishError(error: unknown): Promise<void> {
+        const message = normalizeError(error);
         await this.mutate(
-            "Falhou",
-            `Erro: ${normalizeError(error)}`,
+            "Failed",
+            `Error: ${message}`,
             (state) => {
                 state.status = "failed";
-                state.stage = "Falhou";
+                state.stage = "Failed";
+                state.failureMessage = message;
             }
         );
     }
@@ -226,10 +292,26 @@ export class DebugSession implements DebugSessionReporter {
                     ...this.state.recentEvents,
                 ].slice(0, MAX_EVENTS);
 
+                this.state.timeline = [
+                    {
+                        label: stage,
+                        detail: event,
+                        tone: inferTone(event),
+                        timestamp: Date.now(),
+                    },
+                    ...normalizedExtraEvents.map((detail) => ({
+                        label: stage,
+                        detail,
+                        tone: inferTone(detail),
+                        timestamp: Date.now(),
+                    })),
+                    ...this.state.timeline,
+                ].slice(0, MAX_TIMELINE);
+
                 mutateState?.(this.state);
 
                 await this.message.edit({
-                    components: [renderDebugTrace(this.state)],
+                    components: renderDebugTrace(this.state),
                     flags: MessageFlags.IsComponentsV2,
                 });
             })

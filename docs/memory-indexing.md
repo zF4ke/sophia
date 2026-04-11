@@ -1,44 +1,53 @@
-# Memory And Indexing
+# Memory Indexing
 
-Sophia stores Discord messages locally so retrieval quality does not depend on Discord search.
+Sophia keeps a local cache of Discord messages in libSQL.
 
-## Write Path
+## Purpose
 
-- `src/discord/events/message/messageCreate.event.ts` ingests eligible new messages.
-- `src/memory/ingest/` normalizes messages and filters out junk.
-- `src/memory/index/` splits messages into chunks.
-- `src/memory/repositories/MemoryWriteRepository.ts` writes messages, chunks, embeddings, and index state.
+The cache exists to make Discord retrieval cheaper and more durable over time. It is a permanent runtime state for Discord search, not a separate memory-search product.
 
-## Read Path
+## Retrieval Strategy
 
-- `src/memory/search/MemorySearchService.ts` performs lexical plus embedding retrieval.
-- `src/memory/repositories/MemoryReadRepository.ts` handles thread reads, summaries, and historical lookup.
-- `src/memory/DiscordMemoryService.ts` is the small facade used by the rest of the app.
-- Live fallback crawl uses the official Discord API to fetch channel messages, ingests them through the same memory service, and then reruns local retrieval.
-- Channel crawl state is stored so the agent can distinguish indexed channels from readable channels that have not been crawled yet.
+1. Search local cached/indexed Discord messages.
+2. If evidence is weak, discover likely live channels.
+3. Fetch live Discord messages.
+4. Ingest them into the local cache.
+5. Retry retrieval on the enriched cache.
 
-## Reuse And Caching
+## What The Cache Contains
 
-- Successful and partially useful grounded runs are stored as reusable grounded contexts in the same SQLite database.
-- Reuse is guild-wide by default, but same-channel matches are preferred over other channels in the guild.
-- Cached grounded contexts store evidence text, internal citations, tool runs, sufficiency state, TTL expiry, and the guild response ordinal they were created on.
-- Deterministic or bounded-expensive tool results are cached separately from `tool_runs`.
-- `crawl_channel_messages` is not cached as a reusable result blob; its side effect is the message ingestion itself.
-- Cache invalidation uses both TTL and a short per-guild "responses ago" limit in v1.
+Current runtime storage is focused on:
+- `messages`
+- `message_chunks`
+- `channels`
+- `index_state`
+- `channel_crawl_state`
+- `tool_runs`
+- `runtime_runs`
+- `trace_events`
+- `conversation_messages`
 
-## Tool Cache Policy
+The cache is used to support Discord retrieval and runtime continuity. It is not an autonomous long-term belief system yet.
 
-- Short TTL: `get_guild_context`, `get_member_profile`, `list_members` with a 10-minute cap
-- Longer TTL: `search_messages`, `list_relevant_channels`, `read_message_thread`, `read_channel_summary` with a 20-minute cap
-- Both caches also expire after roughly 6 later Sophia responses in the same guild.
-- When a cache hit exists, the runtime returns the stored `DiscordToolResult` instead of calling the underlying tool again.
+## How Retrieval Uses It
 
-## Operational Commands
+- `retrieve_messages` searches the local cache first and escalates automatically when needed.
+- `resolve_member_identity` resolves exact member and bot ids first, then falls back through live search and same-guild historical authors.
+- `resolve_channel_targets` and `list_guild_structure` expose current-guild channels, categories, and cached-only remembered entries.
+- `get_member_profile` fetches live identity and profile metadata.
+- `list_members` fetches live guild membership data.
+- `get_guild_context` fetches live guild metadata.
 
-- `/index status`
-- `/index backfill_channel`
-- `/index backfill_category`
-- `/index repair`
-- `/index clear`
+`/find` is a specialized retrieval workflow that uses the same shared retrieval primitives.
 
-If retrieval ranking changes, update the tests and this document in the same change.
+## Commands
+
+- `/index` manages backfill and repair
+- `/cache` shows runtime cache and storage status
+- `/nth` reads indexed historical messages
+
+## Reset Semantics
+
+Runtime storage is treated as disposable local state.
+
+If the local schema is stale or incompatible, the runtime should reset and rebuild its operational storage rather than surfacing raw SQL failures in user-facing replies.

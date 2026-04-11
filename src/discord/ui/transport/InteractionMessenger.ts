@@ -1,4 +1,4 @@
-import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { Message, MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 import { MessageChunker } from "@/discord/ui/formatters/MessageChunker";
 
 export class InteractionMessenger {
@@ -7,17 +7,22 @@ export class InteractionMessenger {
         header: string,
         response: string,
         ephemeral = false
-    ): Promise<void> {
+    ): Promise<Message[]> {
         const content = header ? `${header}\n\n${response}` : response;
         const chunks = MessageChunker.split(content);
         const [firstChunk, ...rest] = chunks;
+        const sent: Message[] = [];
 
-        await interaction.editReply({ content: firstChunk || "" });
+        const firstMessage = await interaction.editReply({ content: firstChunk || "" });
+        sent.push(firstMessage as Message);
         for (const chunk of rest) {
-            await interaction.followUp({
+            const followUp = await interaction.followUp({
                 content: chunk,
                 flags: ephemeral ? MessageFlags.Ephemeral : undefined,
             });
+            sent.push(followUp as Message);
         }
+
+        return sent;
     }
 }

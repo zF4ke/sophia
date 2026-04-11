@@ -1,4 +1,4 @@
-import { FileSystemService } from "@/platform/storage/FileSystemService";
+import { FileSystemService } from "@/shared/storage/FileSystemService";
 import type { AdminUser, CommandConfig, ModeratorUser } from "@/security/types";
 
 const SERVICE_NAME = "security";
@@ -42,3 +42,4 @@ export class SecurityConfigStore {
         );
     }
 }
+

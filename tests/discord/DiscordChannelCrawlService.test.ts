@@ -1,41 +1,48 @@
-import { Collection, TextChannel } from "discord.js";
+import path from "path";
+import { ChannelType, Collection } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DiscordChannelCrawlService } from "@/discord/live/DiscordChannelCrawlService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
-import { MemoryDatabase } from "@/memory/MemoryDatabase";
 
 function createChannel(
     id: string,
     name: string,
     extra: Record<string, unknown> = {}
 ) {
-    const channel = Object.create(TextChannel.prototype);
-    Object.defineProperty(channel, "viewable", {
-        value: true,
-        configurable: true,
-    });
-    Object.assign(channel, {
+    return {
         id,
         name,
+        type: ChannelType.GuildText,
+        viewable: true,
         messages: {
             fetch: vi.fn(),
         },
         ...extra,
-    });
-    return channel;
+    };
 }
 
 describe("DiscordChannelCrawlService", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.restoreAllMocks();
-        process.env.SOPHIA_MEMORY_DB_PATH = ":memory:";
+        process.env.RUNTIME_OPERATIONAL_DB_PATH = path.join(
+            process.cwd(),
+            "storage",
+            "test-memory",
+            `crawl-${Date.now()}-${Math.random()}.sqlite`
+        );
+        process.env.RUNTIME_CHECKPOINT_DB_PATH = path.join(
+            process.cwd(),
+            "storage",
+            "test-memory",
+            `crawl-checkpoint-${Date.now()}-${Math.random()}.sqlite`
+        );
         process.env.DISCORD_TOKEN = "test-token";
         process.env.OPENROUTER_API_KEY = "test-key";
-        MemoryDatabase.reset();
+        await DiscordMemoryService.resetForTests();
     });
 
-    it("ranks indexed and unindexed candidate channels together", () => {
-        vi.spyOn(DiscordMemoryService, "getKnownChannels").mockReturnValue([
+    it("ranks indexed and unindexed candidate channels together", async () => {
+        vi.spyOn(DiscordMemoryService, "getKnownChannelsAsync").mockResolvedValue([
             {
                 channelId: "c1",
                 guildId: "g1",
@@ -60,7 +67,7 @@ describe("DiscordChannelCrawlService", () => {
             },
         } as any;
 
-        const candidates = DiscordChannelCrawlService.rankCandidateChannels(
+        const candidates = await DiscordChannelCrawlService.rankCandidateChannels(
             guild,
             "musica do scart",
             null
@@ -84,10 +91,10 @@ describe("DiscordChannelCrawlService", () => {
             .mockResolvedValue(undefined);
         const upsertChannel = vi
             .spyOn(DiscordMemoryService, "upsertDiscoveredChannel")
-            .mockImplementation(() => undefined);
+            .mockResolvedValue(undefined);
         const updateCrawlState = vi
             .spyOn(DiscordMemoryService, "updateChannelCrawlState")
-            .mockImplementation(() => undefined);
+            .mockResolvedValue(undefined);
 
         const fetchedMessages = new Collection([
             [
@@ -128,12 +135,22 @@ describe("DiscordChannelCrawlService", () => {
         expect(result.backgroundIngestQueued).toBe(true);
         expect(result.previewMessages).toHaveLength(0);
         expect(ingestMessage).toHaveBeenCalledTimes(2);
-        expect(upsertChannel).toHaveBeenCalledWith("c1", "g1", "scart", expect.any(Number));
+        expect(upsertChannel).toHaveBeenCalledWith(
+            "c1",
+            "g1",
+            "scart",
+            expect.any(Number),
+            expect.objectContaining({
+                channelType: String(ChannelType.GuildText),
+                parentCategoryId: null,
+                parentCategoryName: null,
+            })
+        );
         expect(updateCrawlState).toHaveBeenCalledWith("c1", "m1", true);
     });
 
     it("continues from the oldest fetched message instead of recrawling the top", async () => {
-        DiscordMemoryService.updateChannelCrawlState("c1", "m-oldest", false);
+        await DiscordMemoryService.updateChannelCrawlState("c1", "m-oldest", false);
 
         const fetchSpy = vi
             .fn()
@@ -159,3 +176,4 @@ describe("DiscordChannelCrawlService", () => {
         });
     });
 });
+

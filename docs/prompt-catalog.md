@@ -1,73 +1,59 @@
 # Prompt Catalog
 
-Runtime prompts are stored on disk and loaded through `PromptRegistry`.
+Runtime prompts remain external and are loaded through `PromptRegistry`.
 
-## Prompt IDs
+## Active Prompt IDs
 
 - `system/base`
-- `system/grounded`
-- `tasks/classify_request`
-- `tasks/retrieval_controller`
-- `tasks/route_discord_intent`
-- `tasks/plan_discord_search`
-- `tasks/judge_grounding_sufficiency`
-- `tasks/synthesize_answer`
+- `system/personality`
+- `runtime/plan_turn`
+- `runtime/select_next_step`
+- `runtime/judge_evidence`
+- `runtime/synthesize_answer`
+- `runtime/debug_summary`
 - `guards/insufficient_evidence`
 
 The stable code catalog is `src/shared/promptCatalog.ts`.
 
-## Tool-Aware Prompt
+## Purpose
 
-`resources/prompts/tasks/retrieval_controller.md` is the primary grounded-runtime controller. It must stay aligned with:
-
-- `QuestionIntent`
-- `GroundedAnswerMode`
-- `RetrievalControllerDecision`
-- explicit mention constraints
-- short-lived conversation context
-- cache- and tool-history-aware next-action selection
-
-It chooses the current grounded question intent, the next tool action, whether message evidence is still required, and whether the final grounded answer should be `confident`, `best_effort`, or `insufficient`.
-
-`resources/prompts/tasks/route_discord_intent.md` is the routing prompt for ambiguous grounded questions. It must stay aligned with the route decision shape in `src/shared/appTypes.ts`, including topic hints, channel-name hints, and reuse of short-lived prior person context.
-
-`resources/prompts/tasks/plan_discord_search.md` is tool-aware and must stay aligned with:
-
-- `search_messages`
-- `read_message_thread`
-- `read_channel_summary`
-- `list_relevant_channels`
-- `crawl_channel_messages`
-- `get_member_profile`
-- `list_members`
-- `get_guild_context`
-
-It also defines the grounding policy:
-
-- message tools are for history and discussion evidence
-- live metadata tools are authoritative for current-server facts
-- `list_relevant_channels` and `crawl_channel_messages` are discovery-only
-- the planner may pivot from local search to bounded live crawl, then rerun local search
-- for person-target questions about what someone said, the planner should prefer author-scoped search using a topic hint instead of the whole natural-language question
-- exact readable channel-name matches may be preserved as channel hints for person-target or channel-target searches
-- the planner should finish once the available evidence already answers the question
-
-`resources/prompts/tasks/judge_grounding_sufficiency.md` decides whether the currently retrieved evidence is enough to answer reliably. It must stay aligned with the grounding judgment shape in `src/shared/appTypes.ts`.
-
-The judge is selective in runtime:
-
-- obvious insufficient cases should skip it
-- obvious sufficient cases should skip it
-- ambiguous middle-ground cases should call it
+- `system/personality`
+  Defines Sophia's conversational voice, tone rules, and anti-patterns for natural speech. Loaded alongside `system/base` only for the synthesis call.
+- `runtime/plan_turn`
+  Chooses conversation vs Discord retrieval and proposes candidate capabilities.
+- `runtime/select_next_step`
+  Chooses the next single capability for the bounded retrieval loop.
+- `runtime/judge_evidence`
+  Decides whether the current evidence bundle is enough to stop or continue.
+- `runtime/synthesize_answer`
+  Produces the final user-facing answer from the current mode, confidence, evidence, and conversational recovery rules.
+- `runtime/debug_summary`
+  Reserved for optional graph-aware debug summarization.
 
 ## JSON Contracts
 
-These prompts return strict JSON and must stay synchronized with `src/shared/appTypes.ts`:
+These prompts return strict JSON and must stay aligned with the runtime contracts in `src/runtime/contracts.ts`:
 
-- `tasks/classify_request`
-- `tasks/retrieval_controller`
-- `tasks/route_discord_intent`
-- `tasks/plan_discord_search`
-- `tasks/judge_grounding_sufficiency`
+- `runtime/plan_turn`
+- `runtime/select_next_step`
+- `runtime/judge_evidence`
 
-If you change the output schema, update the prompt, types, runtime parser, tests, and this file together.
+If you change a prompt’s JSON contract, update:
+
+- the prompt file
+- `src/runtime/contracts.ts`
+- `src/runtime/Runtime.ts`
+- this document
+- the related tests
+
+## Stable Capability Names In Prompt Context
+
+The runtime prompt set expects these capability ids to stay stable:
+
+- `retrieve_messages`
+- `resolve_member_identity`
+- `list_guild_structure`
+- `resolve_channel_targets`
+- `get_member_profile`
+- `list_members`
+- `get_guild_context`

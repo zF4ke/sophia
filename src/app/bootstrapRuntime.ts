@@ -1,6 +1,6 @@
 import { getAppConfig } from "@/app/AppConfig";
-import { loadCommands } from "@/platform/loaders/commandLoader";
-import { loadEvents } from "@/platform/loaders/eventLoader";
+import { loadCommands } from "@/discord/loaders/commandLoader";
+import { loadEvents } from "@/discord/loaders/eventLoader";
 import type { BotClient } from "@/shared/appTypes";
 
 export async function bootstrapRuntime(client: BotClient): Promise<void> {
@@ -9,3 +9,5 @@ export async function bootstrapRuntime(client: BotClient): Promise<void> {
     await client.login(config.discordToken);
     await loadCommands(client);
 }
+
+

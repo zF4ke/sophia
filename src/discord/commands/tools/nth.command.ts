@@ -58,7 +58,7 @@ export = {
             flags: ephemeral ? MessageFlags.Ephemeral : undefined,
         });
 
-        const stored = DiscordMemoryService.getNthHistoricalMessage(channel.id, number);
+        const stored = await DiscordMemoryService.getNthHistoricalMessageAsync(channel.id, number);
         if (!stored) {
             await interaction.editReply({
                 components: [

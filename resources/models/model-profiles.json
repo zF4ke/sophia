@@ -1,25 +1,9 @@
 {
-  "defaultProfile": "fast",
+  "defaultProfile": "smart",
   "profiles": {
-    "balanced": {
-      "chatModel": "minimax/minimax-m2.5",
-      "analysisModel": "minimax/minimax-m2.5",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.2,
-      "maxOutputTokens": 1200,
-      "webEnabled": false
-    },
-    "fast": {
-      "chatModel": "openai/gpt-oss-safeguard-20b",
-      "analysisModel": "openai/gpt-oss-safeguard-20b",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 800,
-      "webEnabled": false
-    },
-    "test": {
-      "chatModel": "x-ai/grok-4-fast:online",
-      "analysisModel": "x-ai/grok-4-fast:online",
+    "smart": {
+      "chatModel": "google/gemini-3.1-flash-lite-preview",
+      "analysisModel": "google/gemini-3.1-flash-lite-preview",
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.2,
       "maxOutputTokens": 1200,

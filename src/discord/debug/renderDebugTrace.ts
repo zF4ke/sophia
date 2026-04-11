@@ -1,9 +1,4 @@
-import {
-    ContainerBuilder,
-    SeparatorBuilder,
-    SeparatorSpacingSize,
-    TextDisplayBuilder,
-} from "discord.js";
+import { ContainerBuilder, TextDisplayBuilder } from "discord.js";
 import type { DebugTraceState } from "@/discord/debug/types";
 
 function formatDuration(startedAt: number): string {
@@ -13,176 +8,189 @@ function formatDuration(startedAt: number): string {
 }
 
 function formatStatus(status: DebugTraceState["status"]): string {
-    if (status === "completed") {
-        return "Concluído";
-    }
-
-    if (status === "failed") {
-        return "Falhou";
-    }
-
-    return "Em andamento";
+    if (status === "completed") return "Completed";
+    if (status === "failed") return "Failed";
+    return "Running";
 }
 
-function formatGroundingSummary(state: DebugTraceState): string {
-    if (!state.groundingSummary) {
-        return "ainda avaliando";
-    }
-
-    return `mensagens ${state.groundingSummary.messageEvidenceCount} · contexto ao vivo ${state.groundingSummary.liveEvidenceCount}`;
+function formatLabelValue(label: string, value: string): string {
+    return `**${label}:** ${value}`;
 }
 
-function formatGroundingState(state: DebugTraceState): string {
-    if (!state.groundingSummary) {
-        return "ainda avaliando";
+function formatChannelList(channelIds: string[]): string {
+    if (!channelIds.length) {
+        return "none";
     }
 
-    return state.groundingSummary.sufficient ? "suficiente" : "insuficiente";
+    return channelIds.map((channelId) => `<#${channelId}>`).join(", ");
 }
 
-function formatGroundingDecisionMode(state: DebugTraceState): string {
-    if (!state.groundingDecisionMode) {
-        return "ainda avaliando";
+function trimPreview(text: string | null | undefined, maxLength = 220): string {
+    const compact = String(text || "").replace(/\s+/g, " ").trim();
+    if (!compact) {
+        return "none";
     }
 
-    if (state.groundingDecisionMode === "judge") {
-        return "juiz";
-    }
-
-    if (state.groundingDecisionMode === "reused") {
-        return "contexto reutilizado";
-    }
-
-    return "heurística";
+    return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
 }
 
-function formatAnswerMode(state: DebugTraceState): string {
-    if (!state.groundedAnswerMode) {
-        return "";
-    }
-
-    if (state.groundedAnswerMode === "confident") {
-        return "confiante";
-    }
-
-    if (state.groundedAnswerMode === "best_effort") {
-        return "melhor esforço";
-    }
-
-    return "insuficiente";
+function buildSection(title: string, lines: string[], accentColor: number): ContainerBuilder {
+    return new ContainerBuilder()
+        .setAccentColor(accentColor)
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(title),
+            new TextDisplayBuilder().setContent(lines.join("\n"))
+        );
 }
 
-function formatContextCacheStatus(state: DebugTraceState): string {
-    if (state.contextCacheStatus === "reused") {
-        return "reutilizado";
-    }
+export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
+    const accentColor =
+        state.status === "failed"
+            ? 0xed4245
+            : state.status === "completed"
+              ? 0x57f287
+              : 0x9aa7ff;
 
-    if (state.contextCacheStatus === "seeded") {
-        return "semeado";
-    }
-
-    return "não";
-}
-
-function formatWebStatus(state: DebugTraceState): string {
-    if (!state.webStatus) {
-        return "";
-    }
-
-    if (state.webStatus === "used") {
-        return "usada";
-    }
-
-    if (state.webStatus === "enabled") {
-        return "habilitada";
-    }
-
-    return "desativada";
-}
-
-function formatControllerDecision(state: DebugTraceState): string {
-    if (!state.controllerDecision) {
-        return "";
-    }
-
-    const source = state.controllerDecision.source === "ai" ? "IA" : "determinística";
-    const target = state.controllerDecision.targetText
-        ? ` · alvo ${state.controllerDecision.targetText}`
-        : "";
-    return `${source} · ${state.controllerDecision.questionIntent}${target}`;
-}
-
-export function renderDebugTrace(state: DebugTraceState): ContainerBuilder {
-    const tools = state.toolNames.length ? state.toolNames.join(", ") : "nenhuma";
-    const recentEvents = state.recentEvents.length
-        ? state.recentEvents.map((event) => `- ${event}`).join("\n")
-        : "- Aguardando etapas.";
-    const details = [
-        `**Pergunta:** ${state.questionPreview}`,
-        `**Estado:** ${formatStatus(state.status)}`,
-        `**Etapa:** ${state.stage}`,
-        `**Modo:** ${state.mode ?? "a decidir"}`,
+    const overviewLines = [
+        formatLabelValue("Question", state.questionPreview),
+        formatLabelValue("Requester", state.requesterLabel || "unknown"),
+        formatLabelValue("Trigger", state.trigger || "unknown"),
+        formatLabelValue("Status", formatStatus(state.status)),
+        formatLabelValue("Stage", state.stage),
+        formatLabelValue("Classification", state.classificationMode ?? "pending"),
+        formatLabelValue("Runtime Mode", state.runtimeMode ?? "pending"),
+        formatLabelValue("Final Confidence", state.groundedAnswerMode ?? "pending"),
+        formatLabelValue("Elapsed", formatDuration(state.startedAt)),
     ];
 
-    if (state.mode === "Com grounding do Discord") {
-        const route = formatControllerDecision(state);
-        if (route) {
-            details.push(`**Controle:** ${route}`);
-        }
+    const conversationLines = [
+        formatLabelValue("Conversation Key", state.checkpointThreadId ?? "not set"),
+        formatLabelValue("Conversation Kind", state.conversationContext.kind ?? "pending"),
+        formatLabelValue(
+            "Reply Anchor",
+            state.conversationContext.replyAnchorMessageId || "channel fallback"
+        ),
+        formatLabelValue(
+            "Reply Target",
+            state.conversationContext.replyContext
+                ? `${state.conversationContext.replyContext.authorDisplayName} (${state.conversationContext.replyContext.authorId})`
+                : "none"
+        ),
+        formatLabelValue(
+            "Reply Excerpt",
+            trimPreview(state.conversationContext.replyContext?.content, 180)
+        ),
+    ];
 
-        const webStatus = formatWebStatus(state);
-        if (webStatus) {
-            details.push(`**Web:** ${webStatus}`);
-        }
+    const retrieval = state.retrievalSummary;
+    const retrievalLines = [
+        formatLabelValue(
+            "Capabilities",
+            state.selectedCapabilities.length ? state.selectedCapabilities.join(", ") : "none"
+        ),
+        formatLabelValue("Tool Calls", String(state.toolCallCount)),
+        formatLabelValue("Web", state.webStatus ?? "off"),
+        formatLabelValue("Stop Reason", state.stopReason ?? "pending"),
+        formatLabelValue(
+            "Message Evidence",
+            state.groundingSummary
+                ? `${state.groundingSummary.messageEvidenceCount}`
+                : "0"
+        ),
+        formatLabelValue(
+            "Live Metadata Evidence",
+            state.groundingSummary ? `${state.groundingSummary.liveEvidenceCount}` : "0"
+        ),
+        formatLabelValue(
+            "Evidence Sufficient",
+            state.groundingSummary
+                ? state.groundingSummary.sufficient
+                    ? "yes"
+                    : "no"
+                : "not judged"
+        ),
+        formatLabelValue("Retrieval Origin", retrieval?.sourceOrigin || "none"),
+        formatLabelValue("Cache Hit", retrieval ? (retrieval.cacheHit ? "yes" : "no") : "n/a"),
+        formatLabelValue(
+            "Live Refresh",
+            retrieval ? (retrieval.liveEscalated ? "yes" : "no") : "n/a"
+        ),
+        formatLabelValue(
+            "Cache Enriched",
+            retrieval ? (retrieval.cacheEnriched ? "yes" : "no") : "n/a"
+        ),
+        formatLabelValue(
+            "Strong / Weak Results",
+            retrieval ? `${retrieval.strongResultCount} / ${retrieval.weakResultCount}` : "0 / 0"
+        ),
+        formatLabelValue(
+            "Channels Searched",
+            retrieval ? formatChannelList(retrieval.searchedChannelIds) : "none"
+        ),
+        formatLabelValue(
+            "Channels Fetched",
+            retrieval ? formatChannelList(retrieval.fetchedChannelIds) : "none"
+        ),
+    ];
 
-        details.push(`**Cache de contexto:** ${formatContextCacheStatus(state)}`);
-        details.push(`**Ferramentas:** ${tools}`);
-        details.push(`**Chamadas de ferramenta:** ${state.toolCallCount}`);
+    const timelineEntries = state.timeline.length
+        ? state.timeline
+              .slice(0, 10)
+              .map((entry) => `- [${entry.label}] ${entry.detail}`)
+        : ["- Waiting for runtime activity."];
 
-        if (state.groundingSummary) {
-            details.push(`**Base útil:** ${formatGroundingSummary(state)}`);
-            details.push(`**Grounding:** ${formatGroundingState(state)}`);
-        }
+    const containers = [
+        buildSection("## Sophia Debug · Request", overviewLines, accentColor),
+        buildSection("## Sophia Debug · Conversation", conversationLines, accentColor),
+        buildSection("## Sophia Debug · Retrieval", retrievalLines, accentColor),
+    ];
 
-        const answerMode = formatAnswerMode(state);
-        if (answerMode) {
-            details.push(`**Resultado:** ${answerMode}`);
+    if (state.contextPreview) {
+        const contextLines: string[] = [];
+        if (state.contextPreview.recentChannelMessages.length) {
+            contextLines.push("**Channel Messages:**");
+            contextLines.push(
+                ...state.contextPreview.recentChannelMessages
+                    .slice(0, 6)
+                    .map((msg) => `- ${trimPreview(msg, 120)}`)
+            );
         }
-
-        if (state.groundingDecisionMode) {
-            details.push(`**Decisão:** ${formatGroundingDecisionMode(state)}`);
+        if (state.contextPreview.evidencePreview.length) {
+            contextLines.push("**Evidence:**");
+            contextLines.push(
+                ...state.contextPreview.evidencePreview
+                    .slice(0, 4)
+                    .map((item) => `- ${trimPreview(item, 120)}`)
+            );
         }
-    } else {
-        const webStatus = formatWebStatus(state);
-        if (webStatus) {
-            details.push(`**Web:** ${webStatus}`);
+        if (state.contextPreview.recentTurns.length) {
+            contextLines.push("**Prior Turns:**");
+            contextLines.push(
+                ...state.contextPreview.recentTurns
+                    .slice(0, 3)
+                    .map((turn) => `- ${trimPreview(turn, 120)}`)
+            );
         }
-
-        details.push(`**Ferramentas:** ${tools}`);
-        details.push(`**Chamadas de ferramenta:** ${state.toolCallCount}`);
+        if (contextLines.length) {
+            containers.push(
+                buildSection("## Sophia Debug · Context", contextLines, accentColor)
+            );
+        }
     }
 
-    details.push(`**Tempo:** ${formatDuration(state.startedAt)}`);
+    containers.push(
+        buildSection("## Sophia Debug · Timeline", timelineEntries, accentColor),
+    );
 
-    return new ContainerBuilder()
-        .setAccentColor(
-            state.status === "failed"
-                ? 0xed4245
-                : state.status === "completed"
-                  ? 0x57f287
-                  : 0x9aa7ff
-        )
-        .addTextDisplayComponents(
-            new TextDisplayBuilder().setContent("## Debug da Sophia"),
-            new TextDisplayBuilder().setContent(details.join("\n"))
-        )
-        .addSeparatorComponents(
-            new SeparatorBuilder()
-                .setDivider(true)
-                .setSpacing(SeparatorSpacingSize.Small)
-        )
-        .addTextDisplayComponents(
-            new TextDisplayBuilder().setContent("### Passos recentes"),
-            new TextDisplayBuilder().setContent(recentEvents)
+    if (state.failureMessage) {
+        containers.push(
+            buildSection(
+                "## Sophia Debug · Failure",
+                [formatLabelValue("Error", state.failureMessage)],
+                0xed4245
+            )
         );
+    }
+
+    return containers;
 }

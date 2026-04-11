@@ -27,7 +27,6 @@ export interface ModelProfile {
 
 export type WebMode = "off" | "auto" | "required";
 export type WebStatus = "off" | "enabled" | "used";
-export type ConversationSurface = "talk" | "mention" | "reply";
 
 export interface ModelProfileConfig {
     defaultProfile: string;
@@ -38,9 +37,17 @@ export interface AppConfig {
     discordToken: string;
     openRouterApiKey: string;
     openRouterBaseUrl: string;
-    port: number;
     modelProfileName: string;
     modelProfile: ModelProfile;
+    runtime: {
+        operationalDbPath: string;
+        checkpointDbPath: string;
+        maxToolCalls: number;
+        maxResearchPasses: number;
+        maxRepeatedCallSignature: number;
+        maxLatencyBudgetMs: number;
+        maxCostTier: "low" | "medium" | "high";
+    };
 }
 
 export interface BotCommand {
@@ -89,72 +96,8 @@ export interface AnswerCitation {
     jumpLink: string;
 }
 
-export interface GroundingSummary {
-    messageEvidenceCount: number;
-    liveEvidenceCount: number;
-    sufficient: boolean;
-}
-
-export type GroundingDecisionMode = "heuristic" | "judge" | "reused";
-
-export interface EvidenceJudgeResult {
-    sufficient: boolean;
-    reason: string;
-    missingInformation: string | null;
-}
-
-export type QuestionIntent =
-    | "person_identity"
-    | "person_messages"
-    | "member_list_or_ordinal"
-    | "server_context"
-    | "channel_or_topic_search"
-    | "broad_search";
-
 export type GroundedAnswerMode = "confident" | "best_effort" | "insufficient";
-
-export type RouteIntent =
-    | "channel_target"
-    | "person_target"
-    | "member_lookup"
-    | "server_context"
-    | "broad_search";
-
-export interface RouteDecision {
-    source: "deterministic" | "ai";
-    intent: RouteIntent;
-    targetText: string | null;
-    channelIds?: string[];
-    authorId?: string;
-    authorQuery?: string;
-    topicText?: string | null;
-    channelHintText?: string | null;
-    resolvedPerson?: ResolvedPersonContext | null;
-    confidence: number;
-    reason: string;
-}
-
-export interface RetrievalControllerDecision {
-    source: "deterministic" | "ai";
-    questionIntent: QuestionIntent;
-    routeIntent: RouteIntent;
-    nextAction:
-        | "answer"
-        | "best_effort_answer"
-        | DiscordToolName;
-    targetText: string | null;
-    channelIds?: string[];
-    authorId?: string;
-    authorQuery?: string;
-    topicText?: string | null;
-    channelHintText?: string | null;
-    resolvedPerson?: ResolvedPersonContext | null;
-    searchQuery?: string | null;
-    needsMessageEvidence: boolean;
-    answerConfidence: GroundedAnswerMode;
-    confidence: number;
-    reason: string;
-}
+export type MemberListSort = "joined_at";
 
 export interface ModelTraceContext {
     traceLabel: string;
@@ -163,8 +106,6 @@ export interface ModelTraceContext {
     webContext?: string;
 }
 
-export type MemberListSort = "joined_at";
-
 export interface LiveMemberRecord {
     id: string;
     username: string;
@@ -172,6 +113,7 @@ export interface LiveMemberRecord {
     joinedTimestamp: number | null;
     globalName?: string | null;
     nickname?: string | null;
+    isBot?: boolean;
 }
 
 export interface LiveMemberListResult {
@@ -187,6 +129,7 @@ export interface LiveMemberListResult {
 
 export interface MemberProfileResult {
     id: string;
+    query?: string;
     username: string;
     displayName: string;
     globalName: string | null;
@@ -195,31 +138,46 @@ export interface MemberProfileResult {
     bannerUrl: string | null;
     accentColor: string | null;
     bio: string | null;
+    isBot?: boolean;
+    isCurrentGuildMember?: boolean;
+    source?: "live_id" | "live_exact" | "live_search" | "historical_author";
+    confidence?: "exact" | "high" | "medium";
 }
 
-export interface ResolvedPersonContext {
-    id: string;
-    username: string;
+export interface ResolvedMemberIdentity {
+    query: string;
+    resolvedId: string;
     displayName: string;
+    username: string;
     globalName: string | null;
     nickname: string | null;
+    isBot: boolean;
+    isCurrentGuildMember: boolean;
+    source: "live_id" | "live_exact" | "live_search" | "historical_author";
+    confidence: "exact" | "high" | "medium";
     roles: string[];
 }
 
-export interface ConversationResolutionContext {
+export interface GuildStructureEntry {
+    id: string;
     guildId: string | null;
-    channelId: string | null;
-    routeIntent: RouteIntent;
-    targetText: string | null;
-    authorId: string | null;
-    authorQuery: string | null;
-    channelIds: string[];
-    topicText: string | null;
-    channelHintText: string | null;
-    resolvedPerson: ResolvedPersonContext | null;
-    createdTimestamp: number;
-    expiryTimestamp: number;
-    createdResponseOrdinal: number | null;
+    name: string;
+    type: string;
+    parentCategoryId: string | null;
+    parentCategoryName: string | null;
+    isReadable: boolean;
+    isViewable: boolean;
+    isIndexed: boolean;
+    source: "live" | "cached_only";
+    missingOrDeletedPossible: boolean;
+}
+
+export interface ResolvedChannelTarget {
+    query: string;
+    resolvedIds: string[];
+    entries: GuildStructureEntry[];
+    exactIdMatch: boolean;
+    confidence: "exact" | "high" | "medium" | "low";
 }
 
 export interface ChannelCrawlResult {
@@ -246,12 +204,6 @@ export interface DiscordToolResult {
     data: unknown;
     cacheStatus?: "hit" | "miss";
     errorMessage?: string | null;
-}
-
-export interface SearchPlan {
-    action: DiscordToolName | "finish";
-    arguments: Record<string, string | number | undefined>;
-    reason: string;
 }
 
 export interface RequestClassification {

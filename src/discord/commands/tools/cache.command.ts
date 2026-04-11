@@ -4,20 +4,22 @@ import {
     SlashCommandBuilder,
 } from "discord.js";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { RuntimeStorageService } from "@/runtime/storage/RuntimeStorageService";
 import { SecurityService } from "@/security/SecurityService";
 import { EMOJIS } from "@/discord/constants";
 import { buildMemoryStatusContainer } from "@/discord/commands/shared/buildMemoryStatusContainer";
+import { buildRuntimeStorageContainer } from "@/discord/commands/shared/buildRuntimeStorageContainer";
 
 export = {
     data: new SlashCommandBuilder()
         .setName("cache")
-        .setDescription("Exibe estatísticas da memória local")
+        .setDescription("Show local Discord retrieval cache stats")
         .setContexts(0, 1, 2)
         .setIntegrationTypes(0, 1)
         .addBooleanOption((option) =>
             option
                 .setName("ephemeral")
-                .setDescription("Somente você pode ver o resultado")
+                .setDescription("Only you can see the result")
                 .setRequired(false)
         ),
     async execute(interaction: ChatInputCommandInteraction) {
@@ -34,11 +36,15 @@ export = {
             flags: ephemeral ? MessageFlags.Ephemeral : undefined,
         });
 
-        const stats = DiscordMemoryService.getStats();
-        const states = DiscordMemoryService.getIndexState();
+        const stats = await DiscordMemoryService.getStatsAsync();
+        const states = await DiscordMemoryService.getIndexStateAsync();
+        const runtimeStatus = RuntimeStorageService.getStatus();
 
         await interaction.editReply({
-            components: [buildMemoryStatusContainer(stats, states)],
+            components: [
+                buildMemoryStatusContainer(stats, states),
+                buildRuntimeStorageContainer(runtimeStatus),
+            ],
             flags: MessageFlags.IsComponentsV2,
         });
     },

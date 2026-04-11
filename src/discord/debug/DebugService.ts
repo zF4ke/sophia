@@ -12,20 +12,39 @@ import type { DebugSessionReporter, DebugTraceState } from "@/discord/debug/type
 
 function buildInitialState(question: string): DebugTraceState {
     return {
-        questionPreview: question.replace(/\s+/g, " ").trim().slice(0, 140) || "Sem texto.",
+        questionPreview: question.replace(/\s+/g, " ").trim().slice(0, 140) || "No text.",
         status: "running",
-        stage: "Iniciando",
-        mode: null,
-        controllerDecision: null,
-        toolNames: [],
+        stage: "Starting",
+        requesterLabel: null,
+        trigger: null,
+        classificationMode: null,
+        runtimeMode: null,
+        selectedCapabilities: [],
         toolCallCount: 0,
         groundingSummary: null,
-        groundingDecisionMode: null,
+        retrievalSummary: null,
         groundedAnswerMode: null,
-        contextCacheStatus: "none",
+        stopReason: null,
+        checkpointThreadId: null,
+        conversationContext: {
+            threadId: null,
+            kind: null,
+            replyAnchorMessageId: null,
+            replyContext: null,
+        },
         webStatus: null,
-        recentEvents: ["Iniciado"],
+        contextPreview: null,
+        recentEvents: ["Started"],
+        timeline: [
+            {
+                label: "start",
+                detail: "Debug session started.",
+                tone: "info",
+                timestamp: Date.now(),
+            },
+        ],
         startedAt: Date.now(),
+        failureMessage: null,
     };
 }
 
@@ -35,7 +54,7 @@ async function sendDebugMessage(
 ): Promise<Message | null> {
     try {
         return await channel.send({
-            components: [renderDebugTrace(buildInitialState(question))],
+            components: renderDebugTrace(buildInitialState(question)),
             flags: MessageFlags.IsComponentsV2,
         });
     } catch (error) {

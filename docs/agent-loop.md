@@ -1,53 +1,59 @@
-# Agent Loop And Tool Contract
+# Agent Loop
 
-The agent loop is intentionally short and bounded.
+Sophia uses one bounded graph runtime with one retrieval loop.
 
-## Flow
+## Loop Shape
 
-1. `RequestClassifier` decides between `direct_answer` and `discord_grounded`.
-2. For grounded questions, `AgentOrchestrator` gathers explicit mentions, readable channel names, short-lived same-guild conversation context, and cache state.
-3. The retrieval controller prompt chooses the current question intent, the next tool action, and the grounded answer mode.
-4. `AgentOrchestrator` first checks for a fresh reusable grounded context in the same guild, preferring the current channel.
-5. If reuse is not enough, `AgentOrchestrator` runs a bounded tool loop driven by repeated retrieval-controller decisions.
-6. `DiscordToolService` executes the chosen tool, using TTL-based tool-result caching where appropriate.
-7. The controller may choose channel discovery, live crawl, and local retry when local memory is weak.
-8. Grounded answers use a graded outcome: `confident`, `best_effort`, or `insufficient`.
-9. The synthesis prompt builds the final grounded answer from compact evidence only.
-10. Conversational surfaces (`/talk`, mentions, replies to Sophia) may enable OpenRouter web search automatically for clearly external/current questions.
-11. Discord-grounded conversational requests still try Discord memory/live tools first; selective web fallback is only allowed when the remaining need appears external/current rather than purely Discord-local.
+1. `ingest_turn`
+2. `load_context`
+3. `load_checkpoint`
+4. `load_memory`
+5. `plan_turn`
+6. `route_mode`
+7. `run_research_loop` when needed
+8. `synthesize_answer`
+9. `persist_run`
 
-## Available Tools
+## Conversation Entry
 
-- `search_messages`
-- `read_message_thread`
-- `read_channel_summary`
-- `list_relevant_channels`
-- `crawl_channel_messages`
+All conversational entrypoints feed the same runtime:
+- `/talk`
+- mentions
+- replies
+
+Replies add referenced-message context, but they do not fork into a separate runtime.
+
+## Capability Model
+
+Planner-visible capabilities:
+- `retrieve_messages`
+- `resolve_member_identity`
+- `list_guild_structure`
+- `resolve_channel_targets`
 - `get_member_profile`
 - `list_members`
 - `get_guild_context`
 
-## Important Rule
+`retrieve_messages` is the main Discord evidence path. `resolve_member_identity`, `list_guild_structure`, and `resolve_channel_targets` are the current-guild discovery layer. The others are live metadata capabilities.
 
-## Grounding Semantics
+The runtime chooses capabilities from the registry. The planner is model-led by default, and the core loop should not grow language-specific routing or tool-specific branching for each new capability.
 
-- `search_messages`, `read_message_thread`, and `read_channel_summary` provide message evidence.
-- `get_guild_context`, `get_member_profile`, and `list_members` provide live evidence.
-- `list_relevant_channels` and `crawl_channel_messages` are discovery tools and must not be treated as final evidence on their own.
-- Live evidence can satisfy grounding for current-server facts even when there are no stored message hits.
-- For person-target questions about what someone said, live member/profile evidence is identity context only; message evidence is still required for a confident answer.
-- When local memory search misses, the agent may crawl readable unstored channels, ingest them, and rerun local search within the same bounded loop.
-- Exact readable channel-name matches such as `silksong` can be used as strong channel hints even without explicit `canal` wording.
-- Live member lookups should retry bounded Discord rate limits rather than failing immediately.
-- The retrieval controller is the main semantic decision-maker; deterministic logic remains only for explicit entities, permission/readability constraints, and loop bounds.
-- Reusable grounded contexts are guild-wide by default, but same-channel matches should win when available.
-- Tool-result caching uses TTL plus a short per-guild response-age limit in v1.
-- Final answers should not append visible source lists or citation blocks.
-- Conversational web search is a `ModelGateway` capability, not a Discord retrieval tool, and it should stay off for `/ask` and `/context` unless intentionally expanded later.
+## Stop Policy
 
-If a tool is changed, the runtime and prompt contract must change together. The most important synchronization points are:
+Hard limits:
+- max tool calls
+- max research passes
+- repeated-call guard
+- latency budget
 
-- `src/shared/discordTools.ts`
-- `src/discord/tools/DiscordToolService.ts`
-- `src/agent/AgentOrchestrator.ts`
-- `resources/prompts/tasks/plan_discord_search.md`
+Soft exit:
+- evidence sufficient
+- no useful next step
+- confidence plateau
+- best-effort continuation preferred over a dead-end refusal
+
+## Message Evidence Rule
+
+Questions like "what did X say" or "what happened in channel Y" require message evidence from `retrieve_messages`. Live member or guild metadata alone is not enough.
+
+When evidence is weak, the runtime should continue the conversation with the best grounded interpretation it can produce, then ask a targeted follow-up or continue retrieval instead of stopping cold.

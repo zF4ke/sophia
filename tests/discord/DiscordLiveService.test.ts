@@ -1,13 +1,21 @@
 import { Collection } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
+import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 
-function createMember(id: string, username: string, displayName: string, joinedTimestamp: number) {
+function createMember(
+    id: string,
+    username: string,
+    displayName: string,
+    joinedTimestamp: number,
+    options: { bot?: boolean } = {}
+) {
     return {
         id,
         user: {
             username,
             globalName: null,
+            bot: Boolean(options.bot),
             fetch: vi.fn().mockResolvedValue({
                 globalName: null,
                 hexAccentColor: null,
@@ -108,6 +116,89 @@ describe("DiscordLiveService.listMembers", () => {
         expect(result?.username).toBe("oneperson");
         expect(result?.displayName).toBe("Openrosen");
         expect(result?.nickname).toBe("One Person");
+    });
+
+    it("resolves an exact member id even when the member is not already cached", async () => {
+        const memberId = "123456789012345678";
+        const member = createMember(memberId, "ghost", "Ghost", 100);
+        const fetch = vi.fn().mockImplementation(async (arg?: string) => {
+            if (arg === memberId) {
+                return member;
+            }
+            return undefined;
+        });
+        const guild = {
+            members: {
+                fetch,
+                search: vi.fn().mockResolvedValue(new Collection()),
+                cache: new Collection(),
+            },
+        } as any;
+
+        const result = await DiscordLiveService.resolveMemberIdentity(guild, memberId);
+
+        expect(fetch).toHaveBeenCalledWith(memberId);
+        expect(result).toMatchObject({
+            resolvedId: memberId,
+            displayName: "Ghost",
+            isCurrentGuildMember: true,
+            source: "live_id",
+        });
+    });
+
+    it("resolves an exact bot id as a current guild member", async () => {
+        const botId = "987654321098765432";
+        const bot = createMember(botId, "markov", "Markov", 100, { bot: true });
+        const guild = {
+            members: {
+                fetch: vi.fn().mockImplementation(async (arg?: string) => {
+                    if (arg === botId) {
+                        return bot;
+                    }
+                    return undefined;
+                }),
+                search: vi.fn().mockResolvedValue(new Collection()),
+                cache: new Collection(),
+            },
+        } as any;
+
+        const result = await DiscordLiveService.resolveMemberIdentity(guild, botId);
+
+        expect(result).toMatchObject({
+            resolvedId: botId,
+            displayName: "Markov",
+            isBot: true,
+            isCurrentGuildMember: true,
+        });
+    });
+
+    it("falls back to same-guild historical authors when live membership cannot be resolved", async () => {
+        vi.spyOn(DiscordMemoryService, "resolveHistoricalAuthorAsync").mockResolvedValue({
+            authorId: "old-1",
+            authorName: "Old Friend",
+            guildId: "g1",
+            messageCount: 12,
+            lastSeenTimestamp: 100,
+            isBot: false,
+        });
+
+        const guild = {
+            id: "g1",
+            members: {
+                fetch: vi.fn().mockResolvedValue(undefined),
+                search: vi.fn().mockResolvedValue(new Collection()),
+                cache: new Collection(),
+            },
+        } as any;
+
+        const result = await DiscordLiveService.resolveMemberIdentity(guild, "old-1");
+
+        expect(result).toMatchObject({
+            resolvedId: "old-1",
+            displayName: "Old Friend",
+            isCurrentGuildMember: false,
+            source: "historical_author",
+        });
     });
 
     it("retries live member fetches when Discord rate limits the request", async () => {

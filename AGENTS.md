@@ -1,11 +1,8 @@
-# Sophia3 Agent Handbook
+# Sophia Agent Handbook
 
-Sophia3 is an agentic Discord assistant with two data sources:
+Sophia is a Discord assistant with one conversation runtime, one retrieval pipeline, and one local runtime state store.
 
-- Local message memory for Discord history and evidence retrieval.
-- Live Discord API tools for transient metadata such as members, roles, channels, and guild state.
-
-This file is the canonical engineering and operator handoff for the runtime. `README.md` is the product/setup overview. The deeper references live in `docs/`.
+This file is the engineering handoff for the current runtime.
 
 ## Canonical Docs
 
@@ -16,38 +13,38 @@ This file is the canonical engineering and operator handoff for the runtime. `RE
 - `docs/commands-and-admin.md`
 - `docs/cleanup-migration.md`
 - `docs/ui.md`
+- `docs/how-sophia-works.md`
 
-## Runtime Flow
+## Runtime Model
 
-1. Classify the request as `direct_answer` or `discord_grounded`.
-2. If grounded, collect explicit Discord entities, readable channel names, short-lived conversation context, and cached tool/evidence state as controller inputs.
-3. Run the retrieval controller prompt to choose the current question intent, the next tool action, and the grounded answer mode.
-4. Execute one bounded Discord tool step at a time until the controller chooses `answer`, `best_effort_answer`, or the hard tool budget is exhausted.
-5. Reuse a fresh grounded context from the same guild when possible, preferring the current channel over other guild channels.
-6. Treat stored-message evidence and live Discord metadata as separate grounding types, but keep the final grounded outcome graded as `confident`, `best_effort`, or `insufficient`.
-7. If local memory misses, the controller may choose channel discovery, live crawl, and local retry within the same bounded loop.
-8. Keep citations internal for grounding, cache, and debug, but do not show source lists in the final user-facing answer.
-9. Identity questions may answer from resolved member/profile evidence alone.
-10. Message-history questions should continue searching for message evidence; if some evidence exists but the budget ends, return a best-effort grounded answer instead of the generic guard.
-11. Conversational surfaces (`/talk`, mentions, and replies to Sophia) may enable OpenRouter web search automatically for clearly external or current questions, but Discord-grounded retrieval should stay first for server-specific requests.
-12. Web fallback is selective: if Discord evidence is weak and the unresolved need still looks external/current, Sophia may answer through the web-enabled direct path; otherwise she should keep the response Discord-only.
+Sophia is conversational first.
 
-The main orchestration files are:
+The active flow is:
+1. Normalize the incoming turn.
+2. Resolve the canonical conversation key.
+3. Load checkpoint state and recent local runtime state.
+4. Let the model plan direct conversation vs current-guild retrieval.
+5. Retrieve cached Discord evidence first.
+6. Escalate to live Discord history when cache evidence is weak.
+7. Judge whether the evidence is enough to continue, answer, or ask a targeted follow-up.
+8. Synthesize the final response.
+9. Persist runtime and trace data locally.
 
-- `src/agent/RequestClassifier.ts`
-- `src/agent/AgentOrchestrator.ts`
-- `src/discord/tools/DiscordToolService.ts`
-- `src/memory/DiscordMemoryService.ts`
+The runtime is model-led by default and keeps only narrow guardrails:
+- exact-id structural shortcuts
+- capability validation
+- repeated-call protection
+- budget limits
+- refusal prevention for ordinary conversation
 
 ## Stable Tool Contract
 
-These tool names are part of the prompt contract and should stay stable unless you intentionally change the registry and prompts together:
+These capability ids are prompt- and runtime-stable:
 
-- `search_messages`
-- `read_message_thread`
-- `read_channel_summary`
-- `list_relevant_channels`
-- `crawl_channel_messages`
+- `retrieve_messages`
+- `resolve_member_identity`
+- `list_guild_structure`
+- `resolve_channel_targets`
 - `get_member_profile`
 - `list_members`
 - `get_guild_context`
@@ -56,50 +53,41 @@ The stable code catalog is:
 
 - `src/shared/discordTools.ts`
 
-If you add, remove, or rename a tool, update all of the following in the same change:
+If a capability id changes, update:
 
 - `src/shared/discordTools.ts`
-- `src/discord/tools/DiscordToolService.ts`
-- `src/agent/AgentOrchestrator.ts`
-- `resources/prompts/tasks/plan_discord_search.md`
-- `docs/prompt-catalog.md`
-- Any affected tests, especially the documentation integrity test
-
-If you change whether a tool is treated as message evidence, live evidence, or discovery-only, update:
-
-- `src/shared/discordTools.ts`
-- `src/agent/AgentOrchestrator.ts`
-- `resources/prompts/tasks/plan_discord_search.md`
-- `docs/agent-loop.md`
-- `docs/prompt-catalog.md`
+- `src/capabilities/CapabilityRegistry.ts`
+- `resources/prompts/runtime/plan_turn.md`
+- `resources/prompts/runtime/select_next_step.md`
+- `resources/prompts/runtime/judge_evidence.md`
+- `resources/prompts/runtime/synthesize_answer.md`
+- the affected tests
 
 ## Prompt Ownership
 
-Runtime prompts live in `resources/prompts/` and should remain external to the code.
+Runtime prompts live under `resources/prompts/` and stay external to code:
 
 - `resources/prompts/system/base.md`
-- `resources/prompts/system/grounded.md`
-- `resources/prompts/tasks/classify_request.md`
-- `resources/prompts/tasks/retrieval_controller.md`
-- `resources/prompts/tasks/route_discord_intent.md`
-- `resources/prompts/tasks/plan_discord_search.md`
-- `resources/prompts/tasks/judge_grounding_sufficiency.md`
-- `resources/prompts/tasks/synthesize_answer.md`
+- `resources/prompts/runtime/plan_turn.md`
+- `resources/prompts/runtime/select_next_step.md`
+- `resources/prompts/runtime/judge_evidence.md`
+- `resources/prompts/runtime/synthesize_answer.md`
+- `resources/prompts/runtime/debug_summary.md`
 - `resources/prompts/guards/insufficient_evidence.md`
 
 The stable prompt catalog is:
 
 - `src/shared/promptCatalog.ts`
 
-If you change the expected JSON shape for classification, retrieval control, routing, tool planning, or grounding sufficiency judgment, update:
+If a prompt contract changes, update:
 
-- The prompt file
-- The consuming TypeScript types in `src/shared/appTypes.ts`
-- The calling code in `RequestClassifier` or `AgentOrchestrator`
-- The docs in `docs/prompt-catalog.md`
-- The related tests
+- the prompt file
+- `src/runtime/contracts.ts`
+- `src/runtime/Runtime.ts`
+- `docs/prompt-catalog.md`
+- related tests
 
-## Models and Config
+## Models And Config
 
 Editable runtime config lives in:
 
@@ -107,53 +95,47 @@ Editable runtime config lives in:
 - `.env`
 - `src/app/AppConfig.ts`
 
-OpenRouter is the only provider surface in v1. Keep model profile edits in `resources/models/model-profiles.json` instead of hardcoding models in source.
+OpenRouter remains the only model-provider surface. Do not hardcode models in source.
 
-## Memory and Indexing
+## Memory And Storage
 
-Stored Discord messages are the source of truth for search and grounded answers.
+Local libSQL storage is the source of truth for Discord retrieval state and runtime traces.
 
 - New messages are ingested from `src/discord/events/message/messageCreate.event.ts`
 - Backfill and repair flows are exposed through `src/discord/commands/system/index.command.ts`
-- Persistence and retrieval live under `src/memory/`
-- Reusable grounded contexts, cached tool results, and short-lived conversation resolution context are stored in the same SQLite runtime database with TTL plus a short per-guild response-age limit
+- Operational storage is local and disposable
+- LangGraph checkpoints are kept in a separate local SQLite file
 
-When changing retrieval behavior, update both code and docs:
-
-- Retrieval code under `src/memory/`
-- `docs/memory-indexing.md`
-- Relevant prompts if retrieval behavior changes the agent’s expectations
+Do not reintroduce reusable grounded-context caches or tool-result caches into the active runtime path.
 
 ## Commands
 
-Core supported commands:
+Core supported commands and entrypoints:
 
-- `/ask`
-- `/find`
-- `/context`
 - `/talk`
+- mentions
+- replies
+- `/find`
 - `/nth`
 - `/debug`
 - `/index`
 - `/access`
 - `/cache`
 
-The current interaction entrypoint is:
+Interaction entrypoint:
 
 - `src/discord/events/interaction/interactionCreate.event.ts`
 
-The current command registry/loader is:
+Command registry/loader:
 
-- `src/platform/loaders/commandLoader.ts`
+- `src/discord/loaders/commandLoader.ts`
 
-## How To Proceed Safely
-
-When making behavior changes, prefer this sequence:
+## Safe Change Sequence
 
 1. Update the smallest responsible runtime module.
-2. Update prompts if the agent contract changed.
-3. Update `AGENTS.md` and the relevant file in `docs/`.
+2. Update prompts if the runtime contract changed.
+3. Update `AGENTS.md` and the relevant docs.
 4. Update or add tests.
 5. Run `npm run check`.
 
-Do not reintroduce large inline prompts, fake web-search claims, or raw transcript dumping into model context.
+Do not reintroduce giant inline prompts, fake web-search claims, refusal-first grounding, or uncontrolled tool loops.

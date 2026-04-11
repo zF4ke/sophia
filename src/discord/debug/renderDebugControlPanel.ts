@@ -22,7 +22,7 @@ export function renderDebugControlPanel(
             new TextDisplayBuilder().setContent(
                 [
                     `**Estado atual:** ${enabled ? "Ativado" : "Desativado"}`,
-                    "**Afeta:** /ask, /talk, /context, menções à Sophia e respostas para a Sophia.",
+                    "**Afeta:** /talk, menções à Sophia e respostas para a Sophia.",
                     "**Saída:** uma mensagem pública de debug por resposta, atualizada ao longo do fluxo.",
                 ].join("\n")
             )

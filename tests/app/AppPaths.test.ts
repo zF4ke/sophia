@@ -1,7 +1,7 @@
 import fs from "fs";
 import { describe, expect, it } from "vitest";
 import { AppPaths } from "@/app/AppPaths";
-import { FileSystemService } from "@/platform/storage/FileSystemService";
+import { FileSystemService } from "@/shared/storage/FileSystemService";
 
 describe("AppPaths", () => {
     it("resolves runtime assets from resources", () => {
@@ -18,3 +18,4 @@ describe("AppPaths", () => {
         expect(FileSystemService.getBaseStorageDir()).toBe(AppPaths.storageRoot);
     });
 });
+
