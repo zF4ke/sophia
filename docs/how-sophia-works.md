@@ -132,44 +132,6 @@ She then turns the result into the final reply or a best-effort conversational f
 - distinguish current live guild structure from cached-only remembered entries
 - run `/find` as a specialized retrieval workflow
 
-## Continuous-Context Use Cases
-
-### Example: `/talk` then reply
-
-1. You use `/talk` in `#general`.
-2. Sophia answers.
-3. You reply to that Sophia message.
-4. Sophia resolves the reply-chain anchor and continues the same conversation.
-5. If another person replies in that same chain, they join the same conversation too.
-
-### Example: asking what someone said
-
-1. You ask what Alice said about deploys.
-2. Sophia tries `retrieve_messages`.
-3. If the local cache is weak, she fetches likely live Discord history behind the scenes.
-4. The new messages are ingested.
-5. She retries retrieval and answers from message evidence.
-
-### Example: knowing the requester vs the message author
-
-1. Bob replies to a message written by Alice.
-2. Sophia identifies Bob as the requester because Bob triggered the turn.
-3. She identifies Alice as the reply target because Alice authored the referenced message.
-4. If retrieval runs, the resulting evidence keeps the author metadata for every matching message.
-5. The final answer can then distinguish “you” from “Alice” instead of mixing them together.
-
-### Example: asking for a clarification after a grounded answer
-
-1. Sophia gives the best grounded interpretation she can.
-2. You follow up in the same reply chain.
-3. She reuses the same conversation context instead of resetting the turn.
-
-### Example: `/find` as a specialized workflow
-
-1. You use `/find deployment anxiety`.
-2. Sophia runs the retrieval workflow directly instead of deciding between chat and retrieval.
-3. The retrieval still uses the same cache-first, live-refresh-second primitives as the main runtime.
-
 ## Limitations
 
 Current limitations:
