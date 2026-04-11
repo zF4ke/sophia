@@ -1,6 +1,8 @@
 import { ContainerBuilder, TextDisplayBuilder } from "discord.js";
 import type { DebugTraceState } from "@/discord/debug/types";
 
+const TIMELINE_VISIBLE_ROWS = 20;
+
 function formatDuration(startedAt: number): string {
     const elapsedMs = Math.max(0, Date.now() - startedAt);
     const elapsedSeconds = Math.max(1, Math.round(elapsedMs / 1000));
@@ -41,6 +43,20 @@ function buildSection(title: string, lines: string[], accentColor: number): Cont
             new TextDisplayBuilder().setContent(title),
             new TextDisplayBuilder().setContent(lines.join("\n"))
         );
+}
+
+function buildTimelineLines(state: DebugTraceState): string[] {
+    const lines = state.timeline.length
+        ? state.timeline
+              .slice(0, TIMELINE_VISIBLE_ROWS)
+              .map((entry) => `- [${entry.label}] ${entry.detail}`)
+        : ["- Waiting for runtime activity."];
+
+    while (lines.length < TIMELINE_VISIBLE_ROWS) {
+        lines.push("\u200b");
+    }
+
+    return lines;
 }
 
 export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
@@ -133,11 +149,7 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
         ),
     ];
 
-    const timelineEntries = state.timeline.length
-        ? state.timeline
-              .slice(0, 10)
-              .map((entry) => `- [${entry.label}] ${entry.detail}`)
-        : ["- Waiting for runtime activity."];
+    const timelineEntries = buildTimelineLines(state);
 
     const containers = [
         buildSection("## Sophia Debug · Request", overviewLines, accentColor),
