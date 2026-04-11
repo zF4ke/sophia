@@ -175,5 +175,64 @@ describe("DiscordChannelCrawlService", () => {
             before: "m-oldest",
         });
     });
+
+    it("falls back to recent fetched messages for previews when lexical matching finds nothing", async () => {
+        const fetchedMessages = new Collection([
+            [
+                "m2",
+                {
+                    id: "m2",
+                    createdTimestamp: 200,
+                    content: "Traveller centraliza exploração e rotas.",
+                    author: { id: "u1", username: "bot" },
+                    guildId: "g1",
+                    channelId: "c1",
+                } as any,
+            ],
+            [
+                "m1",
+                {
+                    id: "m1",
+                    createdTimestamp: 100,
+                    content: "Atlas organiza mapas e referências.",
+                    author: { id: "u2", username: "guide" },
+                    guildId: "g1",
+                    channelId: "c1",
+                } as any,
+            ],
+        ]);
+        const channel = createChannel("c1", "services", {
+            messages: {
+                fetch: vi
+                    .fn()
+                    .mockResolvedValueOnce(fetchedMessages)
+                    .mockResolvedValueOnce(new Collection()),
+            },
+        });
+        const guild = {
+            id: "g1",
+            channels: {
+                cache: new Collection([["c1", channel]]),
+            },
+        } as any;
+
+        const result = await DiscordChannelCrawlService.crawlChannelMessages(
+            guild,
+            "c1",
+            250,
+            "descrição dos serviços"
+        );
+
+        expect(result.previewMessages).toEqual([
+            expect.objectContaining({
+                messageId: "m2",
+                content: "Traveller centraliza exploração e rotas.",
+            }),
+            expect.objectContaining({
+                messageId: "m1",
+                content: "Atlas organiza mapas e referências.",
+            }),
+        ]);
+    });
 });
 

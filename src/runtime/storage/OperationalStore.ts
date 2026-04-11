@@ -256,6 +256,7 @@ export class OperationalStore {
                 arguments_json TEXT NOT NULL,
                 summary TEXT NOT NULL,
                 learned TEXT NOT NULL,
+                output_json TEXT NOT NULL,
                 confidence_improved INTEGER NOT NULL DEFAULT 0,
                 duration_ms INTEGER NOT NULL DEFAULT 0,
                 created_timestamp INTEGER NOT NULL

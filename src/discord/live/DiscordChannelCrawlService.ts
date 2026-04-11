@@ -339,7 +339,7 @@ function buildPreviewMessages(
         .map((term) => normalizeLookupValue(term))
         .filter((term) => term.length > 1);
 
-    const ranked = messages
+    const candidates = messages
         .filter((message) => Boolean(message?.content?.trim()))
         .map((message) => {
             const normalizedContent = normalizeLookupValue(String(message.content || ""));
@@ -351,7 +351,9 @@ function buildPreviewMessages(
                 message,
                 score,
             };
-        })
+        });
+
+    const ranked = candidates
         .filter((item) => item.score > 0 || normalizedTerms.length === 0)
         .sort((left, right) => {
             if (right.score !== left.score) {
@@ -362,7 +364,16 @@ function buildPreviewMessages(
         })
         .slice(0, PREVIEW_MESSAGE_LIMIT);
 
-    return ranked.map(({ message }) => ({
+    const effective = ranked.length
+        ? ranked
+        : candidates
+              .sort(
+                  (left, right) =>
+                      (right.message.createdTimestamp || 0) - (left.message.createdTimestamp || 0)
+              )
+              .slice(0, PREVIEW_MESSAGE_LIMIT);
+
+    return effective.map(({ message }) => ({
         messageId: String(message.id),
         authorId: String(message.author?.id || ""),
         authorName: String(message.author?.username || message.author?.displayName || "unknown"),

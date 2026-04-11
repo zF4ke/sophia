@@ -589,6 +589,10 @@ export class Runtime {
                     state.threadId,
                     3
                 );
+                const recentToolRuns = await DiscordMemoryService.getRecentToolRunsAsync(
+                    state.threadId,
+                    8
+                );
                 const channelMessages = state.channelId
                     ? await DiscordMemoryService.getRecentChannelMessagesAsync(state.channelId, 10)
                     : [];
@@ -597,6 +601,30 @@ export class Runtime {
                     content: msg.content.slice(0, 150),
                     createdTimestamp: msg.createdTimestamp,
                 }));
+                let activeMemberTarget = state.activeMemberTarget;
+                let activeChannelTarget = state.activeChannelTarget;
+                let activeResolvedChannelIds = [...state.activeResolvedChannelIds];
+
+                for (const run of [...recentToolRuns].reverse()) {
+                    try {
+                        const parsedOutput = JSON.parse(run.outputJson) as DiscordToolResult;
+                        const resolvedMember = extractResolvedMemberTarget(parsedOutput);
+                        const resolvedChannel = extractResolvedChannelTarget(parsedOutput);
+                        const retrieval = getRetrievalSummary(parsedOutput);
+
+                        if (resolvedMember) {
+                            activeMemberTarget = resolvedMember;
+                        }
+                        if (resolvedChannel) {
+                            activeChannelTarget = resolvedChannel;
+                            activeResolvedChannelIds = resolvedChannel.resolvedIds;
+                        } else if (retrieval?.searchedChannelIds?.length) {
+                            activeResolvedChannelIds = retrieval.searchedChannelIds;
+                        }
+                    } catch {
+                        continue;
+                    }
+                }
                 const input = this.requestContext.get(state.requestId);
                 await input?.debugSession?.setContextPreview?.({
                     recentChannelMessages: channelContext.map((m) => `${m.authorName}: ${m.content}`),
@@ -606,10 +634,13 @@ export class Runtime {
                 return {
                     recentTurns,
                     channelContext,
+                    activeMemberTarget,
+                    activeChannelTarget,
+                    activeResolvedChannelIds,
                     traceEvents: appendTrace(
                         state,
                         "load_memory",
-                        `Loaded ${recentTurns.length} prior conversation turn(s) and ${channelContext.length} recent channel message(s).`
+                        `Loaded ${recentTurns.length} prior conversation turn(s), ${channelContext.length} recent channel message(s), and ${recentToolRuns.length} recent tool run(s).`
                     ),
                 };
             })
@@ -815,6 +846,7 @@ export class Runtime {
                         JSON.stringify(step.arguments),
                         output.summary,
                         learned,
+                        JSON.stringify(output),
                         record.confidenceImproved,
                         record.durationMs
                     );

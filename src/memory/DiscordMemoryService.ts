@@ -40,6 +40,16 @@ type RuntimeRunRecord = {
     traceEvents: Array<{ label: string; detail: string; timestamp: number }>;
 };
 
+type RecentToolRunRecord = {
+    requestId: string;
+    toolName: string;
+    argumentsJson: string;
+    summary: string;
+    learned: string;
+    outputJson: string;
+    createdTimestamp: number;
+};
+
 const EMPTY_STATS = { messages: 0, chunks: 0, channels: 0 };
 
 function now() {
@@ -905,6 +915,7 @@ export class DiscordMemoryService {
         argumentsJson: string,
         summary: string,
         learned: string,
+        outputJson: string,
         confidenceImproved: boolean,
         durationMs: number
     ): Promise<void> {
@@ -913,10 +924,10 @@ export class DiscordMemoryService {
             sql: `
                 INSERT INTO tool_runs (
                     request_id, guild_id, channel_id, user_id, question, tool_name, arguments_json,
-                    summary, learned, confidence_improved, duration_ms, created_timestamp
+                    summary, learned, output_json, confidence_improved, duration_ms, created_timestamp
                 ) VALUES (
                     :requestId, :guildId, :channelId, :userId, :question, :toolName, :argumentsJson,
-                    :summary, :learned, :confidenceImproved, :durationMs, :createdTimestamp
+                    :summary, :learned, :outputJson, :confidenceImproved, :durationMs, :createdTimestamp
                 )
             `,
             args: {
@@ -929,6 +940,7 @@ export class DiscordMemoryService {
                 argumentsJson,
                 summary,
                 learned,
+                outputJson,
                 confidenceImproved: confidenceImproved ? 1 : 0,
                 durationMs,
                 createdTimestamp: now(),
@@ -1034,6 +1046,46 @@ export class DiscordMemoryService {
         return [];
     }
 
+    public static async getRecentToolRunsAsync(
+        threadId: string,
+        limit = 6
+    ): Promise<RecentToolRunRecord[]> {
+        await this.ensureInitialized();
+        const rows = (
+            await OperationalStore.getClient().execute({
+                sql: `
+                    SELECT
+                        tr.request_id,
+                        tr.tool_name,
+                        tr.arguments_json,
+                        tr.summary,
+                        tr.learned,
+                        tr.output_json,
+                        tr.created_timestamp
+                    FROM tool_runs tr
+                    INNER JOIN runtime_runs rr ON rr.request_id = tr.request_id
+                    WHERE rr.thread_id = :threadId
+                    ORDER BY tr.created_timestamp DESC
+                    LIMIT :limit
+                `,
+                args: {
+                    threadId,
+                    limit: Math.max(1, limit),
+                },
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        return rows.map((row) => ({
+            requestId: String(row.request_id),
+            toolName: String(row.tool_name),
+            argumentsJson: String(row.arguments_json || "{}"),
+            summary: String(row.summary || ""),
+            learned: String(row.learned || ""),
+            outputJson: String(row.output_json || "{}"),
+            createdTimestamp: Number(row.created_timestamp || 0),
+        }));
+    }
+
     public static async recordConversationMessages(options: {
         requestId: string;
         threadId: string;
@@ -1093,4 +1145,3 @@ export class DiscordMemoryService {
         await this.ensureInitialized();
     }
 }
-
