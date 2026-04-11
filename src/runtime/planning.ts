@@ -56,6 +56,23 @@ function extractBareSnowflake(text: string): string | null {
     return text.match(/\b\d{6,25}\b/)?.[0] || null;
 }
 
+function extractNamedGuildTargetReference(text: string): string | null {
+    const targetPatterns = [
+        /(?:^|[\s([{'"`])#([\p{L}\p{N}][\p{L}\p{N}-]{1,63})/u,
+        /(?:^|\b)(?:canal|channel|categoria|category)[\s\u200b-\u200d\u2060]*#?([\p{L}\p{N}][\p{L}\p{N}-]{1,63})/iu,
+    ];
+
+    for (const pattern of targetPatterns) {
+        const match = text.match(pattern);
+        const target = match?.[1]?.trim();
+        if (target) {
+            return target;
+        }
+    }
+
+    return null;
+}
+
 function extractStructuralMemberReference(
     question: string,
     replyContext?: Pick<TurnInput, "replyContext">["replyContext"] | null
@@ -73,6 +90,7 @@ function extractStructuralChannelReference(
 ): string | null {
     return (
         extractChannelMentionId(question) ||
+        extractNamedGuildTargetReference(question) ||
         (replyContext?.content ? extractChannelMentionId(replyContext.content) : null) ||
         null
     );
@@ -119,22 +137,21 @@ function getStructuralCapabilityHints(
 
     const hinted: DiscordToolName[] = [];
     const memberMention = extractMemberMentionId(input.question);
-    const channelMention =
-        extractChannelMentionId(input.question) ||
-        (input.replyContext?.content
-            ? extractChannelMentionId(input.replyContext.content)
-            : null);
+    const channelReference = extractStructuralChannelReference(
+        input.question,
+        input.replyContext
+    );
     const bareSnowflake = extractBareSnowflake(input.question);
 
     if (memberMention) {
         hinted.push("resolve_member_identity");
     }
 
-    if (channelMention) {
+    if (channelReference) {
         hinted.push("resolve_channel_targets");
     }
 
-    if (bareSnowflake && !memberMention && !channelMention) {
+    if (bareSnowflake && !memberMention && !channelReference) {
         hinted.push("resolve_member_identity", "resolve_channel_targets");
     }
 
@@ -752,6 +769,22 @@ function normalizeStepDecision(
     }
 
     if (nextCapability === "retrieve_messages") {
+        if (
+            structuralChannel &&
+            !resolvedChannelIds.length &&
+            state.candidateCapabilities.includes("resolve_channel_targets") &&
+            !hasToolRun(state.toolHistory, "resolve_channel_targets")
+        ) {
+            return normalizeStepDecision(state, {
+                nextCapability: "resolve_channel_targets",
+                arguments: {
+                    targetText: structuralChannel,
+                },
+                reason: "Resolve the referenced channel or category before unscoped retrieval.",
+                learnedExpectation: "Return exact message-channel ids for the named current-guild target.",
+            });
+        }
+
         if (
             resolvedChannelIds.length &&
             state.candidateCapabilities.includes("list_guild_structure") &&

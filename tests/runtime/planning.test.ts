@@ -147,6 +147,28 @@ describe("runtime planning", () => {
         ]);
     });
 
+    it("forces named channel references through scoped channel research", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            mode: "conversation",
+            reason: "Handle it directly.",
+            goal: "Answer directly.",
+            successCriteria: "Reply casually.",
+            candidateCapabilities: [],
+            confidence: "confident",
+        } as any);
+
+        const plan = await planWithModel(
+            createInput({ question: "o que tem nesse canal who-riddle?" })
+        );
+
+        expect(plan.mode).toBe("research");
+        expect(plan.candidateCapabilities).toEqual([
+            "resolve_channel_targets",
+            "retrieve_messages",
+            "list_guild_structure",
+        ]);
+    });
+
     it("falls back to the generic current-guild plan when the planner model fails", async () => {
         vi.spyOn(ModelGateway, "generateJson").mockRejectedValue(new Error("boom"));
 
@@ -205,6 +227,31 @@ describe("runtime planning", () => {
         expect(step).toEqual({
             nextCapability: "resolve_channel_targets",
             arguments: { targetText: "123456789012345678" },
+            reason: "Resolve the exact channel or category reference before broader retrieval.",
+            learnedExpectation:
+                "Return exact message-channel ids for the current guild target.",
+        });
+    });
+
+    it("generic step fallback resolves named channel references before retrieval", () => {
+        const step = fallbackStepDecision({
+            question: "o que tem nesse canal who-riddle?",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
+            candidateCapabilities: [
+                "resolve_channel_targets",
+                "retrieve_messages",
+                "list_guild_structure",
+            ],
+            toolHistory: [],
+        });
+
+        expect(step).toEqual({
+            nextCapability: "resolve_channel_targets",
+            arguments: { targetText: "who-riddle" },
             reason: "Resolve the exact channel or category reference before broader retrieval.",
             learnedExpectation:
                 "Return exact message-channel ids for the current guild target.",
@@ -337,6 +384,41 @@ describe("runtime planning", () => {
         expect(step.arguments).toMatchObject({
             query: "que serviços estão disponíveis nesse servidor?",
             channelIds: "c-bots,c-logs",
+        });
+    });
+
+    it("normalizes model-selected retrieve_messages into channel resolution for named channel questions", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            nextCapability: "retrieve_messages",
+            arguments: {},
+            reason: "Read the messages directly.",
+            learnedExpectation: "Find the relevant channel messages.",
+        } as any);
+
+        const step = await planNextStep({
+            question: "o que tem nesse canal who-riddle?",
+            goal: "Explain what is in who-riddle.",
+            successCriteria: "Use grounded channel evidence.",
+            confidence: "best_effort",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
+            candidateCapabilities: [
+                "resolve_channel_targets",
+                "retrieve_messages",
+                "list_guild_structure",
+            ],
+            toolHistory: [],
+        });
+
+        expect(step).toEqual({
+            nextCapability: "resolve_channel_targets",
+            arguments: { targetText: "who-riddle" },
+            reason: "Resolve the referenced channel or category before unscoped retrieval.",
+            learnedExpectation:
+                "Return exact message-channel ids for the named current-guild target.",
         });
     });
 
