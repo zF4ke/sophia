@@ -23,11 +23,13 @@ These all route to the same conversation runtime.
 
 - `/nth`
 - `/index`
-- `/cache`
 - `/debug`
 - `/access`
 
-`/index status` exposes current-guild completeness data such as readable live channels/categories, cached-only remembered channels, and indexed channel counts.
+`/index status` is the single status surface for local retrieval state. It exposes:
+- local message/index status
+- current-guild completeness data such as readable live channels/categories and cached-only remembered channels
+- runtime storage status
 
 ## Retired Surfaces
 

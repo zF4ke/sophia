@@ -43,7 +43,7 @@ The cache is used to support Discord retrieval and runtime continuity. It is not
 ## Commands
 
 - `/index` manages backfill and repair
-- `/cache` shows runtime cache and storage status
+- `/index status` shows local retrieval memory, guild completeness, and runtime storage status
 - `/nth` reads indexed historical messages
 
 ## Reset Semantics

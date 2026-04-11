@@ -21,11 +21,12 @@ describe("commandLoader", () => {
 
             expect(client.commands.has("talk")).toBe(true);
             expect(client.commands.has("find")).toBe(true);
-            expect(client.commands.has("cache")).toBe(true);
+            expect(client.commands.has("index")).toBe(true);
             expect(setCommands).toHaveBeenCalledWith(
                 expect.arrayContaining([
                     expect.objectContaining({ name: "talk" }),
                     expect.objectContaining({ name: "find" }),
+                    expect.objectContaining({ name: "index" }),
                 ])
             );
             consoleSpy.mockRestore();

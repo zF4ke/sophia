@@ -15,7 +15,6 @@ Specialized workflow:
 Operator surfaces:
 - `/nth`
 - `/index`
-- `/cache`
 - `/debug`
 - `/access`
 
@@ -32,6 +31,8 @@ When a turn does depend on Discord, she uses a cache-first retrieval pipeline:
 4. retry retrieval on the enriched cache
 
 That local storage is a Discord retrieval cache plus runtime state. It is not a separate memory-search product.
+
+Runtime budget defaults such as tool-call limits, research-pass count, and latency budget are documented in [.env.example](c:/Users/yFake/OneDrive/Ambiente%20de%20Trabalho/www/Projects/Sophia3/.env.example).
 
 ## Conversation Continuity
 

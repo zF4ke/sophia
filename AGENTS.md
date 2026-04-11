@@ -122,7 +122,6 @@ Core supported commands and entrypoints:
 - `/debug`
 - `/index`
 - `/access`
-- `/cache`
 
 Interaction entrypoint:
 

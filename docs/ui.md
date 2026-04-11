@@ -32,7 +32,6 @@ These rules keep Sophia’s Discord responses clear, human-facing, and easy to s
 ## Commands That Should Follow This
 
 - `/debug`
-- `/cache`
 - `/index status`
 - future operator/status commands
 
