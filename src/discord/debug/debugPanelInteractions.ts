@@ -13,6 +13,29 @@ import {
 } from "@/discord/debug/renderDebugTrace";
 import { SecurityService } from "@/security/SecurityService";
 
+function isUnknownInteractionError(error: unknown): boolean {
+    return Boolean(
+        error &&
+            typeof error === "object" &&
+            "code" in error &&
+            (error as { code?: unknown }).code === 10062
+    );
+}
+
+async function safeDeferUpdate(interaction: ButtonInteraction): Promise<boolean> {
+    try {
+        if (!interaction.deferred && !interaction.replied) {
+            await interaction.deferUpdate();
+        }
+        return true;
+    } catch (error) {
+        if (isUnknownInteractionError(error)) {
+            return false;
+        }
+        throw error;
+    }
+}
+
 export async function handleDebugPanelInteraction(
     interaction: ButtonInteraction
 ): Promise<boolean> {
@@ -30,19 +53,36 @@ export async function handleDebugPanelInteraction(
     await SecurityService.initialize();
 
     if (!SecurityService.isAdmin(interaction.user.id)) {
-        await interaction.reply({
-            content: "❌ Você não tem permissão para usar este painel.",
-        });
+        try {
+            await interaction.reply({
+                content: "❌ Você não tem permissão para usar este painel.",
+            });
+        } catch (error) {
+            if (!isUnknownInteractionError(error)) {
+                throw error;
+            }
+        }
         return true;
     }
 
     if (toggledSection || traceExpandAll || traceCollapseAll) {
         const session = DebugSession.getByMessageId(interaction.message.id);
         if (!session) {
-            await interaction.reply({
-                content: "⚠️ Esta sessão de debug expirou e não pode mais ser recolhida.",
-                flags: MessageFlags.Ephemeral,
-            });
+            try {
+                await interaction.reply({
+                    content: "⚠️ Esta sessão de debug expirou e não pode mais ser recolhida.",
+                    flags: MessageFlags.Ephemeral,
+                });
+            } catch (error) {
+                if (!isUnknownInteractionError(error)) {
+                    throw error;
+                }
+            }
+            return true;
+        }
+
+        const acknowledged = await safeDeferUpdate(interaction);
+        if (!acknowledged) {
             return true;
         }
 
@@ -54,7 +94,6 @@ export async function handleDebugPanelInteraction(
             await session.setAllSectionsCollapsed(true);
         }
 
-        await interaction.deferUpdate();
         return true;
     }
 

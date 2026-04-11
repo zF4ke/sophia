@@ -12,6 +12,13 @@ import type { RetrievalSummary, RuntimeMode, StopReason, TurnTrigger } from "@/r
 const MAX_EVENTS = 8;
 const MAX_PREVIEW_LENGTH = 140;
 const MAX_TIMELINE = 25;
+const DEFAULT_COLLAPSED_SECTIONS: Record<DebugSectionKey, boolean> = {
+    request: false,
+    conversation: false,
+    retrieval: false,
+    context: false,
+    timeline: false,
+};
 
 function normalizePreview(question: string): string {
     const compact = question.replace(/\s+/g, " ").trim();
@@ -53,6 +60,9 @@ function inferTone(event: string): DebugTimelineEntry["tone"] {
 
 export class DebugSession implements DebugSessionReporter {
     private static readonly sessions = new Map<string, DebugSession>();
+    private static defaultCollapsedSections: Record<DebugSectionKey, boolean> = {
+        ...DEFAULT_COLLAPSED_SECTIONS,
+    };
     private readonly state: DebugTraceState;
     private updateQueue: Promise<void> = Promise.resolve();
 
@@ -89,13 +99,7 @@ export class DebugSession implements DebugSessionReporter {
                     timestamp: Date.now(),
                 },
             ],
-            collapsedSections: {
-                request: false,
-                conversation: false,
-                retrieval: false,
-                context: false,
-                timeline: false,
-            },
+            collapsedSections: DebugSession.getDefaultCollapsedSections(),
             startedAt: Date.now(),
             failureMessage: null,
         };
@@ -106,12 +110,23 @@ export class DebugSession implements DebugSessionReporter {
         return this.sessions.get(messageId) || null;
     }
 
+    public static getDefaultCollapsedSections(): Record<DebugSectionKey, boolean> {
+        return { ...this.defaultCollapsedSections };
+    }
+
+    private static persistDefaultCollapsedSections(
+        collapsedSections: Record<DebugSectionKey, boolean>
+    ): void {
+        this.defaultCollapsedSections = { ...collapsedSections };
+    }
+
     public async toggleSection(section: DebugSectionKey): Promise<void> {
         await this.mutate(
             "Toggling debug section",
             `Toggled ${section} section`,
             (state) => {
                 state.collapsedSections[section] = !state.collapsedSections[section];
+                DebugSession.persistDefaultCollapsedSections(state.collapsedSections);
             }
         );
     }
@@ -124,6 +139,7 @@ export class DebugSession implements DebugSessionReporter {
                 for (const key of Object.keys(state.collapsedSections) as DebugSectionKey[]) {
                     state.collapsedSections[key] = collapsed;
                 }
+                DebugSession.persistDefaultCollapsedSections(state.collapsedSections);
             }
         );
     }
