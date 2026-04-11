@@ -239,7 +239,7 @@ export interface RuntimeDebugSession {
         decisionMode?: string,
         answerMode?: GroundedAnswerMode
     ): Promise<void>;
-    setStopReason?(reason: StopReason): Promise<void>;
+    setStopReason?(reason: StopReason, detail?: string | null): Promise<void>;
     setConfidence?(confidence: GroundedAnswerMode): Promise<void>;
     setWebStatus?(status: WebStatus): Promise<void>;
     setContextPreview?(preview: {

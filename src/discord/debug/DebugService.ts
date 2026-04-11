@@ -25,6 +25,7 @@ function buildInitialState(question: string): DebugTraceState {
         retrievalSummary: null,
         groundedAnswerMode: null,
         stopReason: null,
+        stopDetail: null,
         checkpointThreadId: null,
         conversationContext: {
             threadId: null,

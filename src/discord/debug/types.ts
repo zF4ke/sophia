@@ -41,6 +41,7 @@ export interface DebugTraceState {
     retrievalSummary: RetrievalSummary | null;
     groundedAnswerMode: GroundedAnswerMode | null;
     stopReason: StopReason | null;
+    stopDetail: string | null;
     checkpointThreadId: string | null;
     conversationContext: {
         threadId: string | null;

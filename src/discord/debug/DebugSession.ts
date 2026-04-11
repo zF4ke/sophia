@@ -81,6 +81,7 @@ export class DebugSession implements DebugSessionReporter {
             retrievalSummary: null,
             groundedAnswerMode: null,
             stopReason: null,
+            stopDetail: null,
             checkpointThreadId: null,
             conversationContext: {
                 threadId: null,
@@ -272,10 +273,15 @@ export class DebugSession implements DebugSessionReporter {
         );
     }
 
-    public async setStopReason(reason: StopReason): Promise<void> {
-        await this.mutate("Evaluating stop condition", `Stop reason: ${reason}`, (state) => {
-            state.stopReason = reason;
-        });
+    public async setStopReason(reason: StopReason, detail?: string | null): Promise<void> {
+        await this.mutate(
+            "Evaluating stop condition",
+            detail ? `Stop reason: ${reason} (${detail})` : `Stop reason: ${reason}`,
+            (state) => {
+                state.stopReason = reason;
+                state.stopDetail = detail || null;
+            }
+        );
     }
 
     public async setConfidence(confidence: GroundedAnswerMode): Promise<void> {

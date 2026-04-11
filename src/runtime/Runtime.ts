@@ -1121,7 +1121,10 @@ export class Runtime {
                 "judge",
                 result.confidence
             );
-            await input.debugSession?.setStopReason?.(result.stopReason || "direct_answer");
+            await input.debugSession?.setStopReason?.(
+                result.stopReason || "direct_answer",
+                deriveStopDetail(result.stopReason || "direct_answer", result.traceEvents || [])
+            );
             await input.debugSession?.setConfidence?.(result.confidence);
             for (const event of result.traceEvents.slice(-8)) {
                 await input.debugSession?.setTraceEvent?.(event.label, event.detail);
@@ -1164,6 +1167,49 @@ export class Runtime {
             this.requestContext.delete(requestId);
         }
     }
+}
+
+function deriveStopDetail(
+    stopReason: StopReason | null | undefined,
+    traceEvents: Array<{ label: string; detail: string }>
+): string | null {
+    if (!stopReason) {
+        return null;
+    }
+
+    const findLast = (predicate: (event: { label: string; detail: string }) => boolean) => {
+        for (let index = traceEvents.length - 1; index >= 0; index -= 1) {
+            const event = traceEvents[index];
+            if (predicate(event)) {
+                return event.detail;
+            }
+        }
+        return null;
+    };
+
+    if (stopReason === "budget_exhausted") {
+        return findLast((event) => event.label === "stop");
+    }
+
+    if (stopReason === "confidence_plateau") {
+        return findLast(
+            (event) => event.label === "step" && event.detail.startsWith("Blocked repeated call ")
+        );
+    }
+
+    if (stopReason === "no_useful_next_step") {
+        return findLast((event) => event.label === "step");
+    }
+
+    if (stopReason === "evidence_sufficient" || stopReason === "insufficient_evidence") {
+        return findLast((event) => event.label === "judge_evidence");
+    }
+
+    if (stopReason === "direct_answer") {
+        return "Answered directly without entering the research loop.";
+    }
+
+    return null;
 }
 
 function collectCitations(toolHistory: ToolInvocationRecord[]) {

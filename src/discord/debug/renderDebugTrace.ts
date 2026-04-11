@@ -253,6 +253,11 @@ export function renderDebugTrace(
     ];
 
     overviewLines.splice(4, 0, formatLabelValue("Stop Condition", state.stopReason ?? "pending"));
+    overviewLines.splice(
+        5,
+        0,
+        formatLabelValue("Stop Detail", trimPreview(state.stopDetail, 180))
+    );
 
     if (!state.collapsedSections.request) {
         containers.push(

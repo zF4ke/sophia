@@ -31,6 +31,7 @@ describe("renderDebugTrace", () => {
             },
             groundedAnswerMode: "best_effort",
             stopReason: "evidence_sufficient",
+            stopDetail: "Scoped message evidence is available.",
             checkpointThreadId: "g1:m-root:reply-chain",
             conversationContext: {
                 threadId: "g1:m-root:reply-chain",
@@ -108,6 +109,7 @@ describe("renderDebugTrace", () => {
             retrievalSummary: null,
             groundedAnswerMode: null,
             stopReason: null,
+            stopDetail: null,
             checkpointThreadId: null,
             conversationContext: {
                 threadId: null,
@@ -161,6 +163,7 @@ describe("renderDebugTrace", () => {
             retrievalSummary: null,
             groundedAnswerMode: "best_effort",
             stopReason: "evidence_sufficient",
+            stopDetail: "Scoped message evidence is available.",
             checkpointThreadId: "g1:c1:channel",
             conversationContext: {
                 threadId: "g1:c1:channel",
@@ -225,6 +228,7 @@ describe("renderDebugTrace", () => {
             retrievalSummary: null,
             groundedAnswerMode: "confident",
             stopReason: "direct_answer",
+            stopDetail: "Answered directly without entering the research loop.",
             checkpointThreadId: "g1:c1:channel",
             conversationContext: {
                 threadId: "g1:c1:channel",
@@ -280,6 +284,7 @@ describe("renderDebugTrace", () => {
             },
             groundedAnswerMode: "best_effort",
             stopReason: "budget_exhausted",
+            stopDetail: "Reached the latency budget.",
             checkpointThreadId: "g1:c1:channel",
             conversationContext: {
                 threadId: "g1:c1:channel",
@@ -312,6 +317,8 @@ describe("renderDebugTrace", () => {
         const rendered = JSON.stringify(json);
         expect(rendered).toContain("Stop Condition");
         expect(rendered).toContain("budget_exhausted");
+        expect(rendered).toContain("Stop Detail");
+        expect(rendered).toContain("Reached the latency budget.");
         expect(rendered).not.toContain("Sophia Debug · Timeline");
         expect(rendered).toContain("+1 more");
     });
