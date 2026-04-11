@@ -353,6 +353,99 @@ function extractLatestResolvedChannelTarget(toolHistory: ToolInvocationRecord[])
     return null;
 }
 
+function extractAmbiguousMemberCandidate(toolHistory: ToolInvocationRecord[]): {
+    displayName: string;
+    identifiers: string[];
+} | null {
+    for (let index = toolHistory.length - 1; index >= 0; index -= 1) {
+        const item = toolHistory[index];
+        if (item.tool !== "list_members") {
+            continue;
+        }
+
+        const data = item.output.data as Record<string, unknown> | null;
+        const members = data && Array.isArray(data.members) ? data.members : [];
+        if (!members.length) {
+            continue;
+        }
+
+        const byName = new Map<string, Set<string>>();
+        const displayByName = new Map<string, string>();
+        const identifiersByName = new Map<string, string[]>();
+        for (const raw of members) {
+            if (!raw || typeof raw !== "object") {
+                continue;
+            }
+            const member = raw as Record<string, unknown>;
+            const displayName =
+                typeof member.displayName === "string" && member.displayName.trim()
+                    ? member.displayName.trim()
+                    : typeof member.username === "string" && member.username.trim()
+                      ? member.username.trim()
+                      : "";
+            if (!displayName) {
+                continue;
+            }
+            const key = normalize(displayName);
+            if (!key) {
+                continue;
+            }
+
+            const id =
+                member.id == null
+                    ? member.userId == null
+                        ? null
+                        : String(member.userId)
+                    : String(member.id);
+            const username =
+                typeof member.username === "string" && member.username.trim()
+                    ? member.username.trim()
+                    : null;
+            const distinctMarker = id || username || displayName;
+            const bestIdentifier = username || id || displayName;
+
+            if (!byName.has(key)) {
+                byName.set(key, new Set<string>());
+                displayByName.set(key, displayName);
+                identifiersByName.set(key, []);
+            }
+            byName.get(key)?.add(distinctMarker);
+            identifiersByName.get(key)?.push(bestIdentifier);
+        }
+
+        for (const [key, variants] of byName.entries()) {
+            if (variants.size > 1) {
+                return {
+                    displayName: displayByName.get(key) || key,
+                    identifiers: identifiersByName.get(key) || [],
+                };
+            }
+        }
+    }
+
+    return null;
+}
+
+function extractProfiledMemberIdentifiers(toolHistory: ToolInvocationRecord[]): Set<string> {
+    const profiled = new Set<string>();
+    for (const item of toolHistory) {
+        if (item.tool !== "get_member_profile") {
+            continue;
+        }
+        const data = item.output.data as Record<string, unknown> | null;
+        if (!data || typeof data !== "object") {
+            continue;
+        }
+        if (typeof data.username === "string" && data.username.trim()) {
+            profiled.add(normalize(data.username.trim()));
+        }
+        if (data.id != null) {
+            profiled.add(String(data.id));
+        }
+    }
+    return profiled;
+}
+
 function hasToolRun(toolHistory: ToolInvocationRecord[], tool: DiscordToolName): boolean {
     return toolHistory.some((item) => item.tool === tool);
 }
@@ -784,10 +877,14 @@ function normalizeStepDecision(
     >,
     step: StepDecision
 ): StepDecision {
+    const ambiguousMemberCandidate = extractAmbiguousMemberCandidate(state.toolHistory);
     const nextCapability =
         step.nextCapability &&
         VALID_TOOL_NAMES.has(step.nextCapability) &&
-        state.candidateCapabilities.includes(step.nextCapability)
+        (
+            state.candidateCapabilities.includes(step.nextCapability) ||
+            (step.nextCapability === "get_member_profile" && ambiguousMemberCandidate != null)
+        )
             ? step.nextCapability
             : null;
 
@@ -1018,13 +1115,21 @@ function normalizeStepDecision(
     }
 
     if (nextCapability === "get_member_profile") {
+        const profiled = ambiguousMemberCandidate
+            ? extractProfiledMemberIdentifiers(state.toolHistory)
+            : null;
+        const nextUnprofiled = ambiguousMemberCandidate?.identifiers.find(
+            (id) => profiled && !profiled.has(normalize(id)) && !profiled.has(id)
+        );
         return {
             nextCapability,
             arguments: {
                 nameOrId:
                     typeof argumentsObject.nameOrId === "string" && argumentsObject.nameOrId.trim()
                         ? argumentsObject.nameOrId.trim()
-                        : resolvedMember?.resolvedId ||
+                        : nextUnprofiled ||
+                          ambiguousMemberCandidate?.displayName ||
+                          resolvedMember?.resolvedId ||
                           activeMember?.resolvedId ||
                           structuralMember ||
                           state.question,
@@ -1136,6 +1241,7 @@ export function fallbackStepDecision(
                 state.turnIntent?.afterTimestamp != null ||
                 structuralMember
         );
+    const ambiguousMemberCandidate = extractAmbiguousMemberCandidate(state.toolHistory);
 
     if (
         activeRetrievalSession?.continuationAvailable &&
@@ -1240,6 +1346,23 @@ export function fallbackStepDecision(
             reason: "Inspect the matched category or channel structure before summarizing it.",
             learnedExpectation: "Return the matched structure plus visible child channels.",
         });
+    }
+
+    if (ambiguousMemberCandidate) {
+        const profiled = extractProfiledMemberIdentifiers(state.toolHistory);
+        const unprofiled = ambiguousMemberCandidate.identifiers.find(
+            (id) => !profiled.has(normalize(id)) && !profiled.has(id)
+        );
+        if (unprofiled) {
+            return normalizeStepDecision(state, {
+                nextCapability: "get_member_profile",
+                arguments: { nameOrId: unprofiled },
+                reason:
+                    "Multiple current-guild members share the same visible name; fetch profile details for each to disambiguate safely.",
+                learnedExpectation:
+                    "Return a distinguishing profile for the ambiguous member so profiles can be compared.",
+            });
+        }
     }
 
     const nextCapability =

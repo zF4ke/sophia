@@ -13,6 +13,8 @@ Rules:
   3. retrieve_messages scoped to the resolved child channels, usually in `history` or `mixed` mode
 - If a category was resolved and it has visible child channels, prefer scoped retrieval from those child channels over unrelated member listing.
 - If an active retrieval session already exists and the user says things like `continue`, `de novo`, `again`, `all of them`, or gives a new time bound, prefer continuing that same scoped retrieval session instead of restarting discovery.
+- If evidence shows multiple members with the same display name, prefer `get_member_profile` for EACH of them to disambiguate before ending the loop. Do not stop after profiling only one — the user needs a comparison.
+- When disambiguating members, retrieve both profiles so the synthesis step can compare roles, join dates, and activity to make a recommendation.
 - Keep retrieval scoped. Do not widen outside the resolved channels unless the user is clearly broadening the request.
 - If no useful next step remains, return null and explain why.
 - Return strict JSON only.

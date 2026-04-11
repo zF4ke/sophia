@@ -647,6 +647,88 @@ describe("runtime planning", () => {
         expect(step.arguments).not.toHaveProperty("excludedMessageIds");
     });
 
+    it("escalates to get_member_profile when duplicate display names remain ambiguous", () => {
+        const step = fallbackStepDecision({
+            question: "qual glonos e o verdadeiro?",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: {
+                query: "Glonos",
+                resolvedId: "u-subjectless",
+                displayName: "Glonos",
+                username: "subjectless",
+                globalName: null,
+                nickname: null,
+                isBot: false,
+                isCurrentGuildMember: true,
+                source: "live_search",
+                confidence: "high",
+                roles: [],
+            },
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
+            turnIntent: NULL_INTENT,
+            activeRetrievalSession: null,
+            candidateCapabilities: ["resolve_member_identity", "list_members"],
+            toolHistory: [
+                {
+                    tool: "resolve_member_identity",
+                    arguments: { query: "Glonos" },
+                    summary: "Glonos (@subjectless) resolved from the current guild.",
+                    learned: "Glonos (@subjectless)",
+                    confidenceImproved: true,
+                    output: {
+                        tool: "resolve_member_identity",
+                        summary: "resolved",
+                        data: {
+                            query: "Glonos",
+                            resolvedId: "u-subjectless",
+                            displayName: "Glonos",
+                            username: "subjectless",
+                            isCurrentGuildMember: true,
+                        },
+                    },
+                    durationMs: 5,
+                },
+                {
+                    tool: "list_members",
+                    arguments: { filters: "Glonos" },
+                    summary: "2 members listed in join order.",
+                    learned: "Glonos (@subjectless) | Glonos (@glonos)",
+                    confidenceImproved: false,
+                    output: {
+                        tool: "list_members",
+                        summary: "2 members listed in join order.",
+                        data: {
+                            members: [
+                                {
+                                    id: "u-subjectless",
+                                    username: "subjectless",
+                                    displayName: "Glonos",
+                                },
+                                {
+                                    id: "u-glonos",
+                                    username: "glonos",
+                                    displayName: "Glonos",
+                                },
+                            ],
+                        },
+                    },
+                    durationMs: 5,
+                },
+            ],
+        });
+
+        expect(step).toEqual({
+            nextCapability: "get_member_profile",
+            arguments: { nameOrId: "subjectless" },
+            reason:
+                "Multiple current-guild members share the same visible name; fetch profile details for each to disambiguate safely.",
+            learnedExpectation:
+                "Return a distinguishing profile for the ambiguous member so profiles can be compared.",
+        });
+    });
+
     it("resets the active retrieval session when the user changes scope mid-session", () => {
         const step = fallbackStepDecision({
             question: "continue in <#123456789012345678>",

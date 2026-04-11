@@ -97,4 +97,39 @@ describe("conversation recovery", () => {
         expect(answer).toContain("Fiquei sem tempo de pesquisa");
         expect(answer).not.toContain("Ainda nao encontrei o que preciso");
     });
+
+    it("does not hardcode disambiguation — lets model handle ambiguous members naturally", () => {
+        const answer = buildConversationalRecovery({
+            question: "qual glonos e o verdadeiro?",
+            confidence: "insufficient",
+            evidence: [
+                {
+                    tool: "list_members",
+                    summary: "2 members listed",
+                    content: "Glonos (@subjectless)",
+                    evidenceRole: "live_evidence",
+                    strength: "metadata",
+                    sourceOrigin: "none",
+                    authorId: "u-subjectless",
+                    authorName: "Glonos",
+                },
+                {
+                    tool: "list_members",
+                    summary: "2 members listed",
+                    content: "Glonos (@glonos)",
+                    evidenceRole: "live_evidence",
+                    strength: "metadata",
+                    sourceOrigin: "none",
+                    authorId: "u-glonos",
+                    authorName: "Glonos",
+                },
+            ],
+            stopReason: "no_useful_next_step",
+        });
+
+        expect(answer).toContain("Glonos");
+        expect(answer).toContain("mentioned");
+        expect(answer).not.toContain("Encontrei mais de um perfil com esse nome");
+        expect(answer).not.toContain("qual deles");
+    });
 });

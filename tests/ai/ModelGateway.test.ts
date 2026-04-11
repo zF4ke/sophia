@@ -25,6 +25,10 @@ vi.mock("@/app/AppConfig", () => ({
             maxResearchPasses: 2,
             maxRepeatedCallSignature: 1,
             maxLatencyBudgetMs: 15000,
+            maxPriorTurns: 5,
+            maxChannelMessages: 15,
+            maxToolRunsContext: 12,
+            maxEvidenceSlice: 32,
         },
     }),
 }));

@@ -215,6 +215,10 @@ export interface GraphState {
         maxResearchPasses: number;
         maxRepeatedCallSignature: number;
         maxLatencyBudgetMs: number;
+        maxPriorTurns: number;
+        maxChannelMessages: number;
+        maxToolRunsContext: number;
+        maxEvidenceSlice: number;
     };
 }
 

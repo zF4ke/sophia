@@ -759,14 +759,14 @@ export class Runtime {
             .addNode("load_memory", async (state: RuntimeState) => {
                 const recentTurns = await DiscordMemoryService.getRecentRuntimeRunsAsync(
                     state.threadId,
-                    3
+                    state.constraints.maxPriorTurns
                 );
                 const recentToolRuns = await DiscordMemoryService.getRecentToolRunsAsync(
                     state.threadId,
-                    8
+                    state.constraints.maxToolRunsContext
                 );
                 const channelMessages = state.channelId
-                    ? await DiscordMemoryService.getRecentChannelMessagesAsync(state.channelId, 10)
+                    ? await DiscordMemoryService.getRecentChannelMessagesAsync(state.channelId, state.constraints.maxChannelMessages)
                     : [];
                 const channelContext = channelMessages.map((msg) => ({
                     authorName: msg.authorName,
@@ -824,7 +824,7 @@ export class Runtime {
                         continue;
                     }
                 }
-                const evidence = reconstructedEvidence.slice(-24);
+                const evidence = reconstructedEvidence.slice(-state.constraints.maxEvidenceSlice);
                 const input = this.requestContext.get(state.requestId);
                 await input?.debugSession?.setContextPreview?.({
                     recentChannelMessages: channelContext.map((m) => `${m.authorName}: ${m.content}`),
@@ -1175,13 +1175,14 @@ export class Runtime {
                 const shouldForceInsufficientGuard =
                     state.mode === "research" &&
                     state.confidence === "insufficient" &&
-                    evidenceCounts.strongMessageEvidenceCount === 0;
+                    evidenceCounts.strongMessageEvidenceCount === 0 &&
+                    evidenceCounts.liveEvidenceCount < 2;
 
                 if (shouldForceInsufficientGuard) {
                     const responseDraft = buildConversationalRecovery({
                         question: state.question,
                         confidence: "insufficient",
-                        evidence: [],
+                        evidence: state.evidence,
                         replyContext: state.replyContext,
                         priorTurns: state.recentTurns,
                         stopReason: state.stopReason,
@@ -1372,6 +1373,10 @@ export class Runtime {
                 maxResearchPasses: config.runtime.maxResearchPasses,
                 maxRepeatedCallSignature: config.runtime.maxRepeatedCallSignature,
                 maxLatencyBudgetMs: config.runtime.maxLatencyBudgetMs,
+                maxPriorTurns: config.runtime.maxPriorTurns,
+                maxChannelMessages: config.runtime.maxChannelMessages,
+                maxToolRunsContext: config.runtime.maxToolRunsContext,
+                maxEvidenceSlice: config.runtime.maxEvidenceSlice,
             },
         };
 

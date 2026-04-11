@@ -59,6 +59,10 @@ export function getAppConfig(): AppConfig {
                 process.env.RUNTIME_MAX_REPEATED_CALL_SIGNATURE || 1
             ),
             maxLatencyBudgetMs: Number(process.env.RUNTIME_MAX_LATENCY_BUDGET_MS || 15000),
+            maxPriorTurns: Number(process.env.RUNTIME_MAX_PRIOR_TURNS || 5),
+            maxChannelMessages: Number(process.env.RUNTIME_MAX_CHANNEL_MESSAGES || 15),
+            maxToolRunsContext: Number(process.env.RUNTIME_MAX_TOOL_RUNS_CONTEXT || 12),
+            maxEvidenceSlice: Number(process.env.RUNTIME_MAX_EVIDENCE_SLICE || 32),
         },
     };
 }
