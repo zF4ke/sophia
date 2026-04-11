@@ -12,7 +12,26 @@ describe("CapabilityRegistry", () => {
     it("executes retrieve_messages through the unified retrieval pipeline", async () => {
         vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
             query: "what did alice say in reflexoes",
-            results: [
+            mode: "mixed",
+            historyMessages: [
+                {
+                    messageId: "m1",
+                    channelId: "c-reflexoes",
+                    channelName: "reflexoes",
+                    guildId: "g1",
+                    authorId: "u-alice",
+                    authorName: "Alice",
+                    content: "The image was more symbolic than literal.",
+                    createdTimestamp: 1700000000000,
+                    jumpLink: "https://discord.com/channels/g1/c-reflexoes/m1",
+                    lexicalScore: 3,
+                    semanticScore: 0,
+                    recencyScore: 0,
+                    totalScore: 3,
+                },
+            ],
+            semanticMatches: [],
+            combinedResults: [
                 {
                     messageId: "m1",
                     channelId: "c-reflexoes",
@@ -37,9 +56,26 @@ describe("CapabilityRegistry", () => {
             evidenceSufficient: true,
             strongResultCount: 1,
             weakResultCount: 0,
+            historyMessageCount: 1,
+            semanticMatchCount: 0,
             sourceOrigin: "cache",
             targetAuthorId: "u-alice",
             targetChannelIds: ["c-reflexoes"],
+            continuation: {
+                perChannelOldestMessageId: { "c-reflexoes": "m1" },
+                continuationAvailable: true,
+            },
+            exhaustion: {
+                exhaustedChannelIds: [],
+                exhausted: false,
+            },
+            accumulatedWindow: {
+                beforeTimestamp: null,
+                afterTimestamp: null,
+            },
+            beforeTimestamp: null,
+            afterTimestamp: null,
+            excludedMessageIds: [],
         });
 
         const capability = CapabilityRegistry.get("retrieve_messages");
@@ -64,7 +100,7 @@ describe("CapabilityRegistry", () => {
             })
         );
         expect(result.tool).toBe("retrieve_messages");
-        expect(result.summary).toContain("partial message evidence");
+        expect(result.summary).toContain("partial history evidence");
         expect(result.data).toMatchObject({
             targetAuthorId: "u-alice",
             targetChannelIds: ["c-reflexoes"],

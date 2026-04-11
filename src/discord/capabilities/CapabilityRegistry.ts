@@ -4,7 +4,7 @@ import { DiscordGuildDiscoveryService } from "@/discord/live/DiscordGuildDiscove
 import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DISCORD_TOOL_EVIDENCE_ROLES, type DiscordToolName } from "@/shared/discordTools";
-import type { DiscordToolResult } from "@/shared/appTypes";
+import type { DiscordToolResult, RetrievalMode } from "@/shared/appTypes";
 import type { CapabilityManifest } from "@/runtime/contracts";
 
 type CapabilityContext = {
@@ -37,20 +37,28 @@ const chunkResultSchema = z.object({
     totalScore: z.number(),
 });
 
+const retrievalModeSchema = z.enum(["history", "semantic", "mixed"]);
+
 const capabilities: RuntimeCapability[] = [
     {
         id: "retrieve_messages",
         kind: "tool",
         description:
-            "Search cached Discord messages first, then automatically fetch live channel history if the cache is insufficient.",
+            "Read scoped Discord channel history first, add semantic matches from the same scope, and continue with live history fetches when needed.",
         inputSchema: z.object({
             query: z.string(),
             limit: z.number().int().positive().optional(),
             channelIds: z.string().optional(),
             authorId: z.string().optional(),
+            beforeTimestamp: z.number().optional(),
+            afterTimestamp: z.number().optional(),
+            mode: retrievalModeSchema.optional(),
+            cursor: z.string().optional(),
+            excludedMessageIds: z.string().optional(),
         }),
         outputSchema: z.object({
             query: z.string(),
+            mode: retrievalModeSchema,
             cacheHit: z.boolean(),
             liveEscalated: z.boolean(),
             searchedChannelIds: z.array(z.string()),
@@ -59,10 +67,29 @@ const capabilities: RuntimeCapability[] = [
             evidenceSufficient: z.boolean(),
             strongResultCount: z.number(),
             weakResultCount: z.number(),
+            historyMessageCount: z.number(),
+            semanticMatchCount: z.number(),
             sourceOrigin: z.enum(["none", "cache", "live_refresh", "cache_after_refresh"]),
             targetAuthorId: z.string().nullable(),
             targetChannelIds: z.array(z.string()),
-            results: z.array(chunkResultSchema),
+            historyMessages: z.array(chunkResultSchema),
+            semanticMatches: z.array(chunkResultSchema),
+            combinedResults: z.array(chunkResultSchema),
+            continuation: z.object({
+                perChannelOldestMessageId: z.record(z.string(), z.string().nullable()),
+                continuationAvailable: z.boolean(),
+            }),
+            exhaustion: z.object({
+                exhaustedChannelIds: z.array(z.string()),
+                exhausted: z.boolean(),
+            }),
+            accumulatedWindow: z.object({
+                beforeTimestamp: z.number().nullable(),
+                afterTimestamp: z.number().nullable(),
+            }),
+            beforeTimestamp: z.number().nullable(),
+            afterTimestamp: z.number().nullable(),
+            excludedMessageIds: z.array(z.string()),
         }),
         sideEffectLevel: "none",
         authRequirements: [],
@@ -81,6 +108,19 @@ const capabilities: RuntimeCapability[] = [
                 typeof args.authorId === "string" && args.authorId.trim()
                     ? args.authorId.trim()
                     : undefined;
+            const mode =
+                typeof args.mode === "string" &&
+                ["history", "semantic", "mixed"].includes(args.mode)
+                    ? (args.mode as RetrievalMode)
+                    : undefined;
+            const cursor =
+                typeof args.cursor === "string" && args.cursor.trim()
+                    ? JSON.parse(args.cursor)
+                    : undefined;
+            const excludedMessageIds =
+                typeof args.excludedMessageIds === "string" && args.excludedMessageIds.trim()
+                    ? JSON.parse(args.excludedMessageIds)
+                    : undefined;
 
             const result = await UnifiedMessageRetrieval.retrieve({
                 guild: context.guild,
@@ -88,23 +128,30 @@ const capabilities: RuntimeCapability[] = [
                 currentChannelId: context.currentChannelId,
                 channelIds,
                 authorId,
+                mode,
+                beforeTimestamp:
+                    typeof args.beforeTimestamp === "number" ? args.beforeTimestamp : undefined,
+                afterTimestamp:
+                    typeof args.afterTimestamp === "number" ? args.afterTimestamp : undefined,
+                cursor,
+                excludedMessageIds,
                 limit: Number(args.limit || 8),
                 onProgress: context.onProgress,
             });
 
             const qualityLabel =
-                result.strongResultCount >= 2
-                    ? "strong grounded message evidence"
-                    : result.strongResultCount >= 1
-                      ? "partial message evidence"
-                      : result.results.length
-                        ? "weak message evidence"
+                result.historyMessageCount >= 2
+                    ? "ordered history evidence"
+                    : result.historyMessageCount >= 1
+                      ? "partial history evidence"
+                      : result.semanticMatchCount
+                        ? "semantic evidence"
                         : "no message evidence";
 
             return {
                 tool: "retrieve_messages",
-                summary: result.results.length
-                    ? `${qualityLabel}; ${result.results.length} result(s) ${result.liveEscalated ? "after refreshing Discord history" : "from cached Discord history"}.`
+                summary: result.combinedResults.length
+                    ? `${qualityLabel}; ${result.historyMessageCount} history and ${result.semanticMatchCount} semantic result(s) ${result.liveEscalated ? "after refreshing Discord history" : "from cached Discord history"}.`
                     : result.liveEscalated
                       ? "No relevant messages found even after refreshing Discord history."
                       : "No relevant cached messages found yet.",

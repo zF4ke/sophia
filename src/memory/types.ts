@@ -36,6 +36,9 @@ export interface SearchMessageScope {
     guildId?: string | null;
     channelIds?: string[];
     authorIds?: string[];
+    beforeTimestamp?: number | null;
+    afterTimestamp?: number | null;
+    excludedMessageIds?: string[];
 }
 
 export interface ChannelIndexState {

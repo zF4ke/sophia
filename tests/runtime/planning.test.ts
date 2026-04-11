@@ -191,6 +191,7 @@ describe("runtime planning", () => {
             activeMemberTarget: null,
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
             candidateCapabilities: [
                 "resolve_member_identity",
                 "resolve_channel_targets",
@@ -216,6 +217,7 @@ describe("runtime planning", () => {
             activeMemberTarget: null,
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "retrieve_messages",
@@ -241,6 +243,7 @@ describe("runtime planning", () => {
             activeMemberTarget: null,
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "retrieve_messages",
@@ -273,6 +276,7 @@ describe("runtime planning", () => {
             activeMemberTarget: null,
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "retrieve_messages",
@@ -298,6 +302,7 @@ describe("runtime planning", () => {
             activeMemberTarget: null,
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
             candidateCapabilities: [
                 "resolve_member_identity",
                 "resolve_channel_targets",
@@ -331,6 +336,7 @@ describe("runtime planning", () => {
             activeMemberTarget: null,
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
             candidateCapabilities: [
                 "resolve_member_identity",
                 "resolve_channel_targets",
@@ -357,6 +363,7 @@ describe("runtime planning", () => {
                 confidence: "high",
             },
             activeResolvedChannelIds: ["c-bots", "c-logs"],
+            activeRetrievalSession: null,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "list_guild_structure",
@@ -385,6 +392,7 @@ describe("runtime planning", () => {
                 confidence: "high",
             },
             activeResolvedChannelIds: ["c-bots", "c-logs"],
+            activeRetrievalSession: null,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "list_guild_structure",
@@ -437,6 +445,7 @@ describe("runtime planning", () => {
             activeMemberTarget: null,
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "retrieve_messages",
@@ -509,6 +518,7 @@ describe("runtime planning", () => {
                     },
                     durationMs: 5,
                     retrievalSummary: {
+                        mode: "history",
                         cacheHit: false,
                         liveEscalated: true,
                         searchedChannelIds: [],
@@ -517,7 +527,13 @@ describe("runtime planning", () => {
                         evidenceSufficient: false,
                         strongResultCount: 0,
                         weakResultCount: 0,
+                        historyMessageCount: 0,
+                        semanticMatchCount: 0,
                         sourceOrigin: "live_refresh",
+                        continuationAvailable: false,
+                        exhaustedChannelIds: [],
+                        beforeTimestamp: null,
+                        afterTimestamp: null,
                     },
                 },
             ],

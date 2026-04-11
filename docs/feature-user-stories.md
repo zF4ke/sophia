@@ -45,7 +45,11 @@ Current runtime capabilities and workflows:
 ### `retrieve_messages`
 
 - As a user, I can ask what someone said or what happened in a channel and Sophia can retrieve message evidence.
+- Retrieval should read scoped channel history first, not rely only on a flat semantic search.
+- Retrieval should also return scoped semantic matches as a separate lane when they help answer targeted questions.
 - Retrieval should search the local cache first, refresh live Discord history when needed, ingest new messages, and retry.
+- Retrieval should be resumable across turns with continuation cursors and dedupe protection, so Sophia can keep reading older history without repeating the same messages.
+- Retrieval should support normalized before/after time bounds for requests like `until yesterday` or `last week in #atlas`.
 
 ### `get_guild_context`
 
@@ -91,6 +95,14 @@ Current runtime capabilities and workflows:
 - If one of those child channels is not indexed locally yet, scoped retrieval should still run and automatically escalate to live Discord fetch for that channel, ingest the messages, and retry.
 - Sophia answers from the combination of structure plus scoped messages instead of claiming the category is empty or guessing from a partial alphabetic subset.
 
+### Multi-turn scoped continuation
+
+- User asks: `Me mostra tudo de #atlas até ontem.`
+- Runtime resolves `#atlas`, normalizes the time bound, and starts `retrieve_messages` in history-first mode.
+- If one pass is not enough, Sophia should keep an active retrieval session with channel scope, anchors, and dedupe state.
+- User follows up with `continue` or `de novo`.
+- Runtime should continue the same scoped read instead of restarting discovery or rereading duplicate messages.
+
 ### `/find` with scoped search
 
 - Operator runs `/find topic:\"deployment anxiety\" author:\"One Person\" target:\"#reflexoes\"`
@@ -114,3 +126,5 @@ Current runtime capabilities and workflows:
 - Category or channel existence alone is not enough to claim what a service does; Sophia should prefer scoped messages when those channels are readable.
 - Sophia should not say a category is empty unless the evidence explicitly shows zero visible child channels.
 - If a target channel is readable but not indexed, Sophia should still try scoped retrieval and let the retrieval layer do the cache miss -> live fetch -> ingest path automatically.
+- For channel-understanding tasks, recent/ordered history is the default evidence lane and semantic matches are supplemental.
+- If a large scoped read stops because of budget, Sophia should say so and make it clear that continuation is still possible when that is true.

@@ -23,6 +23,7 @@ import { PromptRegistry } from "@/runtime/PromptRegistry";
 import { CheckpointStore } from "@/runtime/storage/CheckpointStore";
 import { decideConversationWebMode } from "@/runtime/webFallback";
 import type {
+    ActiveRetrievalSession,
     EvidenceItem,
     GraphState,
     RetrievalSummary,
@@ -40,6 +41,7 @@ import type {
     GuildStructureEntry,
     ResolvedChannelTarget,
     ResolvedMemberIdentity,
+    RetrievalMode,
 } from "@/shared/appTypes";
 
 const State = Annotation.Root({
@@ -65,6 +67,7 @@ const State = Annotation.Root({
     activeMemberTarget: Annotation<GraphState["activeMemberTarget"]>,
     activeChannelTarget: Annotation<GraphState["activeChannelTarget"]>,
     activeResolvedChannelIds: Annotation<GraphState["activeResolvedChannelIds"]>,
+    activeRetrievalSession: Annotation<GraphState["activeRetrievalSession"]>,
     toolHistory: Annotation<ToolInvocationRecord[]>,
     evidence: Annotation<GraphState["evidence"]>,
     retrievalSummary: Annotation<GraphState["retrievalSummary"]>,
@@ -78,8 +81,13 @@ const State = Annotation.Root({
 type RuntimeState = typeof State.State;
 
 type RetrievalPayload = {
-    results?: Array<Record<string, unknown>>;
+    mode?: RetrievalMode;
+    historyMessages?: Array<Record<string, unknown>>;
+    semanticMatches?: Array<Record<string, unknown>>;
+    combinedResults?: Array<Record<string, unknown>>;
     sourceOrigin?: RetrievalSummary["sourceOrigin"];
+    targetAuthorId?: string | null;
+    targetChannelIds?: string[];
     cacheHit?: boolean;
     liveEscalated?: boolean;
     searchedChannelIds?: string[];
@@ -88,6 +96,19 @@ type RetrievalPayload = {
     evidenceSufficient?: boolean;
     strongResultCount?: number;
     weakResultCount?: number;
+    historyMessageCount?: number;
+    semanticMatchCount?: number;
+    continuation?: {
+        perChannelOldestMessageId?: Record<string, string | null>;
+        continuationAvailable?: boolean;
+    };
+    exhaustion?: {
+        exhaustedChannelIds?: string[];
+        exhausted?: boolean;
+    };
+    beforeTimestamp?: number | null;
+    afterTimestamp?: number | null;
+    excludedMessageIds?: string[];
 };
 
 type GuildStructurePayload = {
@@ -369,6 +390,7 @@ function getRetrievalSummary(run: DiscordToolResult): RetrievalSummary | null {
 
     const payload = run.data as RetrievalPayload;
     return {
+        mode: (payload.mode || "history") as RetrievalSummary["mode"],
         cacheHit: Boolean(payload.cacheHit),
         liveEscalated: Boolean(payload.liveEscalated),
         searchedChannelIds: (payload.searchedChannelIds || []).map(String),
@@ -377,28 +399,83 @@ function getRetrievalSummary(run: DiscordToolResult): RetrievalSummary | null {
         evidenceSufficient: Boolean(payload.evidenceSufficient),
         strongResultCount: Number(payload.strongResultCount || 0),
         weakResultCount: Number(payload.weakResultCount || 0),
+        historyMessageCount: Number(payload.historyMessageCount || 0),
+        semanticMatchCount: Number(payload.semanticMatchCount || 0),
         sourceOrigin: (payload.sourceOrigin || "none") as RetrievalSummary["sourceOrigin"],
+        continuationAvailable: Boolean(payload.continuation?.continuationAvailable),
+        exhaustedChannelIds: (payload.exhaustion?.exhaustedChannelIds || []).map(String),
+        beforeTimestamp:
+            payload.beforeTimestamp == null ? null : Number(payload.beforeTimestamp),
+        afterTimestamp:
+            payload.afterTimestamp == null ? null : Number(payload.afterTimestamp),
+    };
+}
+
+function extractActiveRetrievalSession(run: DiscordToolResult): ActiveRetrievalSession | null {
+    if (run.tool !== "retrieve_messages" || !run.data || typeof run.data !== "object") {
+        return null;
+    }
+
+    const payload = run.data as RetrievalPayload & Record<string, unknown>;
+    const targetChannelIds = Array.isArray(payload.targetChannelIds)
+        ? payload.targetChannelIds.map(String)
+        : [];
+
+    if (!targetChannelIds.length) {
+        return null;
+    }
+
+    return {
+        mode: (payload.mode || "history") as RetrievalMode,
+        channelIds: targetChannelIds,
+        authorId: payload.targetAuthorId == null ? null : String(payload.targetAuthorId),
+        beforeTimestamp: payload.beforeTimestamp == null ? null : Number(payload.beforeTimestamp),
+        afterTimestamp: payload.afterTimestamp == null ? null : Number(payload.afterTimestamp),
+        perChannelOldestMessageId: payload.continuation?.perChannelOldestMessageId || {},
+        seenMessageIds: (payload.combinedResults || [])
+            .map((row) => (row && typeof row === "object" && "messageId" in row ? String((row as Record<string, unknown>).messageId) : null))
+            .filter((value): value is string => Boolean(value)),
+        exhaustedChannelIds: (payload.exhaustion?.exhaustedChannelIds || []).map(String),
+        continuationAvailable: Boolean(payload.continuation?.continuationAvailable),
     };
 }
 
 function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
     if (run.tool === "retrieve_messages" && run.data && typeof run.data === "object") {
         const payload = run.data as RetrievalPayload;
-        const rows = payload.results || [];
+        const historyRows = payload.historyMessages || [];
+        const semanticRows = payload.semanticMatches || [];
         const sourceOrigin = (payload.sourceOrigin || "none") as RetrievalSummary["sourceOrigin"];
-        return rows.slice(0, 4).map((item) => {
+        const historyEvidence = historyRows.slice(0, 6).map((item) => {
+            const content = String(item.content || "").slice(0, 260);
+            return {
+                tool: "retrieve_messages" as const,
+                summary: run.summary,
+                content,
+                evidenceRole: "history_evidence" as const,
+                strength: "strong" as const,
+                sourceOrigin,
+                authorId: item.authorId == null ? null : String(item.authorId),
+                authorName: item.authorName == null ? null : String(item.authorName),
+                channelId: item.channelId == null ? null : String(item.channelId),
+                channelName: item.channelName == null ? null : String(item.channelName),
+                jumpLink: item.jumpLink == null ? null : String(item.jumpLink),
+                createdTimestamp: item.createdTimestamp == null ? null : Number(item.createdTimestamp),
+            };
+        });
+        const semanticEvidence = semanticRows.slice(0, 6).map((item) => {
             const content = String(item.content || "").slice(0, 260);
             const lexicalScore = Number(item.lexicalScore || 0);
-            const strength =
+            const strength: EvidenceItem["strength"] =
                 lexicalScore >= 2 || (lexicalScore >= 1 && content.length >= 80)
                     ? "strong"
                     : "weak";
 
             return {
-                tool: "retrieve_messages",
+                tool: "retrieve_messages" as const,
                 summary: run.summary,
                 content,
-                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.retrieve_messages,
+                evidenceRole: "semantic_evidence" as const,
                 strength,
                 sourceOrigin,
                 authorId: item.authorId == null ? null : String(item.authorId),
@@ -409,6 +486,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
                 createdTimestamp: item.createdTimestamp == null ? null : Number(item.createdTimestamp),
             };
         });
+        return [...historyEvidence, ...semanticEvidence];
     }
 
     if (run.tool === "resolve_member_identity" && run.data) {
@@ -610,6 +688,7 @@ export class Runtime {
                 let activeMemberTarget = state.activeMemberTarget;
                 let activeChannelTarget = state.activeChannelTarget;
                 let activeResolvedChannelIds = [...state.activeResolvedChannelIds];
+                let activeRetrievalSession = state.activeRetrievalSession;
 
                 for (const run of [...recentToolRuns].reverse()) {
                     try {
@@ -617,6 +696,7 @@ export class Runtime {
                         const resolvedMember = extractResolvedMemberTarget(parsedOutput);
                         const resolvedChannel = extractResolvedChannelTarget(parsedOutput);
                         const retrieval = getRetrievalSummary(parsedOutput);
+                        const retrievalSession = extractActiveRetrievalSession(parsedOutput);
 
                         if (resolvedMember) {
                             activeMemberTarget = resolvedMember;
@@ -626,6 +706,9 @@ export class Runtime {
                             activeResolvedChannelIds = resolvedChannel.resolvedIds;
                         } else if (retrieval?.searchedChannelIds?.length) {
                             activeResolvedChannelIds = retrieval.searchedChannelIds;
+                        }
+                        if (retrievalSession) {
+                            activeRetrievalSession = retrievalSession;
                         }
                     } catch {
                         continue;
@@ -643,6 +726,7 @@ export class Runtime {
                     activeMemberTarget,
                     activeChannelTarget,
                     activeResolvedChannelIds,
+                    activeRetrievalSession,
                     traceEvents: appendTrace(
                         state,
                         "load_memory",
@@ -674,6 +758,7 @@ export class Runtime {
                         activeMemberTarget: state.activeMemberTarget,
                         activeChannelTarget: state.activeChannelTarget,
                         activeResolvedChannelIds: state.activeResolvedChannelIds,
+                        activeRetrievalSession: state.activeRetrievalSession,
                     }
                 );
 
@@ -698,6 +783,7 @@ export class Runtime {
                 let activeMemberTarget = state.activeMemberTarget;
                 let activeChannelTarget = state.activeChannelTarget;
                 let activeResolvedChannelIds = [...state.activeResolvedChannelIds];
+                let activeRetrievalSession = state.activeRetrievalSession;
                 let retrievalSummary = state.retrievalSummary;
                 let confidence = state.confidence;
                 let stopReason: StopReason = "insufficient_evidence";
@@ -755,6 +841,7 @@ export class Runtime {
                         activeMemberTarget,
                         activeChannelTarget,
                         activeResolvedChannelIds,
+                        activeRetrievalSession,
                     });
 
                     if (!step.nextCapability) {
@@ -808,6 +895,7 @@ export class Runtime {
                     const retrieval = getRetrievalSummary(output);
                     const resolvedMemberTarget = extractResolvedMemberTarget(output);
                     const resolvedChannelTarget = extractResolvedChannelTarget(output);
+                    const retrievalSession = extractActiveRetrievalSession(output);
                     const record: ToolInvocationRecord = {
                         tool,
                         arguments: step.arguments,
@@ -833,6 +921,9 @@ export class Runtime {
                     } else if (retrieval?.searchedChannelIds?.length) {
                         activeResolvedChannelIds = retrieval.searchedChannelIds;
                     }
+                    if (retrievalSession) {
+                        activeRetrievalSession = retrievalSession;
+                    }
                     traceEvents.push(
                         { label: "step", detail: step.reason, timestamp: Date.now() },
                         {
@@ -857,6 +948,7 @@ export class Runtime {
                         record.durationMs
                     );
                     await input?.debugSession?.setRetrievalSummary?.(retrieval || {
+                        mode: "history",
                         cacheHit: false,
                         liveEscalated: false,
                         searchedChannelIds: [],
@@ -865,7 +957,13 @@ export class Runtime {
                         evidenceSufficient: false,
                         strongResultCount: 0,
                         weakResultCount: 0,
+                        historyMessageCount: 0,
+                        semanticMatchCount: 0,
                         sourceOrigin: "none",
+                        continuationAvailable: false,
+                        exhaustedChannelIds: [],
+                        beforeTimestamp: null,
+                        afterTimestamp: null,
                     });
                 }
 
@@ -903,6 +1001,7 @@ export class Runtime {
                     activeMemberTarget,
                     activeChannelTarget,
                     activeResolvedChannelIds,
+                    activeRetrievalSession,
                     retrievalSummary,
                     stopReason,
                     confidence,
@@ -1059,6 +1158,7 @@ export class Runtime {
             activeMemberTarget: null,
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
             toolHistory: [],
             evidence: [],
             retrievalSummary: null,
@@ -1104,8 +1204,8 @@ export class Runtime {
                     tool.tool === "retrieve_messages" &&
                     tool.output.data &&
                     typeof tool.output.data === "object" &&
-                    Array.isArray((tool.output.data as { results?: unknown[] }).results)
-                        ? (tool.output.data as { results?: unknown[] }).results?.length
+                    Array.isArray((tool.output.data as { combinedResults?: unknown[] }).combinedResults)
+                        ? (tool.output.data as { combinedResults?: unknown[] }).combinedResults?.length
                         : undefined;
                 await input.debugSession?.setPlanning(index + 1);
                 await input.debugSession?.setToolRunning(tool.tool, [tool.learned]);
@@ -1113,16 +1213,23 @@ export class Runtime {
             }
             await input.debugSession?.setRetrievalSummary?.(
                 result.retrievalSummary || {
-                    cacheHit: false,
-                    liveEscalated: false,
-                    searchedChannelIds: [],
-                    fetchedChannelIds: [],
-                    cacheEnriched: false,
-                    evidenceSufficient: false,
-                    strongResultCount: 0,
-                    weakResultCount: 0,
-                    sourceOrigin: "none",
-                }
+                cacheHit: false,
+                mode: "history",
+                liveEscalated: false,
+                searchedChannelIds: [],
+                fetchedChannelIds: [],
+                cacheEnriched: false,
+                evidenceSufficient: false,
+                strongResultCount: 0,
+                weakResultCount: 0,
+                historyMessageCount: 0,
+                semanticMatchCount: 0,
+                sourceOrigin: "none",
+                continuationAvailable: false,
+                exhaustedChannelIds: [],
+                beforeTimestamp: null,
+                afterTimestamp: null,
+            }
             );
             await input.debugSession?.setGroundingSummary(
                 {
@@ -1231,7 +1338,9 @@ function collectCitations(toolHistory: ToolInvocationRecord[]) {
         if (item.tool !== "retrieve_messages" || !item.output.data || typeof item.output.data !== "object") {
             continue;
         }
-        const rows = (item.output.data as { results?: Array<Record<string, unknown>> }).results || [];
+        const rows =
+            (item.output.data as { combinedResults?: Array<Record<string, unknown>> }).combinedResults ||
+            [];
         for (const row of rows) {
             if (typeof row.jumpLink !== "string" || !row.jumpLink) {
                 continue;

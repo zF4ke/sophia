@@ -20,13 +20,13 @@ The stable code catalog is `src/shared/promptCatalog.ts`.
 - `system/personality`
   Defines Sophia's conversational voice, tone rules, and anti-patterns for natural speech. Loaded alongside `system/base` only for the synthesis call.
 - `runtime/plan_turn`
-  Chooses conversation vs Discord retrieval and proposes candidate capabilities.
+  Chooses conversation vs Discord retrieval, taking active resolved targets and any active retrieval session into account.
 - `runtime/select_next_step`
-  Chooses the next single capability for the bounded retrieval loop.
+  Chooses the next single capability for the bounded retrieval loop, including retrieval continuation when an active scoped read already exists.
 - `runtime/judge_evidence`
-  Decides whether the current evidence bundle is enough to stop or continue.
+  Decides whether the current evidence bundle is enough to stop or continue, with explicit history-vs-semantic evidence tradeoffs.
 - `runtime/synthesize_answer`
-  Produces the final user-facing answer from the current mode, confidence, evidence, and conversational recovery rules.
+  Produces the final user-facing answer from the current mode, confidence, laneed evidence, and conversational recovery rules.
 - `runtime/debug_summary`
   Reserved for optional graph-aware debug summarization.
 

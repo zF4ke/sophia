@@ -11,6 +11,8 @@ export const DISCORD_TOOL_NAMES = [
 export type DiscordToolName = (typeof DISCORD_TOOL_NAMES)[number];
 export type DiscordToolEvidenceRole =
     | "message_evidence"
+    | "history_evidence"
+    | "semantic_evidence"
     | "live_evidence"
     | "discovery_only";
 

@@ -158,9 +158,56 @@ describeLive("live runtime behavior", () => {
                 exactIdMatch: true,
                 confidence: "exact",
             });
+            vi.spyOn(DiscordGuildDiscoveryService, "listGuildStructure").mockResolvedValue([
+                {
+                    id: "cat-1",
+                    guildId: "g1",
+                    name: "Text",
+                    type: "4",
+                    parentCategoryId: null,
+                    parentCategoryName: null,
+                    isReadable: false,
+                    isViewable: true,
+                    isIndexed: false,
+                    source: "live",
+                    missingOrDeletedPossible: false,
+                },
+                {
+                    id: "123456789012345678",
+                    guildId: "g1",
+                    name: "reflexoes",
+                    type: "0",
+                    parentCategoryId: "cat-1",
+                    parentCategoryName: "Text",
+                    isReadable: true,
+                    isViewable: true,
+                    isIndexed: true,
+                    source: "live",
+                    missingOrDeletedPossible: false,
+                },
+            ]);
             vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
                 query: "O que <@111111111111111111> disse em <#123456789012345678> sobre a imagem?",
-                results: [
+                mode: "mixed",
+                historyMessages: [
+                    {
+                        messageId: "m1",
+                        channelId: "123456789012345678",
+                        channelName: "reflexoes",
+                        guildId: "g1",
+                        authorId: "111111111111111111",
+                        authorName: "One Person",
+                        content: "A imagem era mais simbólica do que literal.",
+                        createdTimestamp: 1700000000000,
+                        jumpLink: "https://discord.com/channels/g1/123456789012345678/m1",
+                        lexicalScore: 5,
+                        semanticScore: 0,
+                        recencyScore: 0,
+                        totalScore: 5,
+                    },
+                ],
+                semanticMatches: [],
+                combinedResults: [
                     {
                         messageId: "m1",
                         channelId: "123456789012345678",
@@ -185,9 +232,26 @@ describeLive("live runtime behavior", () => {
                 evidenceSufficient: true,
                 strongResultCount: 1,
                 weakResultCount: 0,
+                historyMessageCount: 1,
+                semanticMatchCount: 0,
                 sourceOrigin: "cache",
                 targetAuthorId: "111111111111111111",
                 targetChannelIds: ["123456789012345678"],
+                continuation: {
+                    perChannelOldestMessageId: { "123456789012345678": "m1" },
+                    continuationAvailable: true,
+                },
+                exhaustion: {
+                    exhaustedChannelIds: [],
+                    exhausted: false,
+                },
+                accumulatedWindow: {
+                    beforeTimestamp: null,
+                    afterTimestamp: null,
+                },
+                beforeTimestamp: null,
+                afterTimestamp: null,
+                excludedMessageIds: [],
             });
 
             const result = await Runtime.answer(
@@ -277,7 +341,41 @@ describeLive("live runtime behavior", () => {
             ]);
             vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
                 query: "que serviços estão disponíveis nesse servidor?",
-                results: [
+                mode: "mixed",
+                historyMessages: [
+                    {
+                        messageId: "m1",
+                        channelId: "c-bot-commands",
+                        channelName: "bot-commands",
+                        guildId: "g1",
+                        authorId: "u-bot",
+                        authorName: "Service Bot",
+                        content: "Use este canal para comandos e utilidades do bot.",
+                        createdTimestamp: 1700000000000,
+                        jumpLink: "https://discord.com/channels/g1/c-bot-commands/m1",
+                        lexicalScore: 4,
+                        semanticScore: 0,
+                        recencyScore: 0,
+                        totalScore: 4,
+                    },
+                    {
+                        messageId: "m2",
+                        channelId: "c-automation",
+                        channelName: "automation",
+                        guildId: "g1",
+                        authorId: "u-bot",
+                        authorName: "Automation Bot",
+                        content: "Este canal centraliza automações e integrações.",
+                        createdTimestamp: 1700000001000,
+                        jumpLink: "https://discord.com/channels/g1/c-automation/m2",
+                        lexicalScore: 4,
+                        semanticScore: 0,
+                        recencyScore: 0,
+                        totalScore: 4,
+                    },
+                ],
+                semanticMatches: [],
+                combinedResults: [
                     {
                         messageId: "m1",
                         channelId: "c-bot-commands",
@@ -317,9 +415,29 @@ describeLive("live runtime behavior", () => {
                 evidenceSufficient: true,
                 strongResultCount: 2,
                 weakResultCount: 0,
+                historyMessageCount: 2,
+                semanticMatchCount: 0,
                 sourceOrigin: "cache",
                 targetAuthorId: null,
                 targetChannelIds: ["c-bot-commands", "c-automation"],
+                continuation: {
+                    perChannelOldestMessageId: {
+                        "c-bot-commands": "m1",
+                        "c-automation": "m2",
+                    },
+                    continuationAvailable: true,
+                },
+                exhaustion: {
+                    exhaustedChannelIds: [],
+                    exhausted: false,
+                },
+                accumulatedWindow: {
+                    beforeTimestamp: null,
+                    afterTimestamp: null,
+                },
+                beforeTimestamp: null,
+                afterTimestamp: null,
+                excludedMessageIds: [],
             });
 
             const result = await Runtime.answer(

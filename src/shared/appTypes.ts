@@ -81,6 +81,50 @@ export interface RetrievedChunk {
     totalScore: number;
 }
 
+export type RetrievalMode = "history" | "semantic" | "mixed";
+
+export interface RetrievalContinuation {
+    perChannelOldestMessageId: Record<string, string | null>;
+    continuationAvailable: boolean;
+}
+
+export interface RetrievalExhaustion {
+    exhaustedChannelIds: string[];
+    exhausted: boolean;
+}
+
+export interface RetrievalAccumulatedWindow {
+    beforeTimestamp: number | null;
+    afterTimestamp: number | null;
+}
+
+export interface MultiLaneRetrievalResult {
+    query: string;
+    mode: RetrievalMode;
+    historyMessages: RetrievedChunk[];
+    semanticMatches: RetrievedChunk[];
+    combinedResults: RetrievedChunk[];
+    cacheHit: boolean;
+    liveEscalated: boolean;
+    searchedChannelIds: string[];
+    fetchedChannelIds: string[];
+    cacheEnriched: boolean;
+    evidenceSufficient: boolean;
+    strongResultCount: number;
+    weakResultCount: number;
+    historyMessageCount: number;
+    semanticMatchCount: number;
+    sourceOrigin: "none" | "cache" | "live_refresh" | "cache_after_refresh";
+    targetAuthorId: string | null;
+    targetChannelIds: string[];
+    continuation: RetrievalContinuation;
+    exhaustion: RetrievalExhaustion;
+    accumulatedWindow: RetrievalAccumulatedWindow;
+    beforeTimestamp: number | null;
+    afterTimestamp: number | null;
+    excludedMessageIds: string[];
+}
+
 export interface ChannelCandidate {
     channelId: string;
     channelName: string;

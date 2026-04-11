@@ -2,6 +2,7 @@ import { ModelGateway } from "@/ai/ModelGateway";
 import { CapabilityRegistry } from "@/discord/capabilities/CapabilityRegistry";
 import { PromptRegistry } from "@/runtime/PromptRegistry";
 import type {
+    ActiveRetrievalSession,
     ChannelContextMessage,
     EvidenceDecision,
     GraphState,
@@ -11,7 +12,7 @@ import type {
     ToolInvocationRecord,
     TurnInput,
 } from "@/runtime/contracts";
-import type { GroundedAnswerMode, RequestClassification } from "@/shared/appTypes";
+import type { GroundedAnswerMode, RequestClassification, RetrievalMode } from "@/shared/appTypes";
 import {
     DISCORD_TOOL_NAMES,
     type DiscordToolName,
@@ -108,6 +109,69 @@ function isClearlyLocalReplyFollowUp(input: Pick<TurnInput, "question" | "replyC
     }
 
     return !/[<#@]/.test(input.question) && !hasExactSnowflake(input.question);
+}
+
+function looksLikeContinuation(question: string): boolean {
+    const compact = normalize(question);
+    return /^(continue|keep going|again|de novo|tenta de novo|all of them|mais|continua|continue lendo|ate ontem|até ontem|until\b)/i.test(compact);
+}
+
+function inferRetrievalMode(
+    question: string,
+    activeRetrievalSession?: ActiveRetrievalSession | null
+): RetrievalMode {
+    const compact = normalize(question);
+    if (activeRetrievalSession?.mode) {
+        return activeRetrievalSession.mode;
+    }
+    if (/\b(find|search|reference|mentions?|mencoes|menções|citou|cita|referencias|referências)\b/i.test(compact)) {
+        return "semantic";
+    }
+    if (/\b(all|todos|todas|entire|whole|history|historico|histórico)\b/i.test(compact)) {
+        return "mixed";
+    }
+    return "history";
+}
+
+function parseNaturalTimeBounds(question: string): {
+    beforeTimestamp?: number;
+    afterTimestamp?: number;
+} {
+    const compact = normalize(question);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+    const explicitDate = compact.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+    const explicitTimestamp = explicitDate ? Date.parse(`${explicitDate[1]}T00:00:00`) : NaN;
+
+    if (/\b(last week|ultima semana|última semana)\b/i.test(compact)) {
+        return {
+            afterTimestamp: startOfToday - 7 * 24 * 60 * 60 * 1000,
+            beforeTimestamp: startOfToday,
+        };
+    }
+    if (/\b(today|hoje)\b/i.test(compact)) {
+        return {
+            afterTimestamp: startOfToday,
+        };
+    }
+    if (/\b(yesterday|ontem)\b/i.test(compact)) {
+        const yesterdayStart = startOfToday - 24 * 60 * 60 * 1000;
+        return {
+            afterTimestamp: yesterdayStart,
+            beforeTimestamp: startOfToday,
+        };
+    }
+    if (!Number.isNaN(explicitTimestamp)) {
+        if (/\b(before|until|ate|até)\b/i.test(compact)) {
+            return { beforeTimestamp: explicitTimestamp + 24 * 60 * 60 * 1000 };
+        }
+        if (/\b(after|since|depois|desde)\b/i.test(compact)) {
+            return { afterTimestamp: explicitTimestamp };
+        }
+    }
+
+    return {};
 }
 
 function sanitizeCandidateCapabilities(value: unknown): DiscordToolName[] {
@@ -443,7 +507,11 @@ export function summarizeEvidence(state: Pick<GraphState, "evidence">): string {
 export function countEvidence(state: Pick<GraphState, "evidence">) {
     return state.evidence.reduce(
         (acc, item) => {
-            if (item.evidenceRole === "message_evidence") {
+            if (
+                item.evidenceRole === "message_evidence" ||
+                item.evidenceRole === "history_evidence" ||
+                item.evidenceRole === "semantic_evidence"
+            ) {
                 acc.messageEvidenceCount += 1;
             }
             if (
@@ -483,7 +551,7 @@ export async function planWithModel(
     recentTurns: Pick<GraphState, "recentTurns">["recentTurns"] = [],
     activeTargets?: Pick<
         GraphState,
-        "activeMemberTarget" | "activeChannelTarget" | "activeResolvedChannelIds"
+        "activeMemberTarget" | "activeChannelTarget" | "activeResolvedChannelIds" | "activeRetrievalSession"
     >
 ): Promise<PlanDecision> {
     const fallback = guessPlan(input);
@@ -514,6 +582,9 @@ export async function planWithModel(
                             : "none",
                         active_channel_target: activeTargets?.activeChannelTarget
                             ? `${activeTargets.activeChannelTarget.query} -> ${activeTargets.activeResolvedChannelIds.join(", ") || "no resolved channel ids"}`
+                            : "none",
+                        active_retrieval_session: activeTargets?.activeRetrievalSession
+                            ? `${activeTargets.activeRetrievalSession.mode} :: ${activeTargets.activeRetrievalSession.channelIds.join(", ")} :: continuation=${activeTargets.activeRetrievalSession.continuationAvailable ? "yes" : "no"}`
                             : "none",
                         capability_registry: CapabilityRegistry.describeForPrompt(),
                     }),
@@ -698,6 +769,7 @@ function normalizeStepDecision(
         | "activeMemberTarget"
         | "activeChannelTarget"
         | "activeResolvedChannelIds"
+        | "activeRetrievalSession"
     >,
     step: StepDecision
 ): StepDecision {
@@ -728,6 +800,8 @@ function normalizeStepDecision(
     const structuralChannel = extractStructuralChannelReference(state.question, state.replyContext);
     const activeMember = state.activeMemberTarget;
     const activeChannelTarget = state.activeChannelTarget || latestResolvedChannelTarget;
+    const activeRetrievalSession = state.activeRetrievalSession;
+    const timeBounds = parseNaturalTimeBounds(state.question);
 
     if (nextCapability === "resolve_member_identity") {
         return {
@@ -808,6 +882,11 @@ function normalizeStepDecision(
                     typeof argumentsObject.query === "string" && argumentsObject.query.trim()
                         ? argumentsObject.query.trim()
                         : state.question,
+                mode:
+                    typeof argumentsObject.mode === "string" &&
+                    ["history", "semantic", "mixed"].includes(argumentsObject.mode)
+                        ? argumentsObject.mode
+                        : inferRetrievalMode(state.question, activeRetrievalSession),
                 limit:
                     typeof argumentsObject.limit === "number" ? argumentsObject.limit : 8,
                 ...(resolvedMember?.resolvedId || activeMember?.resolvedId
@@ -816,14 +895,45 @@ function normalizeStepDecision(
                 ...(resolvedChannelIds.length
                     ? { channelIds: resolvedChannelIds.join(",") }
                     : {}),
+                ...((typeof argumentsObject.beforeTimestamp === "number"
+                    ? argumentsObject.beforeTimestamp
+                    : timeBounds.beforeTimestamp ?? activeRetrievalSession?.beforeTimestamp) != null
+                    ? {
+                          beforeTimestamp:
+                              (typeof argumentsObject.beforeTimestamp === "number"
+                                  ? argumentsObject.beforeTimestamp
+                                  : timeBounds.beforeTimestamp ?? activeRetrievalSession?.beforeTimestamp) as number,
+                      }
+                    : {}),
+                ...((typeof argumentsObject.afterTimestamp === "number"
+                    ? argumentsObject.afterTimestamp
+                    : timeBounds.afterTimestamp ?? activeRetrievalSession?.afterTimestamp) != null
+                    ? {
+                          afterTimestamp:
+                              (typeof argumentsObject.afterTimestamp === "number"
+                                  ? argumentsObject.afterTimestamp
+                                  : timeBounds.afterTimestamp ?? activeRetrievalSession?.afterTimestamp) as number,
+                      }
+                    : {}),
+                ...(activeRetrievalSession?.perChannelOldestMessageId &&
+                Object.keys(activeRetrievalSession.perChannelOldestMessageId).length
+                    ? {
+                          cursor: JSON.stringify(activeRetrievalSession.perChannelOldestMessageId),
+                      }
+                    : {}),
+                ...(activeRetrievalSession?.seenMessageIds?.length
+                    ? {
+                          excludedMessageIds: JSON.stringify(activeRetrievalSession.seenMessageIds),
+                      }
+                    : {}),
             },
             reason: sanitizeReason(
                 step.reason,
-                "Search Discord messages using the current cache-first retrieval pipeline."
+                "Read scoped Discord history first, then supplement with semantic matches if needed."
             ),
             learnedExpectation: sanitizeReason(
                 step.learnedExpectation,
-                "Search the local cache first, then escalate live if needed."
+                "Return ordered scoped history, semantic matches, and a continuation cursor."
             ),
         };
     }
@@ -940,6 +1050,7 @@ export function fallbackStepDecision(
         | "activeMemberTarget"
         | "activeChannelTarget"
         | "activeResolvedChannelIds"
+        | "activeRetrievalSession"
     >
 ): StepDecision {
     const resolvedMember = extractLatestResolvedMember(state.toolHistory);
@@ -951,6 +1062,22 @@ export function fallbackStepDecision(
     const structuralMember = extractStructuralMemberReference(state.question, state.replyContext);
     const structuralChannel = extractStructuralChannelReference(state.question, state.replyContext);
     const activeChannelTarget = state.activeChannelTarget || latestResolvedChannelTarget;
+    const activeRetrievalSession = state.activeRetrievalSession;
+
+    if (
+        activeRetrievalSession?.continuationAvailable &&
+        state.candidateCapabilities.includes("retrieve_messages") &&
+        looksLikeContinuation(state.question)
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "retrieve_messages",
+            arguments: {
+                query: state.question,
+            },
+            reason: "Continue the active scoped history read without restarting from the beginning.",
+            learnedExpectation: "Return the next non-duplicate page from the active retrieval session.",
+        });
+    }
 
     if (
         structuralMember &&
@@ -1064,6 +1191,7 @@ export async function planNextStep(
         | "activeMemberTarget"
         | "activeChannelTarget"
         | "activeResolvedChannelIds"
+        | "activeRetrievalSession"
     >
 ): Promise<StepDecision> {
     const fallback = fallbackStepDecision(state);
@@ -1087,6 +1215,9 @@ export async function planNextStep(
                             : state.activeResolvedChannelIds.length
                               ? state.activeResolvedChannelIds.join(", ")
                               : "none",
+                        active_retrieval_session: state.activeRetrievalSession
+                            ? `${state.activeRetrievalSession.mode} :: ${state.activeRetrievalSession.channelIds.join(", ")} :: continuation=${state.activeRetrievalSession.continuationAvailable ? "yes" : "no"}`
+                            : "none",
                         capability_registry: CapabilityRegistry.describeForPrompt(),
                     }),
                 },

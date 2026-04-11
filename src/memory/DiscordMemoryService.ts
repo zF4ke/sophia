@@ -100,6 +100,24 @@ function buildScopeSql(
         });
     }
 
+    if (scope.beforeTimestamp != null) {
+        clauses.push(`${alias}.created_timestamp < :beforeTimestamp`);
+        args.beforeTimestamp = scope.beforeTimestamp;
+    }
+
+    if (scope.afterTimestamp != null) {
+        clauses.push(`${alias}.created_timestamp >= :afterTimestamp`);
+        args.afterTimestamp = scope.afterTimestamp;
+    }
+
+    if (scope.excludedMessageIds?.length) {
+        const names = scope.excludedMessageIds.map((_, index) => `excludedMessageId${index}`);
+        clauses.push(`${alias}.id NOT IN (${names.map((name) => `:${name}`).join(", ")})`);
+        scope.excludedMessageIds.forEach((messageId, index) => {
+            args[`excludedMessageId${index}`] = messageId;
+        });
+    }
+
     return {
         sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",
         args,
@@ -539,6 +557,71 @@ export class DiscordMemoryService {
                     LIMIT :limit
                 `,
                 args: { channelId, limit: Math.max(1, limit) },
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        return rows.map(mapStoredMessage).reverse();
+    }
+
+    public static async getChannelHistoryPageAsync(options: {
+        guildId?: string | null;
+        channelIds: string[];
+        authorId?: string | null;
+        beforeTimestamp?: number | null;
+        afterTimestamp?: number | null;
+        perChannelOldestMessageId?: Record<string, string | null>;
+        excludedMessageIds?: string[];
+        limit?: number;
+    }): Promise<StoredMessage[]> {
+        await this.ensureInitialized();
+        const limit = Math.max(1, options.limit ?? 20);
+        if (!options.channelIds.length) {
+            return [];
+        }
+
+        const client = OperationalStore.getClient();
+        const perChannelArgs: InArgs = {};
+        const perChannelClauses = options.channelIds.map((channelId, index) => {
+            const channelArg = `historyChannelId${index}`;
+            perChannelArgs[channelArg] = channelId;
+            const cursorMessageId = options.perChannelOldestMessageId?.[channelId];
+
+            if (!cursorMessageId) {
+                return `(m.channel_id = :${channelArg})`;
+            }
+
+            const cursorArg = `historyCursorId${index}`;
+            perChannelArgs[cursorArg] = cursorMessageId;
+            return `(m.channel_id = :${channelArg} AND CAST(m.id AS INTEGER) < CAST(:${cursorArg} AS INTEGER))`;
+        });
+
+        const baseScope: SearchMessageScope = {
+            guildId: options.guildId,
+            authorIds: options.authorId ? [options.authorId] : undefined,
+            beforeTimestamp: options.beforeTimestamp ?? undefined,
+            afterTimestamp: options.afterTimestamp ?? undefined,
+            excludedMessageIds: options.excludedMessageIds,
+        };
+        const { sql: baseScopeSql, args: baseArgs } = buildScopeSql(baseScope, "m");
+        const whereParts = [
+            perChannelClauses.length ? `(${perChannelClauses.join(" OR ")})` : "",
+            baseScopeSql.replace(/^WHERE\s+/i, ""),
+        ].filter(Boolean);
+
+        const rows = (
+            await client.execute({
+                sql: `
+                    SELECT *
+                    FROM messages m
+                    ${whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : ""}
+                    ORDER BY m.created_timestamp DESC
+                    LIMIT :limit
+                `,
+                args: {
+                    ...baseArgs,
+                    ...perChannelArgs,
+                    limit,
+                },
             })
         ).rows as Array<Record<string, unknown>>;
 

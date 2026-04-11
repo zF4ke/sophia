@@ -171,6 +171,49 @@ For category/channel questions, the intended chain is:
 
 The runtime now defaults to enough research passes to complete that chain even when the channel is not indexed yet and `retrieve_messages` has to do a cache-first miss followed by live Discord escalation.
 
+## How `retrieve_messages` Works Now
+
+`retrieve_messages` is no longer a flat search-result tool. It is a scoped, history-first reader with multiple evidence lanes.
+
+It can return:
+- ordered scoped history messages
+- scoped semantic matches from the same channels
+- continuation anchors for the next page
+- exhaustion state for the current scoped read
+- normalized before/after time bounds when the question implies a time window
+
+Default behavior:
+- if the user is asking what a channel or category contains, history is the default lane
+- semantic matches are supplemental when the user is asking for a specific concept inside that same scope
+- continuation reuses the same scoped retrieval session instead of restarting from scratch
+
+### Retrieval Lanes Diagram
+
+```mermaid
+flowchart TD
+    A[retrieve_messages] --> B[Scoped history lane]
+    A --> C[Scoped semantic lane]
+    B --> D[Ordered messages]
+    C --> E[Relevant concept hits]
+    D --> F[Combined evidence]
+    E --> F
+    F --> G[continuation cursor + exhaustion state]
+```
+
+### Continuation Diagram
+
+```mermaid
+flowchart TD
+    A[User asks about #atlas] --> B[resolve_channel_targets]
+    B --> C[retrieve_messages history/mixed]
+    C --> D{more history needed?}
+    D -->|yes| E[store active retrieval session\nchannel ids, anchors, seen ids, time bounds]
+    E --> F[User says continue / de novo / until yesterday]
+    F --> G[reuse scoped retrieval session]
+    G --> H[pull older non-duplicate page]
+    D -->|no| I[synthesize answer]
+```
+
 ### Category And Channel Questions
 
 ```mermaid
@@ -215,6 +258,8 @@ She then turns the result into the final reply or a best-effort conversational f
 - remember prior turns within the same checkpointed conversation
 - search cached Discord messages
 - automatically fetch more live Discord history when cached evidence is weak
+- continue scoped channel history across turns without rereading duplicate messages
+- combine ordered history with scoped semantic matches inside the same retrieval capability
 - inspect live member and guild metadata
 - resolve exact member, bot, channel, and category ids in the current guild
 - distinguish current live guild structure from cached-only remembered entries
@@ -257,6 +302,17 @@ resolve target -> scoped retrieve_messages
 -> answer
 ```
 
+### 5. Whole-channel or time-bounded reads
+
+```text
+resolve target
+-> retrieve_messages(history or mixed, optional before/after bounds)
+-> store continuation anchors + seen ids
+-> user says continue / until yesterday / all of them
+-> retrieve_messages(reuse same scoped session)
+-> continue until exhaustion or budget stop
+```
+
 ## Limitations
 
 Current limitations:
@@ -265,7 +321,8 @@ Current limitations:
 - no self-updating personality module
 - no write actions like role changes, thread creation, or DM task workflows
 - no universal capability composer yet
-- retrieval is cache-first Discord search plus targeted live refresh, not a full semantic memory system
+- retrieval is still bounded and cache-first/live-refresh, not a full autonomous memory system
+- very large channel reconstructions may still need multiple user turns when the runtime hits budget before exhaustion
 
 ## Future Evolution
 

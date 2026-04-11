@@ -4,6 +4,7 @@ import type {
     DiscordToolResult,
     GuildStructureEntry,
     GroundedAnswerMode,
+    RetrievalMode,
     RequestClassification,
     ResolvedChannelTarget,
     ResolvedMemberIdentity,
@@ -89,6 +90,7 @@ export interface CapabilityManifest {
 }
 
 export interface RetrievalSummary {
+    mode: RetrievalMode;
     cacheHit: boolean;
     liveEscalated: boolean;
     searchedChannelIds: string[];
@@ -97,7 +99,13 @@ export interface RetrievalSummary {
     evidenceSufficient: boolean;
     strongResultCount: number;
     weakResultCount: number;
+    historyMessageCount: number;
+    semanticMatchCount: number;
     sourceOrigin: RetrievalSourceOrigin;
+    continuationAvailable: boolean;
+    exhaustedChannelIds: string[];
+    beforeTimestamp: number | null;
+    afterTimestamp: number | null;
 }
 
 export interface ToolInvocationRecord {
@@ -124,6 +132,18 @@ export interface EvidenceItem {
     channelName?: string | null;
     jumpLink?: string | null;
     createdTimestamp?: number | null;
+}
+
+export interface ActiveRetrievalSession {
+    mode: RetrievalMode;
+    channelIds: string[];
+    authorId: string | null;
+    beforeTimestamp: number | null;
+    afterTimestamp: number | null;
+    perChannelOldestMessageId: Record<string, string | null>;
+    seenMessageIds: string[];
+    exhaustedChannelIds: string[];
+    continuationAvailable: boolean;
 }
 
 export interface RuntimeTraceEvent {
@@ -160,6 +180,7 @@ export interface GraphState {
     activeMemberTarget: ResolvedMemberIdentity | null;
     activeChannelTarget: ResolvedChannelTarget | null;
     activeResolvedChannelIds: string[];
+    activeRetrievalSession: ActiveRetrievalSession | null;
     toolHistory: ToolInvocationRecord[];
     evidence: EvidenceItem[];
     retrievalSummary: RetrievalSummary | null;

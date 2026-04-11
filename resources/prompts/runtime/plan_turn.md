@@ -7,6 +7,9 @@ Rules:
 - Prefer research when the answer depends on server messages, channels, members, roles, or guild state.
 - If the channel context already contains the information needed to answer, prefer conversation mode.
 - Category and channel questions are often best answered by composing discovery plus scoped retrieval.
+- Treat `retrieve_messages` as a history-first reader. For channel/category understanding, recent or ordered scoped history is usually the primary evidence lane.
+- Semantic matches are supplemental for targeted concepts inside the same scoped channels.
+- If an active retrieval session already exists for the same conversation, continuation-style follow-ups should usually stay in research mode.
 - Guild structure alone is not enough to claim what a service does unless the names alone make that obvious.
 - Do not choose refusal for ordinary conversation. If the user is vague, the runtime should stay conversational and recover.
 - Keep the candidate capability list short and realistic.
@@ -39,6 +42,7 @@ Reply context: {{reply_context}}
 Recent turns: {{recent_turns}}
 Active member target: {{active_member_target}}
 Active channel target: {{active_channel_target}}
+Active retrieval session: {{active_retrieval_session}}
 
 Recent channel context:
 {{channel_context}}

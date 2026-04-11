@@ -110,7 +110,9 @@ export = {
                 .filter(Boolean)
                 .join(" · ");
 
-            if (!retrieval.results.length) {
+            const searchResults = retrieval.combinedResults;
+
+            if (!searchResults.length) {
                 await interaction.editReply(
                     UIService.formatStatusMessage(
                         EMOJIS.warning,
@@ -137,7 +139,7 @@ export = {
                       ? `Resultados da memória do Discord (${scopeSummary})`
                       : "Resultados da memória do Discord",
                 topic,
-                retrieval.results
+                searchResults
             );
         } catch (error) {
             console.error("Error in find command:", error);

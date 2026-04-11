@@ -68,19 +68,12 @@ describe("UnifiedMessageRetrieval", () => {
         });
 
         expect(rankSpy).not.toHaveBeenCalled();
-        expect(searchSpy).toHaveBeenCalledWith(
-            "me explique o que tem nesse traveller",
-            expect.objectContaining({
-                guildId: "g1",
-                channelIds: ["c-traveller", "c-atlas"],
-            }),
-            4
-        );
+        expect(searchSpy).not.toHaveBeenCalled();
         expect(result.searchedChannelIds).toEqual(["c-traveller", "c-atlas"]);
         expect(result.fetchedChannelIds).toEqual(["c-traveller", "c-atlas"]);
         expect(result.liveEscalated).toBe(true);
         expect(result.cacheEnriched).toBe(true);
-        expect(result.results).toEqual([
+        expect(result.historyMessages).toEqual([
             expect.objectContaining({
                 channelId: "c-traveller",
                 channelName: "traveller",
@@ -92,6 +85,8 @@ describe("UnifiedMessageRetrieval", () => {
                 content: "Atlas centraliza mapas e referências do servidor.",
             }),
         ]);
+        expect(result.semanticMatches).toEqual([]);
+        expect(result.combinedResults).toEqual(result.historyMessages);
         expect(result.evidenceSufficient).toBe(true);
         expect(result.sourceOrigin).toBe("cache_after_refresh");
     });

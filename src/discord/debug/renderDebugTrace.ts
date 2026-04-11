@@ -223,6 +223,7 @@ export function renderDebugTrace(
                 : "not judged"
         ),
         formatLabelValue("Retrieval Origin", retrieval?.sourceOrigin || "none"),
+        formatLabelValue("Retrieval Mode", retrieval?.mode || "history"),
         formatLabelValue("Cache Hit", retrieval ? (retrieval.cacheHit ? "yes" : "no") : "n/a"),
         formatLabelValue(
             "Live Refresh",
@@ -235,6 +236,24 @@ export function renderDebugTrace(
         formatLabelValue(
             "Strong / Weak Results",
             retrieval ? `${retrieval.strongResultCount} / ${retrieval.weakResultCount}` : "0 / 0"
+        ),
+        formatLabelValue(
+            "History / Semantic",
+            retrieval ? `${retrieval.historyMessageCount} / ${retrieval.semanticMatchCount}` : "0 / 0"
+        ),
+        formatLabelValue(
+            "Time Scope",
+            retrieval
+                ? `after=${retrieval.afterTimestamp ?? "none"} before=${retrieval.beforeTimestamp ?? "none"}`
+                : "none"
+        ),
+        formatLabelValue(
+            "Continuation Available",
+            retrieval ? (retrieval.continuationAvailable ? "yes" : "no") : "n/a"
+        ),
+        formatLabelValue(
+            "Exhausted Channels",
+            retrieval ? formatChannelList(retrieval.exhaustedChannelIds) : "none"
         ),
         formatLabelValue(
             "Channels Searched",

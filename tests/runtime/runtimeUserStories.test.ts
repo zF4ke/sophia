@@ -269,7 +269,26 @@ describe("runtime user stories", () => {
         ]);
         vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
             query: "do que o One Person está falando?",
-            results: [
+            mode: "mixed",
+            historyMessages: [
+                {
+                    messageId: "m1",
+                    channelId: "c-reflexoes",
+                    channelName: "reflexoes",
+                    guildId: "g1",
+                    authorId: "u-one",
+                    authorName: "One Person",
+                    content: "A imagem era mais simbólica do que literal.",
+                    createdTimestamp: 1700000000000,
+                    jumpLink: "https://discord.com/channels/g1/c-reflexoes/m1",
+                    lexicalScore: 3,
+                    semanticScore: 0,
+                    recencyScore: 0,
+                    totalScore: 3,
+                },
+            ],
+            semanticMatches: [],
+            combinedResults: [
                 {
                     messageId: "m1",
                     channelId: "c-reflexoes",
@@ -294,9 +313,26 @@ describe("runtime user stories", () => {
             evidenceSufficient: true,
             strongResultCount: 1,
             weakResultCount: 0,
+            historyMessageCount: 1,
+            semanticMatchCount: 0,
             sourceOrigin: "cache",
             targetAuthorId: "u-one",
             targetChannelIds: ["c-reflexoes"],
+            continuation: {
+                perChannelOldestMessageId: { "c-reflexoes": "m1" },
+                continuationAvailable: true,
+            },
+            exhaustion: {
+                exhaustedChannelIds: [],
+                exhausted: false,
+            },
+            accumulatedWindow: {
+                beforeTimestamp: null,
+                afterTimestamp: null,
+            },
+            beforeTimestamp: null,
+            afterTimestamp: null,
+            excludedMessageIds: [],
         });
 
         const result = await Runtime.answer(
@@ -567,7 +603,41 @@ describe("runtime user stories", () => {
         ]);
         vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
             query: "que serviços estão disponíveis nesse servidor?",
-            results: [
+            mode: "mixed",
+            historyMessages: [
+                {
+                    messageId: "m1",
+                    channelId: "c-bot-commands",
+                    channelName: "bot-commands",
+                    guildId: "g1",
+                    authorId: "u-bot",
+                    authorName: "Service Bot",
+                    content: "Use este canal para comandos e utilidades do bot.",
+                    createdTimestamp: 1700000000000,
+                    jumpLink: "https://discord.com/channels/g1/c-bot-commands/m1",
+                    lexicalScore: 4,
+                    semanticScore: 0,
+                    recencyScore: 0,
+                    totalScore: 4,
+                },
+                {
+                    messageId: "m2",
+                    channelId: "c-automation",
+                    channelName: "automation",
+                    guildId: "g1",
+                    authorId: "u-bot",
+                    authorName: "Automation Bot",
+                    content: "Este canal centraliza automações e integrações.",
+                    createdTimestamp: 1700000001000,
+                    jumpLink: "https://discord.com/channels/g1/c-automation/m2",
+                    lexicalScore: 4,
+                    semanticScore: 0,
+                    recencyScore: 0,
+                    totalScore: 4,
+                },
+            ],
+            semanticMatches: [],
+            combinedResults: [
                 {
                     messageId: "m1",
                     channelId: "c-bot-commands",
@@ -607,9 +677,29 @@ describe("runtime user stories", () => {
             evidenceSufficient: true,
             strongResultCount: 2,
             weakResultCount: 0,
+            historyMessageCount: 2,
+            semanticMatchCount: 0,
             sourceOrigin: "live_refresh",
             targetAuthorId: null,
             targetChannelIds: ["c-bot-commands", "c-automation"],
+            continuation: {
+                perChannelOldestMessageId: {
+                    "c-bot-commands": "m1",
+                    "c-automation": "m2",
+                },
+                continuationAvailable: true,
+            },
+            exhaustion: {
+                exhaustedChannelIds: [],
+                exhausted: false,
+            },
+            accumulatedWindow: {
+                beforeTimestamp: null,
+                afterTimestamp: null,
+            },
+            beforeTimestamp: null,
+            afterTimestamp: null,
+            excludedMessageIds: [],
         });
 
         const result = await Runtime.answer(
