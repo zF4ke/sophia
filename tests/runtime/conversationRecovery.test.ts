@@ -85,4 +85,16 @@ describe("conversation recovery", () => {
         expect(answer).not.toContain("from cached Discord history");
         expect(answer).not.toContain("retrieve_messages");
     });
+
+    it("mentions research time exhaustion instead of pretending nothing exists", () => {
+        const answer = buildConversationalRecovery({
+            question: "me explica o que tem no atlas",
+            confidence: "insufficient",
+            evidence: [],
+            stopReason: "budget_exhausted",
+        });
+
+        expect(answer).toContain("Fiquei sem tempo de pesquisa");
+        expect(answer).not.toContain("Ainda nao encontrei o que preciso");
+    });
 });

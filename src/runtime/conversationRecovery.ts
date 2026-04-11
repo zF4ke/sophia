@@ -56,6 +56,7 @@ export function buildConversationalRecovery(options: {
     evidence: EvidenceItem[];
     replyContext?: ReplyContext | null;
     priorTurns?: ConversationTurnSummary[];
+    stopReason?: string | null;
 }): string {
     const pt = looksPortuguese(options.question);
     const prior = formatPriorTurns(options.priorTurns || []);
@@ -65,6 +66,13 @@ export function buildConversationalRecovery(options: {
             ? `Você está respondendo à mensagem: \"${options.replyContext.content}\".`
             : `You are replying to: \"${options.replyContext.content}\".`
         : "";
+
+    const budgetHint =
+        options.stopReason === "budget_exhausted"
+            ? pt
+                ? "Fiquei sem tempo de pesquisa antes de terminar de confirmar isso."
+                : "I ran out of research time before I could finish confirming that."
+            : "";
 
     if (options.evidence.length) {
         return pt
@@ -94,7 +102,7 @@ export function buildConversationalRecovery(options: {
         ? [
               prior,
               replyHint,
-              "Ainda nao encontrei o que preciso para te responder bem.",
+              budgetHint || "Ainda nao encontrei o que preciso para te responder bem.",
               "Podes dar-me mais detalhes? Tipo quem disse ou em que canal?",
           ]
               .filter(Boolean)
@@ -102,7 +110,7 @@ export function buildConversationalRecovery(options: {
         : [
               prior,
               replyHint,
-              "I haven't found what I need to give you a good answer yet.",
+              budgetHint || "I haven't found what I need to give you a good answer yet.",
               "Can you give me more details? Like who said it or which channel?",
           ]
               .filter(Boolean)

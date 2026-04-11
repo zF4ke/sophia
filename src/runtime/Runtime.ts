@@ -516,7 +516,12 @@ function summarizeRecentTurns(turns: GraphState["recentTurns"]): string {
         .join("\n");
 }
 
-function buildFallbackAnswer(state: Pick<RuntimeState, "question" | "mode" | "confidence" | "evidence" | "replyContext" | "recentTurns">): string {
+function buildFallbackAnswer(
+    state: Pick<
+        RuntimeState,
+        "question" | "mode" | "confidence" | "evidence" | "replyContext" | "recentTurns" | "stopReason"
+    >
+): string {
     const fallbackConfidence =
         state.confidence === "insufficient" ? answerConfidenceForInsufficient(state) : state.confidence;
 
@@ -535,6 +540,7 @@ function buildFallbackAnswer(state: Pick<RuntimeState, "question" | "mode" | "co
         evidence: state.evidence,
         replyContext: state.replyContext,
         priorTurns: state.recentTurns,
+        stopReason: state.stopReason,
     });
 }
 
@@ -958,6 +964,7 @@ export class Runtime {
                         evidence: state.evidence,
                         replyContext: state.replyContext,
                         recentTurns: state.recentTurns,
+                        stopReason: state.stopReason,
                     });
                 }
 
@@ -968,6 +975,7 @@ export class Runtime {
                     evidence: state.evidence,
                     replyContext: state.replyContext,
                     recentTurns: state.recentTurns,
+                    stopReason: state.stopReason,
                 });
 
                 return {
@@ -1161,6 +1169,7 @@ export class Runtime {
                     evidence: [],
                     replyContext: input.replyContext || null,
                     recentTurns: [],
+                    stopReason: null,
                 }),
                 citations: [],
                 classification: classify("conversation"),
