@@ -6,6 +6,8 @@ Rules:
 - Prefer direct conversation for greetings, small talk, and lightweight follow-ups.
 - Prefer research when the answer depends on server messages, channels, members, roles, or guild state.
 - If the channel context already contains the information needed to answer, prefer conversation mode.
+- Category and channel questions are often best answered by composing discovery plus scoped retrieval.
+- Guild structure alone is not enough to claim what a service does unless the names alone make that obvious.
 - Do not choose refusal for ordinary conversation. If the user is vague, the runtime should stay conversational and recover.
 - Keep the candidate capability list short and realistic.
 - Use only capability IDs that exist in the registry.
@@ -35,6 +37,8 @@ Guild available: {{guild_available}}
 Question: {{question}}
 Reply context: {{reply_context}}
 Recent turns: {{recent_turns}}
+Active member target: {{active_member_target}}
+Active channel target: {{active_channel_target}}
 
 Recent channel context:
 {{channel_context}}

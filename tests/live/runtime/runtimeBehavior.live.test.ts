@@ -209,4 +209,137 @@ describeLive("live runtime behavior", () => {
         },
         120000
     );
+
+    it(
+        "uses category discovery plus scoped retrieval for service-category questions with the real model",
+        async () => {
+            vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargets").mockResolvedValue({
+                query: "serviços",
+                resolvedIds: ["c-bot-commands", "c-automation"],
+                entries: [
+                    {
+                        id: "cat-services",
+                        guildId: "g1",
+                        name: "Serviços",
+                        type: "4",
+                        parentCategoryId: null,
+                        parentCategoryName: null,
+                        isReadable: false,
+                        isViewable: true,
+                        isIndexed: false,
+                        source: "live",
+                        missingOrDeletedPossible: false,
+                    },
+                ],
+                exactIdMatch: false,
+                confidence: "high",
+            });
+            vi.spyOn(DiscordGuildDiscoveryService, "listGuildStructure").mockResolvedValue([
+                {
+                    id: "cat-services",
+                    guildId: "g1",
+                    name: "Serviços",
+                    type: "4",
+                    parentCategoryId: null,
+                    parentCategoryName: null,
+                    isReadable: false,
+                    isViewable: true,
+                    isIndexed: false,
+                    source: "live",
+                    missingOrDeletedPossible: false,
+                },
+                {
+                    id: "c-bot-commands",
+                    guildId: "g1",
+                    name: "bot-commands",
+                    type: "0",
+                    parentCategoryId: "cat-services",
+                    parentCategoryName: "Serviços",
+                    isReadable: true,
+                    isViewable: true,
+                    isIndexed: true,
+                    source: "live",
+                    missingOrDeletedPossible: false,
+                },
+                {
+                    id: "c-automation",
+                    guildId: "g1",
+                    name: "automation",
+                    type: "0",
+                    parentCategoryId: "cat-services",
+                    parentCategoryName: "Serviços",
+                    isReadable: true,
+                    isViewable: true,
+                    isIndexed: true,
+                    source: "live",
+                    missingOrDeletedPossible: false,
+                },
+            ]);
+            vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
+                query: "que serviços estão disponíveis nesse servidor?",
+                results: [
+                    {
+                        messageId: "m1",
+                        channelId: "c-bot-commands",
+                        channelName: "bot-commands",
+                        guildId: "g1",
+                        authorId: "u-bot",
+                        authorName: "Service Bot",
+                        content: "Use este canal para comandos e utilidades do bot.",
+                        createdTimestamp: 1700000000000,
+                        jumpLink: "https://discord.com/channels/g1/c-bot-commands/m1",
+                        lexicalScore: 4,
+                        semanticScore: 0,
+                        recencyScore: 0,
+                        totalScore: 4,
+                    },
+                    {
+                        messageId: "m2",
+                        channelId: "c-automation",
+                        channelName: "automation",
+                        guildId: "g1",
+                        authorId: "u-bot",
+                        authorName: "Automation Bot",
+                        content: "Este canal centraliza automações e integrações.",
+                        createdTimestamp: 1700000001000,
+                        jumpLink: "https://discord.com/channels/g1/c-automation/m2",
+                        lexicalScore: 4,
+                        semanticScore: 0,
+                        recencyScore: 0,
+                        totalScore: 4,
+                    },
+                ],
+                cacheHit: true,
+                liveEscalated: false,
+                searchedChannelIds: ["c-bot-commands", "c-automation"],
+                fetchedChannelIds: [],
+                cacheEnriched: false,
+                evidenceSufficient: true,
+                strongResultCount: 2,
+                weakResultCount: 0,
+                sourceOrigin: "cache",
+                targetAuthorId: null,
+                targetChannelIds: ["c-bot-commands", "c-automation"],
+            });
+
+            const result = await Runtime.answer(
+                createInput({
+                    question: "que serviços estão disponíveis nesse servidor?",
+                    trigger: "reply",
+                })
+            );
+
+            const tools = result.toolRuns.map((run) => run.tool);
+            const normalized = result.answer.toLowerCase();
+
+            expect(tools).toContain("resolve_channel_targets");
+            expect(tools).toContain("list_guild_structure");
+            expect(tools).toContain("retrieve_messages");
+            expect(normalized).toContain("serv");
+            expect(normalized).toContain("bot");
+            expect(normalized).not.toContain("vazia");
+            expect(normalized).not.toContain("empty");
+        },
+        120000
+    );
 });

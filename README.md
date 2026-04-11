@@ -75,6 +75,7 @@ The planner and next-step selector get:
 - reply context
 - recent turns
 - recent channel context
+- active resolved member/channel targets
 - the capability registry
 
 The runtime still enforces:
@@ -85,6 +86,11 @@ The runtime still enforces:
 - refusal prevention for ordinary conversation
 
 If model planning fails, Sophia falls back to a small generic current-guild recovery ladder instead of brittle language-specific routing.
+
+For category and channel questions, the runtime now prefers:
+1. resolve the likely target
+2. inspect the matched structure
+3. retrieve scoped messages from the resolved child channels
 
 ## Storage
 

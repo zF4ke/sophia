@@ -81,6 +81,15 @@ Current runtime capabilities and workflows:
 - Runtime loads the guild structure with `list_guild_structure`.
 - Sophia answers with the resolved channel and its category/visibility context.
 
+### Category structure + scoped retrieval
+
+- User asks: `Que serviços estão disponíveis nesse servidor?`
+- Runtime resolves the likely category or service area with `resolve_channel_targets`.
+- Runtime loads the matched guild structure with `list_guild_structure`.
+- If the matched target is a category, Sophia expands it to visible child channels.
+- Runtime retrieves scoped message evidence from those resolved child channels with `retrieve_messages`.
+- Sophia answers from the combination of structure plus scoped messages instead of claiming the category is empty or guessing from a partial alphabetic subset.
+
 ### `/find` with scoped search
 
 - Operator runs `/find topic:\"deployment anxiety\" author:\"One Person\" target:\"#reflexoes\"`
@@ -101,3 +110,5 @@ Current runtime capabilities and workflows:
 - Exact IDs should be first-class inputs for members, bots, channels, and categories.
 - Same-guild historical fallbacks must be labeled as historical, not current membership or live structure.
 - Tool composition should stay bounded by runtime budgets and repeated-call guards.
+- Category or channel existence alone is not enough to claim what a service does; Sophia should prefer scoped messages when those channels are readable.
+- Sophia should not say a category is empty unless the evidence explicitly shows zero visible child channels.

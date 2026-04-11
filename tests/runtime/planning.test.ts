@@ -166,6 +166,9 @@ describe("runtime planning", () => {
             question: "<@123456789012345678> who is this?",
             actorId: "u-requester",
             replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
             candidateCapabilities: [
                 "resolve_member_identity",
                 "resolve_channel_targets",
@@ -188,6 +191,9 @@ describe("runtime planning", () => {
             question: "look in <#123456789012345678>",
             actorId: "u-requester",
             replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "retrieve_messages",
@@ -210,6 +216,9 @@ describe("runtime planning", () => {
             question: "what is going on in the server?",
             actorId: "u-requester",
             replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
             candidateCapabilities: [
                 "resolve_member_identity",
                 "resolve_channel_targets",
@@ -219,10 +228,9 @@ describe("runtime planning", () => {
             toolHistory: [],
         });
 
-        expect(step.nextCapability).toBe("retrieve_messages");
+        expect(step.nextCapability).toBe("resolve_channel_targets");
         expect(step.arguments).toMatchObject({
-            query: "what is going on in the server?",
-            limit: 8,
+            targetText: "what is going on in the server?",
         });
     });
 
@@ -241,6 +249,9 @@ describe("runtime planning", () => {
             confidence: "best_effort",
             actorId: "u-requester",
             replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
             candidateCapabilities: [
                 "resolve_member_identity",
                 "resolve_channel_targets",
@@ -250,13 +261,90 @@ describe("runtime planning", () => {
             toolHistory: [],
         });
 
+        expect(step.nextCapability).toBe("resolve_channel_targets");
+    });
+
+    it("prefers list_guild_structure after a category target is already resolved", () => {
+        const step = fallbackStepDecision({
+            question: "que serviços estão disponíveis nesse servidor?",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: {
+                query: "serviços",
+                resolvedIds: ["c-bots", "c-logs"],
+                entries: [],
+                exactIdMatch: false,
+                confidence: "high",
+            },
+            activeResolvedChannelIds: ["c-bots", "c-logs"],
+            candidateCapabilities: [
+                "resolve_channel_targets",
+                "list_guild_structure",
+                "retrieve_messages",
+            ],
+            toolHistory: [],
+        });
+
+        expect(step.nextCapability).toBe("list_guild_structure");
+        expect(step.arguments).toMatchObject({
+            targetText: "serviços",
+        });
+    });
+
+    it("prefers scoped retrieval after structure has already been inspected", () => {
+        const step = fallbackStepDecision({
+            question: "que serviços estão disponíveis nesse servidor?",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: {
+                query: "serviços",
+                resolvedIds: ["c-bots", "c-logs"],
+                entries: [],
+                exactIdMatch: false,
+                confidence: "high",
+            },
+            activeResolvedChannelIds: ["c-bots", "c-logs"],
+            candidateCapabilities: [
+                "resolve_channel_targets",
+                "list_guild_structure",
+                "retrieve_messages",
+            ],
+            toolHistory: [
+                {
+                    tool: "list_guild_structure",
+                    arguments: { targetText: "serviços" },
+                    summary: "Resolved structure",
+                    learned: "Serviços includes #bots and #logs",
+                    confidenceImproved: true,
+                    output: {
+                        tool: "list_guild_structure",
+                        summary: "Resolved structure",
+                        data: {
+                            query: "serviços",
+                            entries: [],
+                            focusedEntries: [],
+                            focusedResolvedIds: ["c-bots", "c-logs"],
+                        },
+                    },
+                    durationMs: 5,
+                },
+            ],
+        });
+
         expect(step.nextCapability).toBe("retrieve_messages");
+        expect(step.arguments).toMatchObject({
+            query: "que serviços estão disponíveis nesse servidor?",
+            channelIds: "c-bots,c-logs",
+        });
     });
 
     it("treats direct requester resolution as sufficient evidence", () => {
         const sufficient = fallbackEvidenceDecision({
             question: "quem sou eu",
             actorId: "u-requester",
+            candidateCapabilities: ["resolve_member_identity"],
             evidence: [],
             toolHistory: [
                 {
@@ -291,6 +379,7 @@ describe("runtime planning", () => {
         const decision = fallbackEvidenceDecision({
             question: "what did alice say?",
             actorId: "u-requester",
+            candidateCapabilities: ["retrieve_messages"],
             evidence: [],
             toolHistory: [
                 {

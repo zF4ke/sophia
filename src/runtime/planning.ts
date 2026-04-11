@@ -62,7 +62,6 @@ function extractStructuralMemberReference(
 ): string | null {
     return (
         extractMemberMentionId(question) ||
-        replyContext?.authorId ||
         extractBareSnowflake(question) ||
         null
     );
@@ -253,6 +252,44 @@ function extractLatestResolvedChannelIds(toolHistory: ToolInvocationRecord[]): s
     return [];
 }
 
+function extractLatestResolvedChannelTarget(toolHistory: ToolInvocationRecord[]) {
+    for (let index = toolHistory.length - 1; index >= 0; index -= 1) {
+        const item = toolHistory[index];
+        if (item.tool !== "resolve_channel_targets" && item.tool !== "list_guild_structure") {
+            continue;
+        }
+
+        const data = item.output.data as Record<string, unknown> | null;
+        if (!data || typeof data !== "object") {
+            continue;
+        }
+
+        if (item.tool === "resolve_channel_targets") {
+            const resolvedIds = Array.isArray(data.resolvedIds) ? data.resolvedIds.map(String) : [];
+            return {
+                query: typeof data.query === "string" ? data.query : "",
+                resolvedIds,
+                entries: Array.isArray(data.entries) ? data.entries : [],
+            };
+        }
+
+        const focusedResolvedIds = Array.isArray(data.focusedResolvedIds)
+            ? data.focusedResolvedIds.map(String)
+            : [];
+        const focusedEntries = Array.isArray(data.focusedEntries) ? data.focusedEntries : [];
+        const query = typeof data.query === "string" ? data.query : "";
+        if (focusedResolvedIds.length || focusedEntries.length || query) {
+            return {
+                query,
+                resolvedIds: focusedResolvedIds,
+                entries: focusedEntries,
+            };
+        }
+    }
+
+    return null;
+}
+
 function hasToolRun(toolHistory: ToolInvocationRecord[], tool: DiscordToolName): boolean {
     return toolHistory.some((item) => item.tool === tool);
 }
@@ -267,6 +304,13 @@ function classifyFallbackMode(input: TurnInput): RuntimeMode {
     }
 
     return "research";
+}
+
+function shouldChainStructureCapabilities(capabilities: DiscordToolName[]): boolean {
+    return (
+        capabilities.includes("list_guild_structure") ||
+        capabilities.includes("resolve_channel_targets")
+    );
 }
 
 function normalizePlanDecision(input: TurnInput, plan: PlanDecision): PlanDecision {
@@ -288,6 +332,14 @@ function normalizePlanDecision(input: TurnInput, plan: PlanDecision): PlanDecisi
         candidateCapabilities = ensureResearchCapabilities(
             mergeUniqueCapabilities(candidateCapabilities, structuralCapabilities)
         );
+    }
+
+    if (mode === "research" && shouldChainStructureCapabilities(candidateCapabilities)) {
+        candidateCapabilities = mergeUniqueCapabilities(candidateCapabilities, [
+            "resolve_channel_targets",
+            "list_guild_structure",
+            "retrieve_messages",
+        ]);
     }
 
     if (plan.mode === "refusal") {
@@ -376,7 +428,10 @@ export function countEvidence(state: Pick<GraphState, "evidence">) {
             if (item.evidenceRole === "message_evidence") {
                 acc.messageEvidenceCount += 1;
             }
-            if (item.evidenceRole === "live_evidence") {
+            if (
+                item.evidenceRole === "live_evidence" ||
+                item.evidenceRole === "discovery_only"
+            ) {
                 acc.liveEvidenceCount += 1;
             }
             return acc;
@@ -406,7 +461,12 @@ export function guessPlan(input: TurnInput): PlanDecision {
 
 export async function planWithModel(
     input: TurnInput,
-    channelContext: ChannelContextMessage[] = []
+    channelContext: ChannelContextMessage[] = [],
+    recentTurns: Pick<GraphState, "recentTurns">["recentTurns"] = [],
+    activeTargets?: Pick<
+        GraphState,
+        "activeMemberTarget" | "activeChannelTarget" | "activeResolvedChannelIds"
+    >
 ): Promise<PlanDecision> {
     const fallback = guessPlan(input);
     try {
@@ -420,8 +480,23 @@ export async function planWithModel(
                         guild_available: input.guild ? "yes" : "no",
                         question: input.question,
                         reply_context: input.replyContext?.content || "",
-                        recent_turns: input.replyContext ? "reply context available" : "",
+                        recent_turns: recentTurns.length
+                            ? recentTurns
+                                  .map(
+                                      (turn, index) =>
+                                          `${index + 1}. user=${turn.question} | sophia=${turn.answer}`
+                                  )
+                                  .join("\n")
+                            : input.replyContext
+                              ? "reply context available"
+                              : "none",
                         channel_context: formatChannelContext(channelContext),
+                        active_member_target: activeTargets?.activeMemberTarget
+                            ? `${activeTargets.activeMemberTarget.displayName} (@${activeTargets.activeMemberTarget.username})`
+                            : "none",
+                        active_channel_target: activeTargets?.activeChannelTarget
+                            ? `${activeTargets.activeChannelTarget.query} -> ${activeTargets.activeResolvedChannelIds.join(", ") || "no resolved channel ids"}`
+                            : "none",
                         capability_registry: CapabilityRegistry.describeForPrompt(),
                     }),
                 },
@@ -441,18 +516,51 @@ export async function planWithModel(
 }
 
 function normalizeEvidenceDecision(
-    state: Pick<GraphState, "question" | "toolHistory" | "evidence" | "actorId">,
+    state: Pick<
+        GraphState,
+        "question" | "toolHistory" | "evidence" | "actorId" | "candidateCapabilities"
+    >,
     decision: EvidenceDecision
 ): EvidenceDecision {
     const retrieval = extractLatestRetrieval(state.toolHistory);
     const memberProfileId = extractLatestMemberProfileId(state.toolHistory);
+    const resolvedChannelTarget = extractLatestResolvedChannelTarget(state.toolHistory);
     const counts = countEvidence(state);
+    const hasStructureRun = hasToolRun(state.toolHistory, "list_guild_structure");
+    const hasRetrieveMessagesRun = hasToolRun(state.toolHistory, "retrieve_messages");
 
     if (memberProfileId === state.actorId && counts.messageEvidenceCount === 0) {
         return {
             sufficient: true,
             confidence: "confident",
             reason: "The requesting member was resolved directly.",
+        };
+    }
+
+    if (
+        counts.messageEvidenceCount === 0 &&
+        resolvedChannelTarget &&
+        state.candidateCapabilities.includes("list_guild_structure") &&
+        !hasStructureRun
+    ) {
+        return {
+            sufficient: false,
+            confidence: "best_effort",
+            reason: "The channel or category target was resolved, but the guild structure still needs inspection.",
+        };
+    }
+
+    if (
+        counts.messageEvidenceCount === 0 &&
+        hasStructureRun &&
+        resolvedChannelTarget?.resolvedIds.length &&
+        state.candidateCapabilities.includes("retrieve_messages") &&
+        !hasRetrieveMessagesRun
+    ) {
+        return {
+            sufficient: false,
+            confidence: "best_effort",
+            reason: "The matched structure still needs scoped message retrieval before answering.",
         };
     }
 
@@ -516,7 +624,10 @@ function normalizeEvidenceDecision(
 }
 
 export function fallbackEvidenceDecision(
-    state: Pick<GraphState, "question" | "toolHistory" | "evidence" | "actorId">
+    state: Pick<
+        GraphState,
+        "question" | "toolHistory" | "evidence" | "actorId" | "candidateCapabilities"
+    >
 ): EvidenceDecision {
     return normalizeEvidenceDecision(state, {
         sufficient: false,
@@ -526,7 +637,10 @@ export function fallbackEvidenceDecision(
 }
 
 export async function judgeEvidence(
-    state: Pick<GraphState, "question" | "toolHistory" | "evidence" | "actorId">
+    state: Pick<
+        GraphState,
+        "question" | "toolHistory" | "evidence" | "actorId" | "candidateCapabilities"
+    >
 ): Promise<EvidenceDecision> {
     const fallback = fallbackEvidenceDecision(state);
     try {
@@ -558,7 +672,14 @@ export async function judgeEvidence(
 function normalizeStepDecision(
     state: Pick<
         GraphState,
-        "question" | "candidateCapabilities" | "toolHistory" | "actorId" | "replyContext"
+        | "question"
+        | "candidateCapabilities"
+        | "toolHistory"
+        | "actorId"
+        | "replyContext"
+        | "activeMemberTarget"
+        | "activeChannelTarget"
+        | "activeResolvedChannelIds"
     >,
     step: StepDecision
 ): StepDecision {
@@ -580,9 +701,15 @@ function normalizeStepDecision(
 
     const argumentsObject = sanitizeArguments(step.arguments);
     const resolvedMember = extractLatestResolvedMember(state.toolHistory);
-    const resolvedChannelIds = extractLatestResolvedChannelIds(state.toolHistory);
+    const latestResolvedChannelTarget = extractLatestResolvedChannelTarget(state.toolHistory);
+    const resolvedChannelIds =
+        state.activeResolvedChannelIds.length > 0
+            ? state.activeResolvedChannelIds
+            : latestResolvedChannelTarget?.resolvedIds || extractLatestResolvedChannelIds(state.toolHistory);
     const structuralMember = extractStructuralMemberReference(state.question, state.replyContext);
     const structuralChannel = extractStructuralChannelReference(state.question, state.replyContext);
+    const activeMember = state.activeMemberTarget;
+    const activeChannelTarget = state.activeChannelTarget || latestResolvedChannelTarget;
 
     if (nextCapability === "resolve_member_identity") {
         return {
@@ -591,7 +718,7 @@ function normalizeStepDecision(
                 query:
                     typeof argumentsObject.query === "string" && argumentsObject.query.trim()
                         ? argumentsObject.query.trim()
-                        : structuralMember || state.actorId,
+                        : structuralMember || activeMember?.resolvedId || state.actorId,
             },
             reason: sanitizeReason(
                 step.reason,
@@ -611,7 +738,7 @@ function normalizeStepDecision(
                 targetText:
                     typeof argumentsObject.targetText === "string" && argumentsObject.targetText.trim()
                         ? argumentsObject.targetText.trim()
-                        : structuralChannel || state.question,
+                        : structuralChannel || activeChannelTarget?.query || state.question,
             },
             reason: sanitizeReason(
                 step.reason,
@@ -625,6 +752,21 @@ function normalizeStepDecision(
     }
 
     if (nextCapability === "retrieve_messages") {
+        if (
+            resolvedChannelIds.length &&
+            state.candidateCapabilities.includes("list_guild_structure") &&
+            !hasToolRun(state.toolHistory, "list_guild_structure")
+        ) {
+            return normalizeStepDecision(state, {
+                nextCapability: "list_guild_structure",
+                arguments: {
+                    targetText: activeChannelTarget?.query || structuralChannel || state.question,
+                },
+                reason: "Inspect the resolved category or channel structure before scoped retrieval.",
+                learnedExpectation: "Confirm the visible child channels before reading scoped messages.",
+            });
+        }
+
         return {
             nextCapability,
             arguments: {
@@ -634,7 +776,9 @@ function normalizeStepDecision(
                         : state.question,
                 limit:
                     typeof argumentsObject.limit === "number" ? argumentsObject.limit : 8,
-                ...(resolvedMember?.resolvedId ? { authorId: resolvedMember.resolvedId } : {}),
+                ...(resolvedMember?.resolvedId || activeMember?.resolvedId
+                    ? { authorId: resolvedMember?.resolvedId || activeMember?.resolvedId }
+                    : {}),
                 ...(resolvedChannelIds.length
                     ? { channelIds: resolvedChannelIds.join(",") }
                     : {}),
@@ -650,6 +794,26 @@ function normalizeStepDecision(
         };
     }
 
+    if (
+        nextCapability === "list_guild_structure" &&
+        !activeChannelTarget &&
+        !resolvedChannelIds.length &&
+        state.candidateCapabilities.includes("resolve_channel_targets") &&
+        !hasToolRun(state.toolHistory, "resolve_channel_targets")
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "resolve_channel_targets",
+            arguments: {
+                targetText:
+                    typeof argumentsObject.targetText === "string" && argumentsObject.targetText.trim()
+                        ? argumentsObject.targetText.trim()
+                        : structuralChannel || state.question,
+            },
+            reason: "Resolve the likely category or channel target before inspecting guild structure.",
+            learnedExpectation: "Return the exact or best-matched guild target before structure inspection.",
+        });
+    }
+
     if (nextCapability === "get_member_profile") {
         return {
             nextCapability,
@@ -657,7 +821,10 @@ function normalizeStepDecision(
                 nameOrId:
                     typeof argumentsObject.nameOrId === "string" && argumentsObject.nameOrId.trim()
                         ? argumentsObject.nameOrId.trim()
-                        : resolvedMember?.resolvedId || structuralMember || state.question,
+                        : resolvedMember?.resolvedId ||
+                          activeMember?.resolvedId ||
+                          structuralMember ||
+                          state.question,
             },
             reason: sanitizeReason(
                 step.reason,
@@ -666,6 +833,29 @@ function normalizeStepDecision(
             learnedExpectation: sanitizeReason(
                 step.learnedExpectation,
                 "Return the current guild member profile when available."
+            ),
+        };
+    }
+
+    if (nextCapability === "list_guild_structure") {
+        return {
+            nextCapability,
+            arguments: {
+                ...(typeof argumentsObject.targetText === "string" && argumentsObject.targetText.trim()
+                    ? { targetText: argumentsObject.targetText.trim() }
+                    : activeChannelTarget?.query
+                      ? { targetText: activeChannelTarget.query }
+                      : structuralChannel
+                        ? { targetText: structuralChannel }
+                        : { targetText: state.question }),
+            },
+            reason: sanitizeReason(
+                step.reason,
+                "Inspect the current guild structure around the resolved or likely category/channel target."
+            ),
+            learnedExpectation: sanitizeReason(
+                step.learnedExpectation,
+                "Return matched categories/channels plus visible child-channel structure."
             ),
         };
     }
@@ -708,13 +898,25 @@ function normalizeStepDecision(
 export function fallbackStepDecision(
     state: Pick<
         GraphState,
-        "question" | "candidateCapabilities" | "toolHistory" | "actorId" | "replyContext"
+        | "question"
+        | "candidateCapabilities"
+        | "toolHistory"
+        | "actorId"
+        | "replyContext"
+        | "activeMemberTarget"
+        | "activeChannelTarget"
+        | "activeResolvedChannelIds"
     >
 ): StepDecision {
     const resolvedMember = extractLatestResolvedMember(state.toolHistory);
-    const resolvedChannelIds = extractLatestResolvedChannelIds(state.toolHistory);
+    const latestResolvedChannelTarget = extractLatestResolvedChannelTarget(state.toolHistory);
+    const resolvedChannelIds =
+        state.activeResolvedChannelIds.length > 0
+            ? state.activeResolvedChannelIds
+            : latestResolvedChannelTarget?.resolvedIds || extractLatestResolvedChannelIds(state.toolHistory);
     const structuralMember = extractStructuralMemberReference(state.question, state.replyContext);
     const structuralChannel = extractStructuralChannelReference(state.question, state.replyContext);
+    const activeChannelTarget = state.activeChannelTarget || latestResolvedChannelTarget;
 
     if (
         structuralMember &&
@@ -744,6 +946,53 @@ export function fallbackStepDecision(
         });
     }
 
+    if (
+        !activeChannelTarget &&
+        !resolvedChannelIds.length &&
+        state.candidateCapabilities.includes("resolve_channel_targets") &&
+        !hasToolRun(state.toolHistory, "resolve_channel_targets")
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "resolve_channel_targets",
+            arguments: {
+                targetText: structuralChannel || state.question,
+            },
+            reason: "Resolve the most likely channel or category target before broader discovery.",
+            learnedExpectation: "Return exact message-channel ids for the likely current-guild target.",
+        });
+    }
+
+    if (
+        (activeChannelTarget || resolvedChannelIds.length) &&
+        state.candidateCapabilities.includes("list_guild_structure") &&
+        !hasToolRun(state.toolHistory, "list_guild_structure")
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "list_guild_structure",
+            arguments: {
+                targetText: activeChannelTarget?.query || structuralChannel || state.question,
+            },
+            reason: "Inspect the matched category or channel structure before summarizing it.",
+            learnedExpectation: "Return the matched structure plus visible child channels.",
+        });
+    }
+
+    if (
+        resolvedChannelIds.length &&
+        state.candidateCapabilities.includes("retrieve_messages") &&
+        !hasToolRun(state.toolHistory, "retrieve_messages")
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "retrieve_messages",
+            arguments: {
+                query: state.question,
+                channelIds: resolvedChannelIds.join(","),
+            },
+            reason: "Use the resolved channel scope to retrieve Discord messages before answering.",
+            learnedExpectation: "Return scoped message evidence from the resolved category or channel area.",
+        });
+    }
+
     const nextCapability =
         GENERIC_STEP_ORDER.find(
             (tool) =>
@@ -770,7 +1019,17 @@ export function fallbackStepDecision(
 export async function planNextStep(
     state: Pick<
         GraphState,
-        "question" | "goal" | "successCriteria" | "confidence" | "toolHistory" | "candidateCapabilities" | "actorId" | "replyContext"
+        | "question"
+        | "goal"
+        | "successCriteria"
+        | "confidence"
+        | "toolHistory"
+        | "candidateCapabilities"
+        | "actorId"
+        | "replyContext"
+        | "activeMemberTarget"
+        | "activeChannelTarget"
+        | "activeResolvedChannelIds"
     >
 ): Promise<StepDecision> {
     const fallback = fallbackStepDecision(state);
@@ -786,6 +1045,14 @@ export async function planNextStep(
                         success_criteria: state.successCriteria,
                         confidence: state.confidence,
                         tool_history: summarizeToolHistory(state.toolHistory),
+                        active_member_target: state.activeMemberTarget
+                            ? `${state.activeMemberTarget.displayName} (@${state.activeMemberTarget.username})`
+                            : "none",
+                        active_channel_target: state.activeChannelTarget
+                            ? `${state.activeChannelTarget.query} -> ${state.activeResolvedChannelIds.join(", ") || "no resolved channel ids"}`
+                            : state.activeResolvedChannelIds.length
+                              ? state.activeResolvedChannelIds.join(", ")
+                              : "none",
                         capability_registry: CapabilityRegistry.describeForPrompt(),
                     }),
                 },

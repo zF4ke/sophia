@@ -34,7 +34,13 @@ import type {
     TurnInput,
 } from "@/runtime/contracts";
 import { DISCORD_TOOL_EVIDENCE_ROLES, type DiscordToolName } from "@/shared/discordTools";
-import type { DiscordToolResult, GroundedAnswerMode } from "@/shared/appTypes";
+import type {
+    DiscordToolResult,
+    GroundedAnswerMode,
+    GuildStructureEntry,
+    ResolvedChannelTarget,
+    ResolvedMemberIdentity,
+} from "@/shared/appTypes";
 
 const State = Annotation.Root({
     requestId: Annotation<string>,
@@ -56,6 +62,9 @@ const State = Annotation.Root({
     goal: Annotation<string>,
     successCriteria: Annotation<string>,
     candidateCapabilities: Annotation<GraphState["candidateCapabilities"]>,
+    activeMemberTarget: Annotation<GraphState["activeMemberTarget"]>,
+    activeChannelTarget: Annotation<GraphState["activeChannelTarget"]>,
+    activeResolvedChannelIds: Annotation<GraphState["activeResolvedChannelIds"]>,
     toolHistory: Annotation<ToolInvocationRecord[]>,
     evidence: Annotation<GraphState["evidence"]>,
     retrievalSummary: Annotation<GraphState["retrievalSummary"]>,
@@ -80,6 +89,266 @@ type RetrievalPayload = {
     strongResultCount?: number;
     weakResultCount?: number;
 };
+
+type GuildStructurePayload = {
+    query?: string | null;
+    entries?: Array<Record<string, unknown>>;
+    focusedEntries?: Array<Record<string, unknown>>;
+    focusedResolvedIds?: string[];
+};
+
+function normalizeLookupValue(value: string): string {
+    return value
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, " ")
+        .trim();
+}
+
+function isCategoryStructureEntry(entry: Pick<GuildStructureEntry, "type">): boolean {
+    return entry.type === "4" || entry.type.toLowerCase().includes("category");
+}
+
+function asGuildStructureEntries(value: unknown): GuildStructureEntry[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+        .map((item) => ({
+            id: String(item.id || ""),
+            guildId: item.guildId == null ? null : String(item.guildId),
+            name: String(item.name || ""),
+            type: String(item.type || "unknown"),
+            parentCategoryId: item.parentCategoryId == null ? null : String(item.parentCategoryId),
+            parentCategoryName:
+                item.parentCategoryName == null ? null : String(item.parentCategoryName),
+            isReadable: Boolean(item.isReadable),
+            isViewable: Boolean(item.isViewable),
+            isIndexed: Boolean(item.isIndexed),
+            source: (item.source === "cached_only" ? "cached_only" : "live") as
+                | "live"
+                | "cached_only",
+            missingOrDeletedPossible: Boolean(item.missingOrDeletedPossible),
+        }))
+        .filter((entry) => entry.id && entry.name);
+}
+
+function selectFocusedStructureEntries(
+    entries: GuildStructureEntry[],
+    query: string | null
+): GuildStructureEntry[] {
+    if (!query) {
+        return [];
+    }
+
+    const normalizedQuery = normalizeLookupValue(query);
+    if (!normalizedQuery) {
+        return [];
+    }
+
+    return entries
+        .map((entry) => {
+            const normalizedName = normalizeLookupValue(entry.name);
+            const normalizedParent = normalizeLookupValue(entry.parentCategoryName || "");
+            let score = 0;
+
+            if (normalizedName === normalizedQuery) {
+                score += 10;
+            }
+            if (normalizedName && normalizedQuery.includes(normalizedName)) {
+                score += 6;
+            }
+            if (normalizedName.includes(normalizedQuery)) {
+                score += 5;
+            }
+            if (normalizedParent && normalizedQuery.includes(normalizedParent)) {
+                score += 3;
+            }
+            if (normalizedParent && normalizedParent.includes(normalizedQuery)) {
+                score += 2;
+            }
+
+            return { entry, score };
+        })
+        .filter((item) => item.score > 0)
+        .sort((left, right) => right.score - left.score || left.entry.name.localeCompare(right.entry.name))
+        .slice(0, 4)
+        .map((item) => item.entry);
+}
+
+function buildStructureEvidenceItems(
+    payload: GuildStructurePayload,
+    summary: string
+): EvidenceItem[] {
+    const allEntries = asGuildStructureEntries(payload.entries);
+    const focusedEntries = asGuildStructureEntries(payload.focusedEntries);
+    const query = typeof payload.query === "string" && payload.query.trim() ? payload.query.trim() : null;
+    const targets = focusedEntries.length ? focusedEntries : selectFocusedStructureEntries(allEntries, query);
+
+    if (!targets.length) {
+        return allEntries.slice(0, 8).map((entry) => ({
+            tool: "list_guild_structure",
+            summary,
+            content: isCategoryStructureEntry(entry)
+                ? `Category ${entry.name}. Viewable=${entry.isViewable ? "yes" : "no"}.`
+                : `Channel #${entry.name}${entry.parentCategoryName ? ` in ${entry.parentCategoryName}` : ""}. Readable=${entry.isReadable ? "yes" : "no"}. Indexed=${entry.isIndexed ? "yes" : "no"}.`,
+            evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
+            strength: "metadata",
+            sourceOrigin: "none",
+            channelId: entry.id,
+            channelName: entry.name,
+        }));
+    }
+
+    const evidence: EvidenceItem[] = [];
+    const seen = new Set<string>();
+
+    for (const entry of targets) {
+        if (seen.has(entry.id)) {
+            continue;
+        }
+        seen.add(entry.id);
+
+        if (isCategoryStructureEntry(entry)) {
+            const children = allEntries.filter((candidate) => candidate.parentCategoryId === entry.id);
+            const readableChildren = children.filter((candidate) => candidate.isReadable);
+            const indexedChildren = readableChildren.filter((candidate) => candidate.isIndexed);
+            const childLabels = readableChildren.slice(0, 6).map((candidate) => `#${candidate.name}`);
+            const childPhrase = childLabels.length ? childLabels.join(", ") : "none";
+
+            evidence.push({
+                tool: "list_guild_structure",
+                summary,
+                content: `Category ${entry.name}. Visible channels under ${entry.name}: ${childPhrase}. Readable children: ${readableChildren.length}. Indexed children: ${indexedChildren.length}.`,
+                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
+                strength: "metadata",
+                sourceOrigin: "none",
+                channelId: entry.id,
+                channelName: entry.name,
+            });
+
+            for (const child of readableChildren.slice(0, 4)) {
+                if (seen.has(child.id)) {
+                    continue;
+                }
+                seen.add(child.id);
+                evidence.push({
+                    tool: "list_guild_structure",
+                    summary,
+                    content: `Channel #${child.name} in category ${entry.name}. Readable=yes. Indexed=${child.isIndexed ? "yes" : "no"}.`,
+                    evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
+                    strength: "metadata",
+                    sourceOrigin: "none",
+                    channelId: child.id,
+                    channelName: child.name,
+                });
+            }
+            continue;
+        }
+
+        evidence.push({
+            tool: "list_guild_structure",
+            summary,
+            content: `Channel #${entry.name}${entry.parentCategoryName ? ` in category ${entry.parentCategoryName}` : ""}. Readable=${entry.isReadable ? "yes" : "no"}. Indexed=${entry.isIndexed ? "yes" : "no"}.`,
+            evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
+            strength: "metadata",
+            sourceOrigin: "none",
+            channelId: entry.id,
+            channelName: entry.name,
+        });
+    }
+
+    return evidence;
+}
+
+function extractResolvedMemberTarget(run: DiscordToolResult): ResolvedMemberIdentity | null {
+    if (
+        (run.tool !== "resolve_member_identity" && run.tool !== "get_member_profile") ||
+        !run.data ||
+        typeof run.data !== "object"
+    ) {
+        return null;
+    }
+
+    const item = run.data as Record<string, unknown>;
+    const resolvedId =
+        item.resolvedId == null ? (item.id == null ? null : String(item.id)) : String(item.resolvedId);
+    if (!resolvedId) {
+        return null;
+    }
+
+    return {
+        query: String(item.query || resolvedId),
+        resolvedId,
+        displayName: String(item.displayName || "Unknown"),
+        username: String(item.username || "unknown"),
+        globalName: item.globalName == null ? null : String(item.globalName),
+        nickname: item.nickname == null ? null : String(item.nickname),
+        isBot: Boolean(item.isBot),
+        isCurrentGuildMember:
+            item.isCurrentGuildMember == null ? true : Boolean(item.isCurrentGuildMember),
+        source:
+            item.source === "historical_author" ||
+            item.source === "live_exact" ||
+            item.source === "live_search" ||
+            item.source === "live_id"
+                ? item.source
+                : "live_id",
+        confidence:
+            item.confidence === "high" || item.confidence === "medium" || item.confidence === "exact"
+                ? item.confidence
+                : "medium",
+        roles: Array.isArray(item.roles) ? item.roles.map(String) : [],
+    };
+}
+
+function extractResolvedChannelTarget(run: DiscordToolResult): ResolvedChannelTarget | null {
+    if (
+        (run.tool !== "resolve_channel_targets" && run.tool !== "list_guild_structure") ||
+        !run.data ||
+        typeof run.data !== "object"
+    ) {
+        return null;
+    }
+
+    const item = run.data as GuildStructurePayload & Record<string, unknown>;
+    const entries =
+        run.tool === "resolve_channel_targets"
+            ? asGuildStructureEntries(item.entries)
+            : asGuildStructureEntries(item.focusedEntries);
+    const resolvedIds =
+        run.tool === "resolve_channel_targets"
+            ? Array.isArray(item.resolvedIds)
+                ? item.resolvedIds.map(String)
+                : []
+            : Array.isArray(item.focusedResolvedIds)
+              ? item.focusedResolvedIds.map(String)
+              : [];
+    const query = typeof item.query === "string" && item.query.trim() ? item.query.trim() : "";
+
+    if (!query && !entries.length && !resolvedIds.length) {
+        return null;
+    }
+
+    return {
+        query,
+        resolvedIds,
+        entries,
+        exactIdMatch: Boolean(item.exactIdMatch),
+        confidence:
+            item.confidence === "exact" ||
+            item.confidence === "high" ||
+            item.confidence === "medium" ||
+            item.confidence === "low"
+                ? item.confidence
+                : resolvedIds.length
+                  ? "high"
+                  : "low",
+    };
+}
 
 function appendTrace(state: RuntimeState, label: string, detail: string): RuntimeTraceEvent[] {
     return state.traceEvents.concat({
@@ -166,31 +435,24 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
     }
 
     if (run.tool === "resolve_channel_targets" && run.data) {
-        const item = run.data as { entries?: Array<Record<string, unknown>> };
-        return (item.entries || []).slice(0, 4).map((entry) => ({
+        const item = run.data as { entries?: Array<Record<string, unknown>>; resolvedIds?: string[] };
+        const entries = asGuildStructureEntries(item.entries);
+        return entries.slice(0, 6).map((entry) => ({
             tool: "resolve_channel_targets",
             summary: run.summary,
-            content: `${String(entry.name || "unknown")} (${String(entry.type || "unknown")})`,
+            content: isCategoryStructureEntry(entry)
+                ? `Category ${entry.name} resolved with ${Array.isArray(item.resolvedIds) ? item.resolvedIds.length : 0} visible message channels.`
+                : `Channel #${entry.name}${entry.parentCategoryName ? ` in category ${entry.parentCategoryName}` : ""}.`,
             evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.resolve_channel_targets,
             strength: "metadata",
             sourceOrigin: "none",
-            channelId: entry.id == null ? null : String(entry.id),
-            channelName: entry.name == null ? null : String(entry.name),
+            channelId: entry.id,
+            channelName: entry.name,
         }));
     }
 
     if (run.tool === "list_guild_structure" && run.data) {
-        const item = run.data as { entries?: Array<Record<string, unknown>> };
-        return (item.entries || []).slice(0, 4).map((entry) => ({
-            tool: "list_guild_structure",
-            summary: run.summary,
-            content: `${String(entry.name || "unknown")} (${String(entry.type || "unknown")})`,
-            evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
-            strength: "metadata",
-            sourceOrigin: "none",
-            channelId: entry.id == null ? null : String(entry.id),
-            channelName: entry.name == null ? null : String(entry.name),
-        }));
+        return buildStructureEvidenceItems(run.data as GuildStructurePayload, run.summary);
     }
 
     if (run.tool === "get_member_profile" && run.data) {
@@ -369,7 +631,13 @@ export class Runtime {
                             trigger: state.trigger,
                         },
                     },
-                    state.channelContext
+                    state.channelContext,
+                    state.recentTurns,
+                    {
+                        activeMemberTarget: state.activeMemberTarget,
+                        activeChannelTarget: state.activeChannelTarget,
+                        activeResolvedChannelIds: state.activeResolvedChannelIds,
+                    }
                 );
 
                 return {
@@ -390,6 +658,9 @@ export class Runtime {
                 const toolHistory = [...state.toolHistory];
                 const evidence = [...state.evidence];
                 const traceEvents = [...state.traceEvents];
+                let activeMemberTarget = state.activeMemberTarget;
+                let activeChannelTarget = state.activeChannelTarget;
+                let activeResolvedChannelIds = [...state.activeResolvedChannelIds];
                 let retrievalSummary = state.retrievalSummary;
                 let confidence = state.confidence;
                 let stopReason: StopReason = "insufficient_evidence";
@@ -401,6 +672,7 @@ export class Runtime {
                         toolHistory,
                         evidence,
                         actorId: state.actorId,
+                        candidateCapabilities: state.candidateCapabilities,
                     });
                     traceEvents.push({
                         label: "judge_evidence",
@@ -443,6 +715,9 @@ export class Runtime {
                         candidateCapabilities: state.candidateCapabilities,
                         actorId: state.actorId,
                         replyContext: state.replyContext,
+                        activeMemberTarget,
+                        activeChannelTarget,
+                        activeResolvedChannelIds,
                     });
 
                     if (!step.nextCapability) {
@@ -494,6 +769,8 @@ export class Runtime {
                     const evidenceItems = extractEvidence(output);
                     const learned = evidenceItems.map((item) => item.content).join(" | ") || output.summary;
                     const retrieval = getRetrievalSummary(output);
+                    const resolvedMemberTarget = extractResolvedMemberTarget(output);
+                    const resolvedChannelTarget = extractResolvedChannelTarget(output);
                     const record: ToolInvocationRecord = {
                         tool,
                         arguments: step.arguments,
@@ -509,6 +786,15 @@ export class Runtime {
                     evidence.push(...evidenceItems);
                     if (retrieval) {
                         retrievalSummary = retrieval;
+                    }
+                    if (resolvedMemberTarget) {
+                        activeMemberTarget = resolvedMemberTarget;
+                    }
+                    if (resolvedChannelTarget) {
+                        activeChannelTarget = resolvedChannelTarget;
+                        activeResolvedChannelIds = resolvedChannelTarget.resolvedIds;
+                    } else if (retrieval?.searchedChannelIds?.length) {
+                        activeResolvedChannelIds = retrieval.searchedChannelIds;
                     }
                     traceEvents.push(
                         { label: "step", detail: step.reason, timestamp: Date.now() },
@@ -550,6 +836,7 @@ export class Runtime {
                     toolHistory,
                     evidence,
                     actorId: state.actorId,
+                    candidateCapabilities: state.candidateCapabilities,
                 });
                 if (stopReason === "insufficient_evidence" && finalEvidenceDecision.sufficient) {
                     stopReason = "evidence_sufficient";
@@ -571,6 +858,9 @@ export class Runtime {
                 return {
                     toolHistory,
                     evidence,
+                    activeMemberTarget,
+                    activeChannelTarget,
+                    activeResolvedChannelIds,
                     retrievalSummary,
                     stopReason,
                     confidence,
@@ -722,6 +1012,9 @@ export class Runtime {
             goal: input.question,
             successCriteria: "Answer the question clearly.",
             candidateCapabilities: [],
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
             toolHistory: [],
             evidence: [],
             retrievalSummary: null,

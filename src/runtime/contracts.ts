@@ -2,8 +2,11 @@ import type { Guild, Message, User } from "discord.js";
 import type { z } from "zod";
 import type {
     DiscordToolResult,
+    GuildStructureEntry,
     GroundedAnswerMode,
     RequestClassification,
+    ResolvedChannelTarget,
+    ResolvedMemberIdentity,
     WebMode,
     WebStatus,
 } from "@/shared/appTypes";
@@ -155,6 +158,9 @@ export interface GraphState {
     goal: string;
     successCriteria: string;
     candidateCapabilities: DiscordToolName[];
+    activeMemberTarget: ResolvedMemberIdentity | null;
+    activeChannelTarget: ResolvedChannelTarget | null;
+    activeResolvedChannelIds: string[];
     toolHistory: ToolInvocationRecord[];
     evidence: EvidenceItem[];
     retrievalSummary: RetrievalSummary | null;
@@ -169,6 +175,12 @@ export interface GraphState {
         maxLatencyBudgetMs: number;
         maxCostTier: CostTier;
     };
+}
+
+export interface GuildStructureFocusSummary {
+    query: string | null;
+    focusedEntries: GuildStructureEntry[];
+    focusedResolvedIds: string[];
 }
 
 export interface PlanDecision {

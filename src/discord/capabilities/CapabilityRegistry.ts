@@ -149,7 +149,9 @@ const capabilities: RuntimeCapability[] = [
         kind: "tool",
         description:
             "List readable live channels and categories in the current guild plus cached-only remembered entries.",
-        inputSchema: z.object({}),
+        inputSchema: z.object({
+            targetText: z.string().optional(),
+        }),
         outputSchema: z.any(),
         sideEffectLevel: "none",
         authRequirements: [],
@@ -158,15 +160,29 @@ const capabilities: RuntimeCapability[] = [
         evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
         preconditions: ["guild context should exist"],
         postconditions: ["returns current-guild structure and cached-only remembered entries"],
-        async run(context) {
+        async run(context, args) {
             const entries = await DiscordGuildDiscoveryService.listGuildStructure(context.guild);
+            const targetText =
+                typeof args.targetText === "string" && args.targetText.trim()
+                    ? args.targetText.trim()
+                    : null;
+            const focused = targetText
+                ? await DiscordGuildDiscoveryService.resolveChannelTargets(
+                      context.guild,
+                      targetText,
+                      context.currentChannelId
+                  )
+                : null;
             return {
                 tool: "list_guild_structure",
                 summary: entries.length
                     ? `Resolved ${entries.length} guild structure entries from live Discord and local memory.`
                     : "Guild structure unavailable.",
                 data: {
+                    query: targetText,
                     entries,
+                    focusedEntries: focused?.entries || [],
+                    focusedResolvedIds: focused?.resolvedIds || [],
                 },
             };
         },

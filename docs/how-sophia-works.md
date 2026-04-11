@@ -97,6 +97,7 @@ The runtime then applies only narrow guardrails:
 - loop/budget limits
 - refusal prevention for ordinary conversation
 - a small generic fallback plan if model output is invalid
+- short-lived resolved-target carry-over for the active conversation thread
 
 ### `run_research_loop`
 
@@ -110,6 +111,11 @@ Current planner-visible capabilities:
 - `get_member_profile`
 - `list_members`
 - `get_guild_context`
+
+For category/channel questions, the intended chain is:
+1. resolve the target category/channel
+2. inspect the matched guild structure
+3. retrieve scoped messages from the resolved child channels
 
 ### `judge_evidence`
 
@@ -130,6 +136,8 @@ She then turns the result into the final reply or a best-effort conversational f
 - inspect live member and guild metadata
 - resolve exact member, bot, channel, and category ids in the current guild
 - distinguish current live guild structure from cached-only remembered entries
+- carry short-lived resolved member/channel targets across follow-up turns in the same conversation
+- inspect category structure and then retrieve scoped messages from its visible child channels
 - run `/find` as a specialized retrieval workflow
 
 ## Limitations

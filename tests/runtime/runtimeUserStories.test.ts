@@ -150,7 +150,9 @@ describe("runtime user stories", () => {
                     ? "resolve_member_identity"
                     : selectStepCalls.length === 1
                       ? "resolve_channel_targets"
-                      : "retrieve_messages";
+                      : selectStepCalls.length === 2
+                        ? "list_guild_structure"
+                        : "retrieve_messages";
                 selectStepCalls.push(next);
                 if (next === "resolve_member_identity") {
                     return {
@@ -166,6 +168,14 @@ describe("runtime user stories", () => {
                         arguments: { targetText: "reflexoes" },
                         reason: "Resolve the target channel.",
                         learnedExpectation: "Identify the target channel ids.",
+                    } as any;
+                }
+                if (next === "list_guild_structure") {
+                    return {
+                        nextCapability: next,
+                        arguments: { targetText: "reflexoes" },
+                        reason: "Inspect the matched channel structure before scoped retrieval.",
+                        learnedExpectation: "Confirm the matched channel and its visibility before reading messages.",
                     } as any;
                 }
                 return {
@@ -229,6 +239,34 @@ describe("runtime user stories", () => {
             exactIdMatch: false,
             confidence: "high",
         });
+        vi.spyOn(DiscordGuildDiscoveryService, "listGuildStructure").mockResolvedValue([
+            {
+                id: "cat-1",
+                guildId: "g1",
+                name: "Text",
+                type: "4",
+                parentCategoryId: null,
+                parentCategoryName: null,
+                isReadable: false,
+                isViewable: true,
+                isIndexed: false,
+                source: "live",
+                missingOrDeletedPossible: false,
+            },
+            {
+                id: "c-reflexoes",
+                guildId: "g1",
+                name: "reflexoes",
+                type: "0",
+                parentCategoryId: "cat-1",
+                parentCategoryName: "Text",
+                isReadable: true,
+                isViewable: true,
+                isIndexed: true,
+                source: "live",
+                missingOrDeletedPossible: false,
+            },
+        ]);
         vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
             query: "do que o One Person está falando?",
             results: [
@@ -273,6 +311,7 @@ describe("runtime user stories", () => {
         expect(result.toolRuns.map((run) => run.tool)).toEqual([
             "resolve_member_identity",
             "resolve_channel_targets",
+            "list_guild_structure",
             "retrieve_messages",
         ]);
         expect(UnifiedMessageRetrieval.retrieve).toHaveBeenCalledWith(
@@ -400,5 +439,197 @@ describe("runtime user stories", () => {
             "resolve_channel_targets",
             "list_guild_structure",
         ]);
+    });
+
+    it("inspects a matched category and then retrieves scoped messages before describing available services", async () => {
+        let selectCall = 0;
+
+        vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
+            const traceLabel = options?.traceContext?.traceLabel;
+            if (traceLabel === "runtime_plan_turn") {
+                return {
+                    mode: "research",
+                    reason: "Resolve the service category, inspect it, and then retrieve scoped evidence.",
+                    goal: "Describe what services are available in the matched service area.",
+                    successCriteria: "Use structure plus scoped messages and answer naturally.",
+                    candidateCapabilities: [
+                        "resolve_channel_targets",
+                        "list_guild_structure",
+                        "retrieve_messages",
+                    ],
+                    confidence: "best_effort",
+                } as any;
+            }
+            if (traceLabel === "runtime_select_next_step") {
+                selectCall += 1;
+                return selectCall === 1
+                    ? {
+                          nextCapability: "resolve_channel_targets",
+                          arguments: { targetText: "serviços" },
+                          reason: "Resolve the service category first.",
+                          learnedExpectation: "Identify the service category and its child channels.",
+                      }
+                    : selectCall === 2
+                      ? {
+                            nextCapability: "list_guild_structure",
+                            arguments: { targetText: "serviços" },
+                            reason: "Inspect the matched category structure.",
+                            learnedExpectation: "Confirm the visible channels inside Serviços.",
+                        }
+                      : {
+                            nextCapability: "retrieve_messages",
+                            arguments: { query: "que serviços estão disponíveis nesse servidor?" },
+                            reason: "Read scoped message evidence from the resolved service channels.",
+                            learnedExpectation: "Return messages that explain what the services do.",
+                        };
+            }
+            if (traceLabel === "runtime_judge_evidence") {
+                const prompt = String((_messages?.[1] as any)?.content || "");
+                if (prompt.includes("#bot-commands") && prompt.includes("#automation")) {
+                    return {
+                        sufficient: true,
+                        confidence: "confident",
+                        reason: "The service category and scoped message evidence are available.",
+                    } as any;
+                }
+                return {
+                    sufficient: false,
+                    confidence: "best_effort",
+                    reason: "Need the service category plus scoped messages first.",
+                } as any;
+            }
+            return fallback as any;
+        });
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
+            "Na categoria Serviços, vocês têm pelo menos o #bot-commands para comandos e o #automation para automações e integrações."
+        );
+        vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargets").mockResolvedValue({
+            query: "serviços",
+            resolvedIds: ["c-bot-commands", "c-automation"],
+            entries: [
+                {
+                    id: "cat-services",
+                    guildId: "g1",
+                    name: "Serviços",
+                    type: "4",
+                    parentCategoryId: null,
+                    parentCategoryName: null,
+                    isReadable: false,
+                    isViewable: true,
+                    isIndexed: false,
+                    source: "live",
+                    missingOrDeletedPossible: false,
+                },
+            ],
+            exactIdMatch: false,
+            confidence: "high",
+        });
+        vi.spyOn(DiscordGuildDiscoveryService, "listGuildStructure").mockResolvedValue([
+            {
+                id: "cat-services",
+                guildId: "g1",
+                name: "Serviços",
+                type: "4",
+                parentCategoryId: null,
+                parentCategoryName: null,
+                isReadable: false,
+                isViewable: true,
+                isIndexed: false,
+                source: "live",
+                missingOrDeletedPossible: false,
+            },
+            {
+                id: "c-bot-commands",
+                guildId: "g1",
+                name: "bot-commands",
+                type: "0",
+                parentCategoryId: "cat-services",
+                parentCategoryName: "Serviços",
+                isReadable: true,
+                isViewable: true,
+                isIndexed: true,
+                source: "live",
+                missingOrDeletedPossible: false,
+            },
+            {
+                id: "c-automation",
+                guildId: "g1",
+                name: "automation",
+                type: "0",
+                parentCategoryId: "cat-services",
+                parentCategoryName: "Serviços",
+                isReadable: true,
+                isViewable: true,
+                isIndexed: true,
+                source: "live",
+                missingOrDeletedPossible: false,
+            },
+        ]);
+        vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
+            query: "que serviços estão disponíveis nesse servidor?",
+            results: [
+                {
+                    messageId: "m1",
+                    channelId: "c-bot-commands",
+                    channelName: "bot-commands",
+                    guildId: "g1",
+                    authorId: "u-bot",
+                    authorName: "Service Bot",
+                    content: "Use este canal para comandos e utilidades do bot.",
+                    createdTimestamp: 1700000000000,
+                    jumpLink: "https://discord.com/channels/g1/c-bot-commands/m1",
+                    lexicalScore: 4,
+                    semanticScore: 0,
+                    recencyScore: 0,
+                    totalScore: 4,
+                },
+                {
+                    messageId: "m2",
+                    channelId: "c-automation",
+                    channelName: "automation",
+                    guildId: "g1",
+                    authorId: "u-bot",
+                    authorName: "Automation Bot",
+                    content: "Este canal centraliza automações e integrações.",
+                    createdTimestamp: 1700000001000,
+                    jumpLink: "https://discord.com/channels/g1/c-automation/m2",
+                    lexicalScore: 4,
+                    semanticScore: 0,
+                    recencyScore: 0,
+                    totalScore: 4,
+                },
+            ],
+            cacheHit: true,
+            liveEscalated: false,
+            searchedChannelIds: ["c-bot-commands", "c-automation"],
+            fetchedChannelIds: [],
+            cacheEnriched: false,
+            evidenceSufficient: true,
+            strongResultCount: 2,
+            weakResultCount: 0,
+            sourceOrigin: "cache",
+            targetAuthorId: null,
+            targetChannelIds: ["c-bot-commands", "c-automation"],
+        });
+
+        const result = await Runtime.answer(
+            createInput({
+                question: "que serviços estão disponíveis nesse servidor?",
+            })
+        );
+
+        expect(result.answer).toBe(
+            "Na categoria Serviços, vocês têm pelo menos o #bot-commands para comandos e o #automation para automações e integrações."
+        );
+        expect(result.toolRuns.map((run) => run.tool)).toEqual([
+            "resolve_channel_targets",
+            "list_guild_structure",
+            "retrieve_messages",
+        ]);
+        expect(UnifiedMessageRetrieval.retrieve).toHaveBeenCalledWith(
+            expect.objectContaining({
+                channelIds: ["c-bot-commands", "c-automation"],
+            })
+        );
     });
 });
