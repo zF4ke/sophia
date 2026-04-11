@@ -103,6 +103,50 @@ describe("runtime planning", () => {
         ]);
     });
 
+    it("forces exact member mentions through research even if the planner tries to stay conversational", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            mode: "conversation",
+            reason: "Handle it directly.",
+            goal: "Answer directly.",
+            successCriteria: "Reply casually.",
+            candidateCapabilities: [],
+            confidence: "confident",
+        } as any);
+
+        const plan = await planWithModel(
+            createInput({ question: "Quem é <@123456789012345678>?" })
+        );
+
+        expect(plan.mode).toBe("research");
+        expect(plan.candidateCapabilities).toEqual([
+            "resolve_member_identity",
+            "retrieve_messages",
+        ]);
+    });
+
+    it("forces exact channel mentions through research even if the planner returns no tools", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            mode: "research",
+            reason: "Need a tool.",
+            goal: "Answer directly.",
+            successCriteria: "Use tools.",
+            candidateCapabilities: [],
+            confidence: "best_effort",
+        } as any);
+
+        const plan = await planWithModel(
+            createInput({ question: "o que aconteceu em <#123456789012345678>?" })
+        );
+
+        expect(plan.mode).toBe("research");
+        expect(plan.candidateCapabilities).toEqual([
+            "resolve_member_identity",
+            "resolve_channel_targets",
+            "retrieve_messages",
+            "list_guild_structure",
+        ]);
+    });
+
     it("falls back to the generic current-guild plan when the planner model fails", async () => {
         vi.spyOn(ModelGateway, "generateJson").mockRejectedValue(new Error("boom"));
 

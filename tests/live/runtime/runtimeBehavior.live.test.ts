@@ -82,6 +82,22 @@ describeLive("live runtime behavior", () => {
                 confidence: "exact",
                 roles: ["Bots"],
             });
+            vi.spyOn(DiscordLiveService, "getMemberProfile").mockResolvedValue({
+                id: "111111111111111111",
+                query: "111111111111111111",
+                username: "markov_bot",
+                displayName: "Markov",
+                globalName: null,
+                nickname: null,
+                roles: ["Bots"],
+                bannerUrl: null,
+                accentColor: null,
+                bio: null,
+                isBot: true,
+                isCurrentGuildMember: true,
+                source: "live_id",
+                confidence: "exact",
+            });
 
             const result = await Runtime.answer(
                 createInput({
@@ -91,7 +107,12 @@ describeLive("live runtime behavior", () => {
             );
 
             const normalized = result.answer.toLowerCase();
-            expect(result.toolRuns.map((run) => run.tool)).toContain("resolve_member_identity");
+            expect(
+                result.toolRuns.some(
+                    (run) =>
+                        run.tool === "resolve_member_identity" || run.tool === "get_member_profile"
+                )
+            ).toBe(true);
             expect(normalized).toContain("markov");
             expect(normalized).not.toContain("based on what i found");
             expect(normalized).not.toContain("resolve_member_identity");

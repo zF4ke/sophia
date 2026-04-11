@@ -104,6 +104,48 @@ function sanitizeCandidateCapabilities(value: unknown): DiscordToolName[] {
     return [...new Set(sanitized)];
 }
 
+function mergeUniqueCapabilities(
+    base: DiscordToolName[],
+    extra: DiscordToolName[]
+): DiscordToolName[] {
+    return [...new Set([...base, ...extra])];
+}
+
+function getStructuralCapabilityHints(
+    input: Pick<TurnInput, "question" | "replyContext" | "guild">
+): DiscordToolName[] {
+    if (!input.guild) {
+        return [];
+    }
+
+    const hinted: DiscordToolName[] = [];
+    const memberMention = extractMemberMentionId(input.question);
+    const channelMention =
+        extractChannelMentionId(input.question) ||
+        (input.replyContext?.content
+            ? extractChannelMentionId(input.replyContext.content)
+            : null);
+    const bareSnowflake = extractBareSnowflake(input.question);
+
+    if (memberMention) {
+        hinted.push("resolve_member_identity");
+    }
+
+    if (channelMention) {
+        hinted.push("resolve_channel_targets");
+    }
+
+    if (bareSnowflake && !memberMention && !channelMention) {
+        hinted.push("resolve_member_identity", "resolve_channel_targets");
+    }
+
+    if (hinted.length) {
+        hinted.push("retrieve_messages");
+    }
+
+    return mergeUniqueCapabilities([], hinted);
+}
+
 function ensureResearchCapabilities(capabilities: DiscordToolName[]): DiscordToolName[] {
     return capabilities.length ? capabilities : [...GENERIC_RESEARCH_CAPABILITIES];
 }
@@ -230,6 +272,7 @@ function classifyFallbackMode(input: TurnInput): RuntimeMode {
 function normalizePlanDecision(input: TurnInput, plan: PlanDecision): PlanDecision {
     let mode: RuntimeMode = plan.mode === "research" ? "research" : "conversation";
     let candidateCapabilities = sanitizeCandidateCapabilities(plan.candidateCapabilities);
+    const structuralCapabilities = getStructuralCapabilityHints(input);
 
     if (!input.guild) {
         mode = "conversation";
@@ -238,6 +281,13 @@ function normalizePlanDecision(input: TurnInput, plan: PlanDecision): PlanDecisi
         candidateCapabilities = ensureResearchCapabilities(candidateCapabilities);
     } else {
         candidateCapabilities = [];
+    }
+
+    if (structuralCapabilities.length) {
+        mode = "research";
+        candidateCapabilities = ensureResearchCapabilities(
+            mergeUniqueCapabilities(candidateCapabilities, structuralCapabilities)
+        );
     }
 
     if (plan.mode === "refusal") {
