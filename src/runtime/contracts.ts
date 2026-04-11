@@ -205,6 +205,7 @@ export interface GraphState {
     toolHistory: ToolInvocationRecord[];
     evidence: EvidenceItem[];
     retrievalSummary: RetrievalSummary | null;
+    turnIntent: TurnIntent | null;
     stopReason: StopReason | null;
     confidence: GroundedAnswerMode;
     responseDraft: string | null;
@@ -223,6 +224,18 @@ export interface GuildStructureFocusSummary {
     focusedResolvedIds: string[];
 }
 
+export interface TurnIntent {
+    continuation: boolean;
+    retrievalMode: RetrievalMode | null;
+    beforeTimestamp: number | null;
+    afterTimestamp: number | null;
+    source: {
+        continuation: "deterministic" | "model";
+        retrievalMode: "deterministic" | "model" | "session" | "none";
+        timeBounds: "deterministic" | "model" | "none";
+    };
+}
+
 export interface PlanDecision {
     mode: RuntimeMode;
     reason: string;
@@ -230,6 +243,7 @@ export interface PlanDecision {
     successCriteria: string;
     candidateCapabilities: DiscordToolName[];
     confidence: GroundedAnswerMode;
+    intent: TurnIntent;
 }
 
 export interface EvidenceDecision {

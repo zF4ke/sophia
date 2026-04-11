@@ -7,7 +7,23 @@ import {
     planNextStep,
     planWithModel,
 } from "@/runtime/planning";
-import type { TurnInput } from "@/runtime/contracts";
+import type { TurnInput, TurnIntent } from "@/runtime/contracts";
+
+const NULL_INTENT: TurnIntent = {
+    continuation: false,
+    retrievalMode: null,
+    beforeTimestamp: null,
+    afterTimestamp: null,
+    source: {
+        continuation: "deterministic",
+        retrievalMode: "none",
+        timeBounds: "none",
+    },
+};
+
+function intentWith(overrides: Partial<TurnIntent> = {}): TurnIntent {
+    return { ...NULL_INTENT, ...overrides };
+}
 
 function createInput(overrides: Partial<TurnInput> = {}): TurnInput {
     return {
@@ -192,6 +208,7 @@ describe("runtime planning", () => {
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
             activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
             candidateCapabilities: [
                 "resolve_member_identity",
                 "resolve_channel_targets",
@@ -218,6 +235,7 @@ describe("runtime planning", () => {
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
             activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "retrieve_messages",
@@ -244,6 +262,7 @@ describe("runtime planning", () => {
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
             activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "retrieve_messages",
@@ -277,6 +296,7 @@ describe("runtime planning", () => {
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
             activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "retrieve_messages",
@@ -303,6 +323,7 @@ describe("runtime planning", () => {
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
             activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
             candidateCapabilities: [
                 "resolve_member_identity",
                 "resolve_channel_targets",
@@ -337,6 +358,7 @@ describe("runtime planning", () => {
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
             activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
             candidateCapabilities: [
                 "resolve_member_identity",
                 "resolve_channel_targets",
@@ -364,6 +386,7 @@ describe("runtime planning", () => {
             },
             activeResolvedChannelIds: ["c-bots", "c-logs"],
             activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "list_guild_structure",
@@ -393,6 +416,7 @@ describe("runtime planning", () => {
             },
             activeResolvedChannelIds: ["c-bots", "c-logs"],
             activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "list_guild_structure",
@@ -441,6 +465,7 @@ describe("runtime planning", () => {
                 confidence: "high",
             },
             activeResolvedChannelIds: ["c-atlas"],
+            turnIntent: intentWith({ continuation: true }),
             activeRetrievalSession: {
                 mode: "history",
                 channelIds: ["c-atlas"],
@@ -492,6 +517,7 @@ describe("runtime planning", () => {
                 confidence: "high",
             },
             activeResolvedChannelIds: ["c-atlas"],
+            turnIntent: NULL_INTENT,
             activeRetrievalSession: {
                 mode: "history",
                 channelIds: ["c-atlas"],
@@ -539,6 +565,7 @@ describe("runtime planning", () => {
             activeChannelTarget: null,
             activeResolvedChannelIds: [],
             activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
             candidateCapabilities: [
                 "resolve_channel_targets",
                 "retrieve_messages",

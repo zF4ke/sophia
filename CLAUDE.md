@@ -12,10 +12,8 @@ This file is the engineering handoff for the current runtime.
 - `docs/prompt-catalog.md`
 - `docs/commands-and-admin.md`
 - `docs/cleanup-migration.md`
-- `docs/testing.md`
 - `docs/ui.md`
 - `docs/how-sophia-works.md`
-- `docs/feature-user-stories.md`
 
 ## Runtime Model
 
@@ -25,19 +23,12 @@ The active flow is:
 1. Normalize the incoming turn.
 2. Resolve the canonical conversation key.
 3. Load checkpoint state and recent local runtime state.
-4. Let the model plan direct conversation vs current-guild retrieval.
+4. Plan direct conversation vs Discord retrieval.
 5. Retrieve cached Discord evidence first.
 6. Escalate to live Discord history when cache evidence is weak.
 7. Judge whether the evidence is enough to continue, answer, or ask a targeted follow-up.
 8. Synthesize the final response.
 9. Persist runtime and trace data locally.
-
-The runtime is model-led by default and keeps only narrow guardrails:
-- exact-id structural shortcuts
-- capability validation
-- repeated-call protection
-- budget limits
-- refusal prevention for ordinary conversation
 
 Intent parsing policy:
 - Keep business-critical language intent logic out of `src/runtime/planning.ts`.
@@ -49,9 +40,6 @@ Intent parsing policy:
 These capability ids are prompt- and runtime-stable:
 
 - `retrieve_messages`
-- `resolve_member_identity`
-- `list_guild_structure`
-- `resolve_channel_targets`
 - `get_member_profile`
 - `list_members`
 - `get_guild_context`
@@ -75,6 +63,7 @@ If a capability id changes, update:
 Runtime prompts live under `resources/prompts/` and stay external to code:
 
 - `resources/prompts/system/base.md`
+- `resources/prompts/system/personality.md`
 - `resources/prompts/runtime/plan_turn.md`
 - `resources/prompts/runtime/select_next_step.md`
 - `resources/prompts/runtime/judge_evidence.md`
@@ -127,6 +116,7 @@ Core supported commands and entrypoints:
 - `/debug`
 - `/index`
 - `/access`
+- `/cache`
 
 Interaction entrypoint:
 
@@ -143,7 +133,5 @@ Command registry/loader:
 3. Update `AGENTS.md` and the relevant docs.
 4. Update or add tests.
 5. Run `npm run check`.
-
-Use `npm run test:live` for opt-in real-model verification when prompt or orchestration changes need behavior validation beyond deterministic mocks.
 
 Do not reintroduce giant inline prompts, fake web-search claims, refusal-first grounding, or uncontrolled tool loops.

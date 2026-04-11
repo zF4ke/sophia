@@ -73,6 +73,7 @@ const State = Annotation.Root({
     toolHistory: Annotation<ToolInvocationRecord[]>,
     evidence: Annotation<GraphState["evidence"]>,
     retrievalSummary: Annotation<GraphState["retrievalSummary"]>,
+    turnIntent: Annotation<GraphState["turnIntent"]>,
     stopReason: Annotation<StopReason | null>,
     confidence: Annotation<GroundedAnswerMode>,
     responseDraft: Annotation<string | null>,
@@ -859,6 +860,7 @@ export class Runtime {
                     successCriteria: plan.successCriteria,
                     candidateCapabilities: plan.candidateCapabilities,
                     confidence: plan.confidence,
+                    turnIntent: plan.intent,
                     traceEvents: appendTrace(state, "plan_turn", plan.reason),
                 };
             })
@@ -932,6 +934,7 @@ export class Runtime {
                         activeChannelTarget,
                         activeResolvedChannelIds,
                         activeRetrievalSession,
+                        turnIntent: state.turnIntent,
                     });
 
                     if (!step.nextCapability) {
@@ -1273,6 +1276,7 @@ export class Runtime {
             toolHistory: [],
             evidence: [],
             retrievalSummary: null,
+            turnIntent: null,
             stopReason: null,
             confidence: "insufficient",
             responseDraft: null,

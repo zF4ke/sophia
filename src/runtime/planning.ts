@@ -1,5 +1,11 @@
 import { ModelGateway } from "@/ai/ModelGateway";
 import { CapabilityRegistry } from "@/discord/capabilities/CapabilityRegistry";
+import {
+    extractDeterministicIntent,
+    mergeIntent,
+    normalize,
+    parseModelIntent,
+} from "@/runtime/intentExtraction";
 import { PromptRegistry } from "@/runtime/PromptRegistry";
 import type {
     ActiveRetrievalSession,
@@ -9,12 +15,13 @@ import type {
     PlanDecision,
     RuntimeMode,
     StepDecision,
+    TurnIntent,
     ToolArguments,
     ToolArgumentValue,
     ToolInvocationRecord,
     TurnInput,
 } from "@/runtime/contracts";
-import type { GroundedAnswerMode, RequestClassification, RetrievalMode } from "@/shared/appTypes";
+import type { GroundedAnswerMode, RequestClassification } from "@/shared/appTypes";
 import {
     DISCORD_TOOL_NAMES,
     type DiscordToolName,
@@ -34,14 +41,6 @@ const GENERIC_STEP_ORDER: DiscordToolName[] = [
     "get_guild_context",
     "list_members",
 ];
-
-function normalize(text: string): string {
-    return text
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .trim();
-}
 
 function hasExactSnowflake(text: string): boolean {
     return /(?:<[@#!]?(\d+)>|\b\d{6,25}\b)/.test(text);
@@ -111,77 +110,6 @@ function isClearlyLocalReplyFollowUp(input: Pick<TurnInput, "question" | "replyC
     }
 
     return !/[<#@]/.test(input.question) && !hasExactSnowflake(input.question);
-}
-
-function looksLikeContinuation(question: string): boolean {
-    const compact = normalize(question);
-    return /^(continue|keep going|again|de novo|tenta de novo|all of them|mais|continua|continue lendo|ate ontem|até ontem|until\b)/i.test(compact);
-}
-
-function inferRetrievalMode(
-    question: string,
-    activeRetrievalSession?: ActiveRetrievalSession | null
-): RetrievalMode {
-    const compact = normalize(question);
-    if (activeRetrievalSession?.mode) {
-        return activeRetrievalSession.mode;
-    }
-    if (/\b(find|search|reference|mentions?|mencoes|menções|citou|cita|referencias|referências)\b/i.test(compact)) {
-        return "semantic";
-    }
-    if (/\b(all|todos|todas|entire|whole|history|historico|histórico)\b/i.test(compact)) {
-        return "mixed";
-    }
-    return "history";
-}
-
-function parseNaturalTimeBounds(question: string): {
-    beforeTimestamp?: number;
-    afterTimestamp?: number;
-} {
-    const compact = normalize(question);
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
-
-    const explicitDate = compact.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
-    const explicitTimestamp = explicitDate ? Date.parse(`${explicitDate[1]}T00:00:00`) : NaN;
-    const hasUpperBoundWord = /\b(before|until|ate|até)\b/i.test(compact);
-
-    if (/\b(last week|ultima semana|última semana)\b/i.test(compact)) {
-        return {
-            afterTimestamp: startOfToday - 7 * 24 * 60 * 60 * 1000,
-            beforeTimestamp: startOfToday,
-        };
-    }
-    if (/\b(today|hoje)\b/i.test(compact)) {
-        return {
-            afterTimestamp: startOfToday,
-        };
-    }
-    if (/\b(yesterday|ontem)\b/i.test(compact)) {
-        if (hasUpperBoundWord) {
-            return {
-                beforeTimestamp: /before yesterday|before ontem/.test(compact)
-                    ? startOfYesterday
-                    : startOfToday,
-            };
-        }
-        return {
-            afterTimestamp: startOfYesterday,
-            beforeTimestamp: startOfToday,
-        };
-    }
-    if (!Number.isNaN(explicitTimestamp)) {
-        if (hasUpperBoundWord) {
-            return { beforeTimestamp: explicitTimestamp + 24 * 60 * 60 * 1000 };
-        }
-        if (/\b(after|since|depois|desde)\b/i.test(compact)) {
-            return { afterTimestamp: explicitTimestamp };
-        }
-    }
-
-    return {};
 }
 
 function sanitizeCandidateCapabilities(value: unknown): DiscordToolName[] {
@@ -495,6 +423,7 @@ function normalizePlanDecision(input: TurnInput, plan: PlanDecision): PlanDecisi
             mode === "conversation" && confidence === "insufficient"
                 ? "best_effort"
                 : confidence,
+        intent: plan.intent,
     };
 }
 
@@ -559,8 +488,15 @@ export function countEvidence(state: Pick<GraphState, "evidence">) {
     );
 }
 
-export function guessPlan(input: TurnInput): PlanDecision {
+export function guessPlan(
+    input: TurnInput,
+    activeRetrievalSession?: ActiveRetrievalSession | null
+): PlanDecision {
     const mode = classifyFallbackMode(input);
+    const intent = mergeIntent(
+        extractDeterministicIntent(input.question, activeRetrievalSession),
+        {}
+    );
     return normalizePlanDecision(input, {
         mode,
         reason:
@@ -575,6 +511,7 @@ export function guessPlan(input: TurnInput): PlanDecision {
         candidateCapabilities:
             mode === "research" ? [...GENERIC_RESEARCH_CAPABILITIES] : [],
         confidence: mode === "research" ? "best_effort" : "confident",
+        intent,
     });
 }
 
@@ -587,7 +524,10 @@ export async function planWithModel(
         "activeMemberTarget" | "activeChannelTarget" | "activeResolvedChannelIds" | "activeRetrievalSession"
     >
 ): Promise<PlanDecision> {
-    const fallback = guessPlan(input);
+    const activeSession = activeTargets?.activeRetrievalSession ?? null;
+    const fallback = guessPlan(input, activeSession);
+    const deterministicIntent = extractDeterministicIntent(input.question, activeSession);
+
     try {
         const raw = await ModelGateway.generateJson<PlanDecision>(
             [
@@ -631,7 +571,10 @@ export async function planWithModel(
                 },
             }
         );
-        return normalizePlanDecision(input, raw);
+        const modelIntent = parseModelIntent(raw);
+        const intent = mergeIntent(deterministicIntent, modelIntent);
+        const plan = normalizePlanDecision(input, raw);
+        return { ...plan, intent };
     } catch {
         return fallback;
     }
@@ -803,6 +746,7 @@ function normalizeStepDecision(
         | "activeChannelTarget"
         | "activeResolvedChannelIds"
         | "activeRetrievalSession"
+        | "turnIntent"
     >,
     step: StepDecision
 ): StepDecision {
@@ -834,7 +778,10 @@ function normalizeStepDecision(
     const activeMember = state.activeMemberTarget;
     const activeChannelTarget = state.activeChannelTarget || latestResolvedChannelTarget;
     const activeRetrievalSession = state.activeRetrievalSession;
-    const timeBounds = parseNaturalTimeBounds(state.question);
+    const timeBounds = {
+        beforeTimestamp: state.turnIntent?.beforeTimestamp ?? undefined,
+        afterTimestamp: state.turnIntent?.afterTimestamp ?? undefined,
+    };
     const resetRetrievalSession =
         Boolean(
             structuralChannel &&
@@ -930,7 +877,7 @@ function normalizeStepDecision(
                     typeof argumentsObject.mode === "string" &&
                     ["history", "semantic", "mixed"].includes(argumentsObject.mode)
                         ? argumentsObject.mode
-                        : inferRetrievalMode(state.question, activeRetrievalSession),
+                        : state.turnIntent?.retrievalMode ?? activeRetrievalSession?.mode ?? "history",
                 limit:
                     typeof argumentsObject.limit === "number" ? argumentsObject.limit : 8,
                 ...(resolvedMember?.resolvedId || activeMember?.resolvedId
@@ -1101,6 +1048,7 @@ export function fallbackStepDecision(
         | "activeChannelTarget"
         | "activeResolvedChannelIds"
         | "activeRetrievalSession"
+        | "turnIntent"
     >
 ): StepDecision {
     const resolvedMember = extractLatestResolvedMember(state.toolHistory);
@@ -1124,7 +1072,7 @@ export function fallbackStepDecision(
         activeRetrievalSession?.continuationAvailable &&
         !changedScope &&
         state.candidateCapabilities.includes("retrieve_messages") &&
-        looksLikeContinuation(state.question)
+        state.turnIntent?.continuation === true
     ) {
         return normalizeStepDecision(state, {
             nextCapability: "retrieve_messages",
@@ -1262,6 +1210,7 @@ export async function planNextStep(
         | "activeChannelTarget"
         | "activeResolvedChannelIds"
         | "activeRetrievalSession"
+        | "turnIntent"
     >
 ): Promise<StepDecision> {
     const fallback = fallbackStepDecision(state);

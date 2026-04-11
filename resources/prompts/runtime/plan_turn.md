@@ -14,6 +14,7 @@ Rules:
 - Do not choose refusal for ordinary conversation. If the user is vague, the runtime should stay conversational and recover.
 - Keep the candidate capability list short and realistic.
 - Use only capability IDs that exist in the registry.
+- The `intent` block is optional guidance. Fill in what you can infer from the question — continuation desire, retrieval mode preference, time window. Use null for uncertain fields. The runtime may override with structural signals.
 - Return strict JSON only.
 
 Stable capability ids:
@@ -32,7 +33,13 @@ JSON shape:
   "goal": string,
   "successCriteria": string,
   "candidateCapabilities": string[],
-  "confidence": "confident" | "best_effort" | "insufficient"
+  "confidence": "confident" | "best_effort" | "insufficient",
+  "intent": {
+    "continuation": true | false | null,
+    "retrievalMode": "history" | "semantic" | "mixed" | null,
+    "beforeDate": "YYYY-MM-DD" | null,
+    "afterDate": "YYYY-MM-DD" | null
+  }
 }
 
 Trigger: {{trigger}}
