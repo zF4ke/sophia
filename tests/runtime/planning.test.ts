@@ -258,6 +258,38 @@ describe("runtime planning", () => {
         });
     });
 
+    it("generic step fallback reuses named channel references from the replied message", () => {
+        const step = fallbackStepDecision({
+            question: "tenta de novo",
+            actorId: "u-requester",
+            replyContext: {
+                messageId: "m1",
+                authorId: "u-sophia",
+                authorName: "Sophia",
+                authorDisplayName: "Sophia",
+                content: "Pois é, F4zke, o #atlas continua sendo um mistério por aqui!",
+                jumpLink: null,
+            },
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
+            candidateCapabilities: [
+                "resolve_channel_targets",
+                "retrieve_messages",
+                "list_guild_structure",
+            ],
+            toolHistory: [],
+        });
+
+        expect(step).toEqual({
+            nextCapability: "resolve_channel_targets",
+            arguments: { targetText: "atlas" },
+            reason: "Resolve the exact channel or category reference before broader retrieval.",
+            learnedExpectation:
+                "Return exact message-channel ids for the current guild target.",
+        });
+    });
+
     it("generic step fallback uses retrieve_messages before broader discovery when no exact references exist", () => {
         const step = fallbackStepDecision({
             question: "what is going on in the server?",

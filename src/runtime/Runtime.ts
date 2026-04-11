@@ -883,7 +883,11 @@ export class Runtime {
                 const researchInput = this.requestContext.get(state.requestId);
                 await researchInput?.debugSession?.setContextPreview?.({
                     recentChannelMessages: state.channelContext.map((m) => `${m.authorName}: ${m.content}`),
-                    evidencePreview: evidence.slice(0, 4).map((e) => `[${e.tool}] ${e.authorName || "?"}: ${e.content}`),
+                    evidencePreview: evidence.slice(0, 6).map((e) => {
+                        const channelLabel = e.channelName ? `#${e.channelName}` : "?";
+                        const authorLabel = e.authorName || "?";
+                        return `[${e.tool}] ${channelLabel} · ${authorLabel}: ${e.content}`;
+                    }),
                     recentTurns: state.recentTurns.map((t) => `Q: ${t.question} | A: ${t.answer}`),
                 });
 

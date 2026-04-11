@@ -179,7 +179,7 @@ describe("renderDebugTrace", () => {
                     "One Person: E o pior e que ela uma das poucas que voce nao pode comprar via orb",
                 ],
                 evidencePreview: [
-                    "[retrieve_messages] One Person: Ha uma nameplate que eu queria comprar",
+                    "[retrieve_messages] #reflexoes · One Person: Ha uma nameplate que eu queria comprar",
                 ],
                 recentTurns: [
                     "Q: oi | A: Oi! Estou por aqui.",
@@ -211,6 +211,7 @@ describe("renderDebugTrace", () => {
         expect(rendered).toContain("One Person:");
         expect(rendered).toContain("Evidence:");
         expect(rendered).toContain("Prior Turns:");
+        expect(rendered).toContain("#reflexoes");
     });
 
     it("omits context panel when contextPreview is null", () => {

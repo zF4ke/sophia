@@ -92,6 +92,7 @@ function extractStructuralChannelReference(
         extractChannelMentionId(question) ||
         extractNamedGuildTargetReference(question) ||
         (replyContext?.content ? extractChannelMentionId(replyContext.content) : null) ||
+        (replyContext?.content ? extractNamedGuildTargetReference(replyContext.content) : null) ||
         null
     );
 }
