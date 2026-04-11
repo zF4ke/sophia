@@ -108,6 +108,7 @@ Key docs:
 - `docs/commands-and-admin.md`
 - `docs/cleanup-migration.md`
 - `docs/how-sophia-works.md`
+- `docs/feature-user-stories.md`
 - `docs/ui.md`
 
 ## Verification

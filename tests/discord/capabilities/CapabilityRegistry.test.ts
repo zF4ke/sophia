@@ -187,4 +187,128 @@ describe("CapabilityRegistry", () => {
             confidence: "high",
         });
     });
+
+    it("executes list_guild_structure through the shared guild discovery service", async () => {
+        vi.spyOn(DiscordGuildDiscoveryService, "listGuildStructure").mockResolvedValue([
+            {
+                id: "cat-1",
+                guildId: "g1",
+                name: "General",
+                type: "4",
+                parentCategoryId: null,
+                parentCategoryName: null,
+                isReadable: false,
+                isViewable: true,
+                isIndexed: false,
+                source: "live",
+                missingOrDeletedPossible: false,
+            },
+            {
+                id: "c-general",
+                guildId: "g1",
+                name: "general",
+                type: "0",
+                parentCategoryId: "cat-1",
+                parentCategoryName: "General",
+                isReadable: true,
+                isViewable: true,
+                isIndexed: true,
+                source: "live",
+                missingOrDeletedPossible: false,
+            },
+        ]);
+
+        const capability = CapabilityRegistry.get("list_guild_structure");
+        const result = await capability.run(
+            {
+                guild: { id: "g1" } as any,
+                question: "show me the guild structure",
+            },
+            {}
+        );
+
+        expect(DiscordGuildDiscoveryService.listGuildStructure).toHaveBeenCalledWith(
+            expect.objectContaining({ id: "g1" })
+        );
+        expect(result.tool).toBe("list_guild_structure");
+        expect(result.data).toMatchObject({
+            entries: [expect.objectContaining({ id: "cat-1" }), expect.objectContaining({ id: "c-general" })],
+        });
+    });
+
+    it("executes list_members through the live member service", async () => {
+        vi.spyOn(DiscordLiveService, "listMembers").mockResolvedValue({
+            members: [
+                {
+                    id: "u1",
+                    username: "alice",
+                    displayName: "Alice",
+                    joinedTimestamp: 100,
+                },
+            ],
+            totalCount: 1,
+            returnedCount: 1,
+            hasMore: false,
+            offset: 0,
+            limit: 10,
+            sort: "joined_at",
+            filters: "alice",
+        });
+
+        const capability = CapabilityRegistry.get("list_members");
+        const result = await capability.run(
+            {
+                guild: { id: "g1" } as any,
+                question: "list alice",
+            },
+            {
+                filters: "alice",
+                limit: 10,
+                offset: 0,
+            }
+        );
+
+        expect(DiscordLiveService.listMembers).toHaveBeenCalledWith(
+            expect.objectContaining({ id: "g1" }),
+            expect.objectContaining({
+                filters: "alice",
+                limit: 10,
+                offset: 0,
+                sort: "joined_at",
+            })
+        );
+        expect(result.tool).toBe("list_members");
+        expect(result.data).toMatchObject({
+            returnedCount: 1,
+            members: [expect.objectContaining({ id: "u1" })],
+        });
+    });
+
+    it("executes get_guild_context through the live guild service", async () => {
+        vi.spyOn(DiscordLiveService, "getGuildContext").mockResolvedValue({
+            id: "g1",
+            name: "Oz Synthesis",
+            memberCount: 42,
+            channelCount: 12,
+        });
+
+        const capability = CapabilityRegistry.get("get_guild_context");
+        const result = await capability.run(
+            {
+                guild: { id: "g1" } as any,
+                question: "how big is this guild?",
+            },
+            {}
+        );
+
+        expect(DiscordLiveService.getGuildContext).toHaveBeenCalledWith(
+            expect.objectContaining({ id: "g1" })
+        );
+        expect(result.tool).toBe("get_guild_context");
+        expect(result.data).toMatchObject({
+            name: "Oz Synthesis",
+            memberCount: 42,
+            channelCount: 12,
+        });
+    });
 });

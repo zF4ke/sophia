@@ -14,6 +14,7 @@ This file is the engineering handoff for the current runtime.
 - `docs/cleanup-migration.md`
 - `docs/ui.md`
 - `docs/how-sophia-works.md`
+- `docs/feature-user-stories.md`
 
 ## Runtime Model
 

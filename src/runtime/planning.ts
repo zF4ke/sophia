@@ -437,6 +437,17 @@ function normalizeEvidenceDecision(
     }
 
     if (counts.liveEvidenceCount > 0) {
+        if (!decision.sufficient) {
+            return {
+                sufficient: false,
+                confidence: sanitizeConfidence(decision.confidence, "best_effort"),
+                reason: sanitizeReason(
+                    decision.reason,
+                    "Discord live metadata is available, but it is not enough yet."
+                ),
+            };
+        }
+
         return {
             sufficient: true,
             confidence: sanitizeConfidence(decision.confidence, "best_effort"),
