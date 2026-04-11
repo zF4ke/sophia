@@ -1,7 +1,14 @@
 import { ContainerBuilder, TextDisplayBuilder } from "discord.js";
 import type { DebugTraceState } from "@/discord/debug/types";
 
-const TIMELINE_VISIBLE_ROWS = 20;
+const TIMELINE_VISIBLE_ROWS = 25;
+const MAX_LINE_LENGTH = 120;
+const REQUEST_SECTION_BUDGET = 480;
+const CONVERSATION_SECTION_BUDGET = 520;
+const RETRIEVAL_SECTION_BUDGET = 900;
+const CONTEXT_SECTION_BUDGET = 700;
+const TIMELINE_SECTION_BUDGET = 1500;
+const FAILURE_SECTION_BUDGET = 240;
 
 function formatDuration(startedAt: number): string {
     const elapsedMs = Math.max(0, Date.now() - startedAt);
@@ -24,7 +31,11 @@ function formatChannelList(channelIds: string[]): string {
         return "none";
     }
 
-    return channelIds.map((channelId) => `<#${channelId}>`).join(", ");
+    const visible = channelIds.slice(0, 6).map((channelId) => `<#${channelId}>`);
+    const hiddenCount = Math.max(0, channelIds.length - visible.length);
+    return hiddenCount > 0
+        ? `${visible.join(", ")}, +${hiddenCount} more`
+        : visible.join(", ");
 }
 
 function trimPreview(text: string | null | undefined, maxLength = 220): string {
@@ -36,27 +47,44 @@ function trimPreview(text: string | null | undefined, maxLength = 220): string {
     return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
 }
 
-function buildSection(title: string, lines: string[], accentColor: number): ContainerBuilder {
+function fitSectionLines(lines: string[], maxChars: number): string[] {
+    const fitted: string[] = [];
+    let used = 0;
+
+    for (const line of lines) {
+        const trimmed = trimPreview(line, MAX_LINE_LENGTH);
+        const nextLength = trimmed.length + (fitted.length ? 1 : 0);
+        if (used + nextLength > maxChars) {
+            fitted.push("...truncated");
+            break;
+        }
+        fitted.push(trimmed);
+        used += nextLength;
+    }
+
+    return fitted.length ? fitted : ["none"];
+}
+
+function buildSection(
+    title: string,
+    lines: string[],
+    accentColor: number,
+    maxChars: number
+): ContainerBuilder {
     return new ContainerBuilder()
         .setAccentColor(accentColor)
         .addTextDisplayComponents(
             new TextDisplayBuilder().setContent(title),
-            new TextDisplayBuilder().setContent(lines.join("\n"))
+            new TextDisplayBuilder().setContent(fitSectionLines(lines, maxChars).join("\n"))
         );
 }
 
 function buildTimelineLines(state: DebugTraceState): string[] {
-    const lines = state.timeline.length
+    return state.timeline.length
         ? state.timeline
               .slice(0, TIMELINE_VISIBLE_ROWS)
-              .map((entry) => `- [${entry.label}] ${entry.detail}`)
+              .map((entry) => `- [${entry.label}] ${trimPreview(entry.detail, 96)}`)
         : ["- Waiting for runtime activity."];
-
-    while (lines.length < TIMELINE_VISIBLE_ROWS) {
-        lines.push("\u200b");
-    }
-
-    return lines;
 }
 
 export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
@@ -152,9 +180,9 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
     const timelineEntries = buildTimelineLines(state);
 
     const containers = [
-        buildSection("## Sophia Debug · Request", overviewLines, accentColor),
-        buildSection("## Sophia Debug · Conversation", conversationLines, accentColor),
-        buildSection("## Sophia Debug · Retrieval", retrievalLines, accentColor),
+        buildSection("## Sophia Debug · Request", overviewLines, accentColor, REQUEST_SECTION_BUDGET),
+        buildSection("## Sophia Debug · Conversation", conversationLines, accentColor, CONVERSATION_SECTION_BUDGET),
+        buildSection("## Sophia Debug · Retrieval", retrievalLines, accentColor, RETRIEVAL_SECTION_BUDGET),
     ];
 
     if (state.contextPreview) {
@@ -185,13 +213,13 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
         }
         if (contextLines.length) {
             containers.push(
-                buildSection("## Sophia Debug · Context", contextLines, accentColor)
+                buildSection("## Sophia Debug · Context", contextLines, accentColor, CONTEXT_SECTION_BUDGET)
             );
         }
     }
 
     containers.push(
-        buildSection("## Sophia Debug · Timeline", timelineEntries, accentColor),
+        buildSection("## Sophia Debug · Timeline", timelineEntries, accentColor, TIMELINE_SECTION_BUDGET),
     );
 
     if (state.failureMessage) {
@@ -199,7 +227,8 @@ export function renderDebugTrace(state: DebugTraceState): ContainerBuilder[] {
             buildSection(
                 "## Sophia Debug · Failure",
                 [formatLabelValue("Error", state.failureMessage)],
-                0xed4245
+                0xed4245,
+                FAILURE_SECTION_BUDGET
             )
         );
     }

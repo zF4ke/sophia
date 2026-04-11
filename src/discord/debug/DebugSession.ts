@@ -10,7 +10,7 @@ import type { RetrievalSummary, RuntimeMode, StopReason, TurnTrigger } from "@/r
 
 const MAX_EVENTS = 8;
 const MAX_PREVIEW_LENGTH = 140;
-const MAX_TIMELINE = 12;
+const MAX_TIMELINE = 25;
 
 function normalizePreview(question: string): string {
     const compact = question.replace(/\s+/g, " ").trim();
