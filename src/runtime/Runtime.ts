@@ -319,8 +319,8 @@ function extractResolvedMemberTarget(run: DiscordToolResult): ResolvedMemberIden
     return {
         query: String(item.query || resolvedId),
         resolvedId,
-        displayName: String(item.displayName || "Unknown"),
-        username: String(item.username || "unknown"),
+        displayName: String(item.displayName || "No Display Name"),
+        username: String(item.username || "no username"),
         globalName: item.globalName == null ? null : String(item.globalName),
         nickname: item.nickname == null ? null : String(item.nickname),
         isBot: Boolean(item.isBot),
@@ -535,7 +535,18 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
         const semanticRows = payload.semanticMatches || [];
         const sourceOrigin = (payload.sourceOrigin || "none") as RetrievalSummary["sourceOrigin"];
         const historyEvidence = historyRows.slice(0, 6).map((item) => {
-            const content = String(item.content || "").slice(0, 260);
+            const body = String(item.content || "").slice(0, 260);
+            const authorId = item.authorId == null ? null : String(item.authorId);
+            const authorName = item.authorName == null ? null : String(item.authorName);
+            const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
+            const authorPrefix = authorName
+                ? authorUsername && authorUsername !== authorName
+                    ? `[${authorName} (@${authorUsername})${authorId ? ` id=${authorId}` : ""}]: `
+                    : `[${authorName}${authorId ? ` id=${authorId}` : ""}]: `
+                : authorId
+                  ? `[id=${authorId}]: `
+                  : "";
+            const content = authorPrefix + body;
             return {
                 tool: "retrieve_messages" as const,
                 summary: run.summary,
@@ -543,9 +554,9 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
                 evidenceRole: "history_evidence" as const,
                 strength: "strong" as const,
                 sourceOrigin,
-                authorId: item.authorId == null ? null : String(item.authorId),
-                authorName: item.authorName == null ? null : String(item.authorName),
-                authorUsername: item.authorUsername == null ? null : String(item.authorUsername),
+                authorId,
+                authorName,
+                authorUsername,
                 channelId: item.channelId == null ? null : String(item.channelId),
                 channelName: item.channelName == null ? null : String(item.channelName),
                 jumpLink: item.jumpLink == null ? null : String(item.jumpLink),
@@ -553,12 +564,23 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             };
         });
         const semanticEvidence = semanticRows.slice(0, 6).map((item) => {
-            const content = String(item.content || "").slice(0, 260);
+            const body = String(item.content || "").slice(0, 260);
             const lexicalScore = Number(item.lexicalScore || 0);
             const strength: EvidenceItem["strength"] =
-                lexicalScore >= 2 || (lexicalScore >= 1 && content.length >= 80)
+                lexicalScore >= 2 || (lexicalScore >= 1 && body.length >= 80)
                     ? "strong"
                     : "weak";
+            const authorId = item.authorId == null ? null : String(item.authorId);
+            const authorName = item.authorName == null ? null : String(item.authorName);
+            const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
+            const authorPrefix = authorName
+                ? authorUsername && authorUsername !== authorName
+                    ? `[${authorName} (@${authorUsername})${authorId ? ` id=${authorId}` : ""}]: `
+                    : `[${authorName}${authorId ? ` id=${authorId}` : ""}]: `
+                : authorId
+                  ? `[id=${authorId}]: `
+                  : "";
+            const content = authorPrefix + body;
 
             return {
                 tool: "retrieve_messages" as const,
@@ -567,9 +589,9 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
                 evidenceRole: "semantic_evidence" as const,
                 strength,
                 sourceOrigin,
-                authorId: item.authorId == null ? null : String(item.authorId),
-                authorName: item.authorName == null ? null : String(item.authorName),
-                authorUsername: item.authorUsername == null ? null : String(item.authorUsername),
+                authorId,
+                authorName,
+                authorUsername,
                 channelId: item.channelId == null ? null : String(item.channelId),
                 channelName: item.channelName == null ? null : String(item.channelName),
                 jumpLink: item.jumpLink == null ? null : String(item.jumpLink),
@@ -588,7 +610,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             {
                 tool: "resolve_member_identity",
                 summary: run.summary,
-                content: `${String(item.displayName || "Unknown")} (@${String(item.username || "unknown")}) from ${currentState}${resolvedId ? `; id=${resolvedId}` : ""}`,
+                content: `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")}) from ${currentState}${resolvedId ? `; id=${resolvedId}` : ""}`,
                 evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.resolve_member_identity,
                 strength: "metadata",
                 sourceOrigin: "none",
