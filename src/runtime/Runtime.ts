@@ -1020,13 +1020,33 @@ export class Runtime {
                     const seen = (repeated.get(signature) || 0) + 1;
                     repeated.set(signature, seen);
                     if (seen > state.constraints.maxRepeatedCallSignature) {
-                        stopReason = "confidence_plateau";
+                        const warningRecord: ToolInvocationRecord = {
+                            tool,
+                            arguments: step.arguments,
+                            summary: `Blocked: identical call already made. Try different arguments or a different capability.`,
+                            learned: `This exact call (${signature}) was already made and blocked. You must use different arguments or choose a different capability.`,
+                            confidenceImproved: false,
+                            output: {
+                                tool,
+                                summary: `Repeated call blocked.`,
+                                data: null,
+                                errorMessage: `You already called ${tool} with these exact arguments. Change the arguments or choose a different capability.`,
+                            },
+                            durationMs: 0,
+                            blocked: true,
+                        };
+                        toolHistory.push(warningRecord);
                         traceEvents.push({
                             label: "step",
-                            detail: `Blocked repeated call ${signature}.`,
+                            detail: `Blocked repeated call ${signature}. Model warned to try different args.`,
                             timestamp: Date.now(),
                         });
-                        break;
+                        const repeatedViolations = [...repeated.values()].filter((v) => v > state.constraints.maxRepeatedCallSignature).length;
+                        if (repeatedViolations >= 2) {
+                            stopReason = "confidence_plateau";
+                            break;
+                        }
+                        continue;
                     }
 
                     const input = this.requestContext.get(state.requestId);
@@ -1515,7 +1535,7 @@ export class Runtime {
                 answer: result.responseDraft || buildDirectConversationFallback(input.question),
                 citations: collectCitations(result.toolHistory as ToolInvocationRecord[]),
                 classification: result.classification || classify(result.mode || "conversation"),
-                toolRuns: (result.toolHistory as ToolInvocationRecord[]).map((item) => item.output),
+                toolRuns: (result.toolHistory as ToolInvocationRecord[]).filter((item) => !item.blocked).map((item) => item.output),
                 confidence: result.confidence,
             };
         } catch (error) {

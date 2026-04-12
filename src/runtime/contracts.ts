@@ -134,6 +134,7 @@ export interface ToolInvocationRecord {
     output: DiscordToolResult;
     durationMs: number;
     retrievalSummary?: RetrievalSummary | null;
+    blocked?: boolean;
 }
 
 export interface EvidenceItem {
