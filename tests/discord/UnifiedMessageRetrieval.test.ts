@@ -115,6 +115,100 @@ describe("UnifiedMessageRetrieval", () => {
         expect(result.sourceOrigin).toBe("cache_after_refresh");
     });
 
+    it("keeps guild display name and nickname after cache_after_refresh when fetched messages lack member", async () => {
+        vi.spyOn(ModelGateway, "embedTexts").mockResolvedValue([[1, 0, 0]]);
+
+        const fetchedMessages = new Map([
+            [
+                "m1",
+                {
+                    id: "m1",
+                    createdTimestamp: 1770600000000,
+                    content: "A qualidade audiovisual desse vídeo é bizarra.",
+                    author: {
+                        id: "u-openrosen",
+                        username: "oneperson",
+                        globalName: "One Person",
+                        bot: false,
+                    },
+                    member: null,
+                    guildId: "g1",
+                    channelId: "c-comandos",
+                    channel: {
+                        id: "c-comandos",
+                        name: "comandos",
+                        isTextBased: () => true,
+                    },
+                    url: "https://discord.com/channels/g1/c-comandos/m1",
+                    attachments: {
+                        map: () => [],
+                    },
+                    reference: null,
+                    guild: null,
+                } as any,
+            ],
+        ]);
+
+        const fetchMember = vi.fn().mockResolvedValue({
+            id: "u-openrosen",
+            displayName: "openrosen",
+            nickname: "openrosen",
+            user: {
+                id: "u-openrosen",
+                username: "oneperson",
+                globalName: "One Person",
+            },
+        });
+
+        const guild = {
+            id: "g1",
+            members: {
+                cache: new Map(),
+                fetch: fetchMember,
+            },
+            channels: {
+                cache: new Map([
+                    [
+                        "c-comandos",
+                        {
+                            id: "c-comandos",
+                            name: "comandos",
+                            type: 0,
+                            viewable: true,
+                            messages: {
+                                fetch: vi
+                                    .fn()
+                                    .mockResolvedValueOnce(fetchedMessages)
+                                    .mockResolvedValueOnce(new Map()),
+                            },
+                        },
+                    ],
+                ]),
+            },
+        } as any;
+
+        const result = await UnifiedMessageRetrieval.retrieve({
+            guild,
+            question: "9 de fevereiro o openrosen mandou um link",
+            channelIds: ["c-comandos"],
+            mode: "history",
+            afterTimestamp: 1770595200000,
+            beforeTimestamp: 1770681600000,
+            limit: 4,
+        });
+
+        expect(fetchMember).toHaveBeenCalledWith("u-openrosen");
+        expect(result.sourceOrigin).toBe("cache_after_refresh");
+        expect(result.historyMessages).toEqual([
+            expect.objectContaining({
+                messageId: "m1",
+                authorName: "openrosen",
+                authorUsername: "oneperson",
+                authorNickname: "openrosen",
+            }),
+        ]);
+    });
+
     it("continues semantic-only retrieval with a stable cursor when history is empty from the start", async () => {
         vi.spyOn(ModelGateway, "embedTexts").mockResolvedValue([[1, 0, 0]]);
 

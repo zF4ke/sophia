@@ -266,6 +266,19 @@ export class DiscordMemoryService {
             return;
         }
 
+        if (!message.member && message.guild?.members?.fetch && message.author?.id) {
+            try {
+                const fetchedMember =
+                    message.guild.members.cache.get(message.author.id) ||
+                    (await message.guild.members.fetch(message.author.id));
+                if (fetchedMember) {
+                    Object.assign(message, { member: fetchedMember });
+                }
+            } catch {
+                // Keep ingestion best-effort when member lookup is unavailable.
+            }
+        }
+
         await this.ingestStoredMessage(MessageNormalizer.toStoredMessage(message));
     }
 

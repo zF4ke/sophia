@@ -58,6 +58,51 @@ function resolveMessageAuthorIdentity(message: any): {
     };
 }
 
+async function enrichMessagesWithGuildMembers(guild: Guild | null, messages: Array<any>): Promise<void> {
+    if (!guild?.members?.fetch) {
+        return;
+    }
+
+    const memberPromises = new Map<string, Promise<any>>();
+
+    for (const message of messages) {
+        const authorId = typeof message?.author?.id === "string" ? message.author.id : null;
+        if (!authorId || message.member) {
+            continue;
+        }
+
+        if (!memberPromises.has(authorId)) {
+            memberPromises.set(
+                authorId,
+                Promise.resolve(guild.members.cache?.get?.(authorId) ?? null).then(async (cached) => {
+                    if (cached) {
+                        return cached;
+                    }
+
+                    try {
+                        return await guild.members.fetch(authorId);
+                    } catch {
+                        return null;
+                    }
+                })
+            );
+        }
+    }
+
+    if (!memberPromises.size) {
+        return;
+    }
+
+    for (const message of messages) {
+        const authorId = typeof message?.author?.id === "string" ? message.author.id : null;
+        if (!authorId || message.member || !memberPromises.has(authorId)) {
+            continue;
+        }
+
+        message.member = await memberPromises.get(authorId);
+    }
+}
+
 function isThreadLike(channel: { type?: ChannelType | number | string } | null | undefined): boolean {
     return (
         channel?.type === ChannelType.PublicThread ||
@@ -338,6 +383,7 @@ export class DiscordChannelCrawlService {
         }
 
         await DiscordMemoryService.updateChannelCrawlState(channel.id, before || null, exhausted);
+        await enrichMessagesWithGuildMembers(guild, fetchedMessages);
         const previewMessages = buildPreviewMessages(fetchedMessages, queryHint);
         this.enqueueBackgroundIngest(fetchedMessages);
 
