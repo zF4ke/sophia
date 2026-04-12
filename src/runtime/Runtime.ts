@@ -552,21 +552,20 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
         const historyRows = payload.historyMessages || [];
         const semanticRows = payload.semanticMatches || [];
         const sourceOrigin = (payload.sourceOrigin || "none") as RetrievalSummary["sourceOrigin"];
-        const historyEvidence = historyRows.slice(0, 6).map((item) => {
+        const historyEvidence = historyRows.slice(0, 30).map((item) => {
             const body = String(item.content || "").slice(0, 260);
             const authorId = item.authorId == null ? null : String(item.authorId);
             const authorName = item.authorName == null ? null : String(item.authorName);
             const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
             const authorNickname = item.authorNickname == null ? null : String(item.authorNickname);
-            const authorPrefix = `${formatAuthorIdentity({ authorId, authorName, authorUsername, authorNickname })}: `;
-            const content = authorPrefix + body;
             return {
                 tool: "retrieve_messages" as const,
                 summary: run.summary,
-                content,
+                content: body,
                 evidenceRole: "history_evidence" as const,
                 strength: "strong" as const,
                 sourceOrigin,
+                messageId: item.messageId == null ? null : String(item.messageId),
                 authorId,
                 authorName,
                 authorUsername,
@@ -577,7 +576,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
                 createdTimestamp: item.createdTimestamp == null ? null : Number(item.createdTimestamp),
             };
         });
-        const semanticEvidence = semanticRows.slice(0, 6).map((item) => {
+        const semanticEvidence = semanticRows.slice(0, 30).map((item) => {
             const body = String(item.content || "").slice(0, 260);
             const lexicalScore = Number(item.lexicalScore || 0);
             const strength: EvidenceItem["strength"] =
@@ -588,16 +587,15 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             const authorName = item.authorName == null ? null : String(item.authorName);
             const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
             const authorNickname = item.authorNickname == null ? null : String(item.authorNickname);
-            const authorPrefix = `${formatAuthorIdentity({ authorId, authorName, authorUsername, authorNickname })}: `;
-            const content = authorPrefix + body;
 
             return {
                 tool: "retrieve_messages" as const,
                 summary: run.summary,
-                content,
+                content: body,
                 evidenceRole: "semantic_evidence" as const,
                 strength,
                 sourceOrigin,
+                messageId: item.messageId == null ? null : String(item.messageId),
                 authorId,
                 authorName,
                 authorUsername,
@@ -754,6 +752,18 @@ function summarizeRecentTurns(turns: GraphState["recentTurns"]): string {
         .join("\n");
 }
 
+function looksLikeResearchQuestion(question: string): boolean {
+    const compact = question.toLowerCase();
+    return (
+        /\b(mandou|enviou|postou|disse|falou|citou|mencionou|sent|posted|said)\b/.test(compact) ||
+        /\b(canal|channel|servidor|server)\b/.test(compact) ||
+        /\b(fevereiro|janeiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/.test(compact) ||
+        /\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/.test(compact) ||
+        /\b(yesterday|ontem|hoje|today|last week|ultima semana)\b/.test(compact) ||
+        /\b\d{1,2}\s*(?:de\s+)?\w+eiro\b/.test(compact)
+    );
+}
+
 function buildFallbackAnswer(
     state: Pick<
         RuntimeState,
@@ -767,7 +777,8 @@ function buildFallbackAnswer(
         state.mode === "conversation" &&
         !state.replyContext &&
         state.recentTurns.length === 0 &&
-        state.evidence.length === 0
+        state.evidence.length === 0 &&
+        !looksLikeResearchQuestion(state.question)
     ) {
         return buildDirectConversationFallback(state.question);
     }
@@ -981,6 +992,8 @@ export class Runtime {
                 for (let pass = 0; pass < state.constraints.maxResearchPasses; pass += 1) {
                     const evidenceDecision = await judgeEvidence({
                         question: state.question,
+                        goal: state.goal,
+                        successCriteria: state.successCriteria,
                         toolHistory,
                         evidence,
                         actorId: state.actorId,
@@ -995,7 +1008,21 @@ export class Runtime {
                     const evidenceCounts = countEvidence({ evidence });
                     const hasReusableMessageEvidence = evidenceCounts.messageEvidenceCount > 0;
 
-                    if (evidenceDecision.sufficient && (toolHistory.length > 0 || hasReusableMessageEvidence)) {
+                    // When no tool has been called this turn yet, do not let
+                    // stale evidence from prior turns satisfy the judge when
+                    // the planner thinks retrieval is needed AND the turn is
+                    // not a continuation.  Continuations legitimately reuse
+                    // prior evidence for follow-up questions on the same topic.
+                    const needsFreshRetrieval =
+                        toolHistory.length === 0 &&
+                        state.candidateCapabilities.includes("retrieve_messages") &&
+                        !state.turnIntent?.continuation;
+
+                    if (
+                        evidenceDecision.sufficient &&
+                        !needsFreshRetrieval &&
+                        (toolHistory.length > 0 || hasReusableMessageEvidence)
+                    ) {
                         confidence = evidenceDecision.confidence;
                         stopReason = "evidence_sufficient";
                         break;
@@ -1221,6 +1248,8 @@ export class Runtime {
 
                 const finalEvidenceDecision = await judgeEvidence({
                     question: state.question,
+                    goal: state.goal,
+                    successCriteria: state.successCriteria,
                     toolHistory,
                     evidence,
                     actorId: state.actorId,

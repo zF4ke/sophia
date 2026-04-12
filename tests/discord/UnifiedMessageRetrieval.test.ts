@@ -436,4 +436,93 @@ describe("UnifiedMessageRetrieval", () => {
             })
         );
     });
+
+    it("triggers targeted time-scoped crawl when standard crawl misses the target time range", async () => {
+        const FEB_9 = Date.parse("2026-02-09T00:00:00Z");
+        const FEB_10 = Date.parse("2026-02-10T00:00:00Z");
+
+        // Standard crawl returns recent messages (April) — won't match Feb 9 filter
+        vi.spyOn(DiscordChannelCrawlService, "crawlChannelMessages").mockResolvedValue({
+            channelId: "c-comandos",
+            channelName: "comandos",
+            messagesFetched: 50,
+            messagesStored: 50,
+            exhausted: false,
+            oldestFetchedMessageId: "m-recent",
+            queryHint: null,
+            backgroundIngestQueued: true,
+            previewMessages: [],
+        });
+
+        // Targeted crawl fetches messages from the right time range
+        vi.spyOn(DiscordChannelCrawlService, "crawlChannelMessagesAtTime").mockResolvedValue({
+            channelId: "c-comandos",
+            channelName: "comandos",
+            messagesFetched: 20,
+            messagesStored: 20,
+            exhausted: false,
+            oldestFetchedMessageId: "m-feb8",
+            queryHint: null,
+            backgroundIngestQueued: true,
+            previewMessages: [],
+        });
+
+        vi.spyOn(DiscordChannelCrawlService, "waitForBackgroundIngest").mockResolvedValue();
+
+        const historySpy = vi
+            .spyOn(DiscordMemoryService, "getChannelHistoryPageAsync")
+            // First call: initial DB query before escalation — empty
+            .mockResolvedValueOnce([])
+            // Second call: after standard crawl (recent messages don't match time filter) — still empty
+            .mockResolvedValueOnce([])
+            // Third call: after targeted crawl, messages from Feb 9 are now in DB
+            .mockResolvedValueOnce([
+                {
+                    id: "m-feb9-link",
+                    guildId: "g1",
+                    channelId: "c-comandos",
+                    channelName: "comandos",
+                    authorId: "u-open",
+                    authorName: "Openrosen",
+                    authorUsername: "oneperson",
+                    authorNickname: "openrosen",
+                    content: "olhem essa musica https://youtube.com/watch?v=abc",
+                    attachmentsJson: "[]",
+                    referenceMessageId: null,
+                    createdTimestamp: FEB_9 + 3600000,
+                    jumpLink: "https://discord.com/channels/g1/c-comandos/m-feb9-link",
+                    isBot: 0,
+                },
+            ] as any);
+
+        vi.spyOn(DiscordMemoryService, "getChannelCrawlStateAsync").mockResolvedValue([]);
+        vi.spyOn(DiscordMemoryService, "getChannelSummaryAsync").mockResolvedValue(null);
+
+        const mockGuild = {
+            id: "g1",
+            channels: { cache: new Map([["c-comandos", { id: "c-comandos", name: "comandos" }]]) },
+        } as any;
+
+        const result = await UnifiedMessageRetrieval.retrieve({
+            guild: mockGuild,
+            question: "9 de fevereiro o openrosen mandou um link do youtube",
+            channelIds: ["c-comandos"],
+            mode: "history",
+            afterTimestamp: FEB_9,
+            beforeTimestamp: FEB_10,
+            limit: 5,
+        });
+
+        expect(DiscordChannelCrawlService.crawlChannelMessagesAtTime).toHaveBeenCalledWith(
+            mockGuild,
+            "c-comandos",
+            FEB_10,
+            100,
+            expect.any(String),
+            undefined
+        );
+        expect(result.historyMessages.length).toBe(1);
+        expect(result.historyMessages[0].authorName).toBe("Openrosen");
+        expect(result.sourceOrigin).toBe("cache_after_refresh");
+    });
 });

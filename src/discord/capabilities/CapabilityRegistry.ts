@@ -52,11 +52,12 @@ const capabilities: RuntimeCapability[] = [
             "Read scoped Discord channel history first, add semantic matches from the same scope, and continue with live history fetches when needed.",
         inputSchema: z.object({
             query: z.string(),
-            limit: z.number().int().positive().optional(),
+            limit: z.number().int().positive().describe("Page size. Omit to use the server default (typically 50). Use larger values when searching through deep history.").optional(),
             channelIds: z.array(z.string()).optional(),
             authorId: z.string().optional(),
             beforeTimestamp: z.number().optional(),
             afterTimestamp: z.number().optional(),
+            aroundMessageId: z.string().describe("A Discord message ID from evidence. When set, returns messages surrounding that message instead of paginated history. Use this to get context around a found message.").optional(),
             mode: retrievalModeSchema.optional(),
             cursor: z
                 .object({
@@ -179,9 +180,13 @@ const capabilities: RuntimeCapability[] = [
                     typeof args.beforeTimestamp === "number" ? args.beforeTimestamp : undefined,
                 afterTimestamp:
                     typeof args.afterTimestamp === "number" ? args.afterTimestamp : undefined,
+                aroundMessageId:
+                    typeof args.aroundMessageId === "string" && args.aroundMessageId.trim()
+                        ? args.aroundMessageId.trim()
+                        : undefined,
                 cursor,
                 excludedMessageIds,
-                limit: Number(args.limit || 8),
+                limit: Number(args.limit || process.env.RETRIEVAL_HISTORY_LIMIT || 50),
                 onProgress: context.onProgress,
             });
 

@@ -21,6 +21,9 @@ Rules:
 - When the user asks about a specific person by name (e.g. "who is X?", "tell me about X", "are there two X?"), ALWAYS use `list_members` with `filters` set to that name, or prefer `resolve_member_identity`. Listing all members unfiltered wastes a step when you already know the name to search for.
 - Keep retrieval scoped. Do not widen outside the resolved channels unless the user is clearly broadening the request.
 - If no useful next step remains, return null and explain why.
+- When history-mode retrieval returned no relevant messages (all weak, strong=0), switch to `mode: 'semantic'` or `mode: 'mixed'` on the next `retrieve_messages` call to search across all indexed messages instead of only paginating recent history.
+- When evidence contains a message relevant to the question (look for `[msg=ID]` tags), you can call `retrieve_messages` with `aroundMessageId` set to that message's ID to fetch surrounding context. This is useful when you found a mention but need the full conversation.
+- When the user asks to "search deep", "procure a fundo", or similar, use larger `limit` values (100+) and prefer `mode: 'semantic'` or `mode: 'mixed'` to search across all stored messages, not just recent history.
 - Return strict JSON only.
 
 JSON shape:

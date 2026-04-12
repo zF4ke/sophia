@@ -54,6 +54,10 @@ function extractChannelMentionId(text: string): string | null {
     return text.match(/<#(\d+)>/)?.[1] || null;
 }
 
+function extractAllChannelMentionIds(text: string): string[] {
+    return [...text.matchAll(/<#(\d+)>/g)].map((m) => m[1]);
+}
+
 function extractBareSnowflake(text: string): string | null {
     return text.match(/\b\d{6,25}\b/)?.[0] || null;
 }
@@ -61,7 +65,7 @@ function extractBareSnowflake(text: string): string | null {
 function extractNamedGuildTargetReference(text: string): string | null {
     const targetPatterns = [
         /(?:^|[\s([{'"`])#([\p{L}\p{N}][\p{L}\p{N}-]{1,63})/u,
-        /(?:^|\b)(?:canal|channel|categoria|category)[\s\u200b-\u200d\u2060]*#?([\p{L}\p{N}][\p{L}\p{N}-]{1,63})/iu,
+        /(?:^|\b)(?:canal|channel|categoria|category|chat)[\s\u200b-\u200d\u2060]+(?:d[eaou]s?\s+)?#?([\p{L}\p{N}][\p{L}\p{N}-]{1,63})/iu,
     ];
 
     for (const pattern of targetPatterns) {
@@ -532,7 +536,27 @@ function shouldChainStructureCapabilities(capabilities: DiscordToolName[]): bool
     );
 }
 
-function normalizePlanDecision(input: TurnInput, plan: PlanDecision): PlanDecision {
+function intentSuggestsResearch(
+    input: Pick<TurnInput, "question" | "replyContext" | "guild">,
+    deterministicIntent?: Partial<TurnIntent>
+): boolean {
+    if (!input.guild) {
+        return false;
+    }
+    if (deterministicIntent?.beforeTimestamp != null || deterministicIntent?.afterTimestamp != null) {
+        return true;
+    }
+    if (extractStructuralMemberReference(input.question, input.replyContext)) {
+        return true;
+    }
+    return false;
+}
+
+function normalizePlanDecision(
+    input: TurnInput,
+    plan: PlanDecision,
+    deterministicIntent?: Partial<TurnIntent>
+): PlanDecision {
     let mode: RuntimeMode = plan.mode === "research" ? "research" : "conversation";
     let candidateCapabilities = sanitizeCandidateCapabilities(plan.candidateCapabilities);
     const structuralCapabilities = getStructuralCapabilityHints(input);
@@ -551,6 +575,15 @@ function normalizePlanDecision(input: TurnInput, plan: PlanDecision): PlanDecisi
         candidateCapabilities = ensureResearchCapabilities(
             mergeUniqueCapabilities(candidateCapabilities, structuralCapabilities)
         );
+    }
+
+    if (
+        mode !== "research" &&
+        input.guild &&
+        intentSuggestsResearch(input, deterministicIntent)
+    ) {
+        mode = "research";
+        candidateCapabilities = ensureResearchCapabilities(candidateCapabilities);
     }
 
     if (mode === "research" && shouldChainStructureCapabilities(candidateCapabilities)) {
@@ -645,7 +678,8 @@ export function summarizeEvidence(state: Pick<GraphState, "evidence">): string {
                       item.createdTimestamp != null
                           ? ` @${new Date(item.createdTimestamp).toISOString()}`
                           : "";
-                  return `${item.tool}: ${meta ? `[${meta}] ` : ""}${item.content}${timestamp}`;
+                  const msgId = item.messageId ? ` [msg=${item.messageId}]` : "";
+                  return `${item.tool}: ${meta ? `[${meta}] ` : ""}${item.content}${timestamp}${msgId}`;
               })
               .join("\n")
         : "No Discord evidence collected.";
@@ -692,22 +726,26 @@ export function guessPlan(
         extractDeterministicIntent(input.question, activeRetrievalSession),
         {}
     );
-    return normalizePlanDecision(input, {
-        mode,
-        reason:
-            mode === "research"
-                ? "Use current-guild discovery and retrieval if it helps answer the turn."
-                : "Keep this turn conversational by default.",
-        goal: input.question,
-        successCriteria:
-            mode === "research"
-                ? "Use the smallest set of current-guild tools needed for a grounded answer."
-                : "Reply conversationally and directly.",
-        candidateCapabilities:
-            mode === "research" ? [...GENERIC_RESEARCH_CAPABILITIES] : [],
-        confidence: mode === "research" ? "best_effort" : "confident",
-        intent,
-    });
+    return normalizePlanDecision(
+        input,
+        {
+            mode,
+            reason:
+                mode === "research"
+                    ? "Use current-guild discovery and retrieval if it helps answer the turn."
+                    : "Keep this turn conversational by default.",
+            goal: input.question,
+            successCriteria:
+                mode === "research"
+                    ? "Use the smallest set of current-guild tools needed for a grounded answer."
+                    : "Reply conversationally and directly.",
+            candidateCapabilities:
+                mode === "research" ? [...GENERIC_RESEARCH_CAPABILITIES] : [],
+            confidence: mode === "research" ? "best_effort" : "confident",
+            intent,
+        },
+        intent
+    );
 }
 
 export async function planWithModel(
@@ -768,7 +806,7 @@ export async function planWithModel(
         );
         const modelIntent = parseModelIntent(raw);
         const intent = mergeIntent(deterministicIntent, modelIntent);
-        const plan = normalizePlanDecision(input, raw);
+        const plan = normalizePlanDecision(input, raw, deterministicIntent);
         return { ...plan, intent };
     } catch {
         return fallback;
@@ -833,6 +871,21 @@ function normalizeEvidenceDecision(
             };
         }
 
+        // When the model judge says evidence is NOT sufficient, trust it.
+        // The model can see that, e.g., only 5/20 requested messages were
+        // found or that coverage is incomplete.  Only promote to sufficient
+        // when the model agrees.
+        if (!decision.sufficient) {
+            return {
+                sufficient: false,
+                confidence: sanitizeConfidence(decision.confidence, "best_effort"),
+                reason: sanitizeReason(
+                    decision.reason,
+                    "Message evidence exists but the model judge determined it is not yet sufficient."
+                ),
+            };
+        }
+
         return {
             sufficient: true,
             confidence:
@@ -847,6 +900,17 @@ function normalizeEvidenceDecision(
     }
 
     if (counts.messageEvidenceCount > 0) {
+        if (!hasRetrieveMessagesRun && state.toolHistory.length === 0) {
+            return decision;
+        }
+        // Same trust-the-judge policy: do not override insufficient verdicts.
+        if (!decision.sufficient) {
+            return {
+                sufficient: false,
+                confidence: sanitizeConfidence(decision.confidence, "best_effort"),
+                reason: sanitizeReason(decision.reason, "Message evidence exists but coverage is incomplete."),
+            };
+        }
         return {
             sufficient: true,
             confidence: sanitizeConfidence(decision.confidence, "best_effort"),
@@ -899,7 +963,7 @@ export function fallbackEvidenceDecision(
 export async function judgeEvidence(
     state: Pick<
         GraphState,
-        "question" | "toolHistory" | "evidence" | "actorId" | "candidateCapabilities"
+        "question" | "toolHistory" | "evidence" | "actorId" | "candidateCapabilities" | "goal" | "successCriteria"
     >
 ): Promise<EvidenceDecision> {
     const fallback = fallbackEvidenceDecision(state);
@@ -911,6 +975,8 @@ export async function judgeEvidence(
                     role: "user",
                     content: PromptRegistry.render("runtime/judge_evidence", {
                         question: state.question,
+                        goal: state.goal || state.question,
+                        successCriteria: state.successCriteria || "Answer the user's question accurately.",
                         evidence: summarizeEvidence(state),
                     }),
                 },
@@ -963,7 +1029,7 @@ function normalizeStepDecision(
     const argumentsObject = sanitizeArguments(step.arguments);
     const resolvedMember = extractLatestResolvedMember(state.toolHistory);
     const latestResolvedChannelTarget = extractLatestResolvedChannelTarget(state.toolHistory);
-    const resolvedChannelIds =
+    let resolvedChannelIds =
         state.activeResolvedChannelIds.length > 0
             ? state.activeResolvedChannelIds
             : latestResolvedChannelTarget?.resolvedIds || extractLatestResolvedChannelIds(state.toolHistory);
@@ -989,8 +1055,20 @@ function normalizeStepDecision(
                 activeRetrievalSession?.channelIds.length &&
                 JSON.stringify(resolvedChannelIds) !== JSON.stringify(activeRetrievalSession.channelIds)
         );
+    if (resetRetrievalSession) {
+        resolvedChannelIds = [];
+    }
+
     const shouldContinueSession =
         !resetRetrievalSession && state.turnIntent?.continuation === true;
+    // Auto-continuation: inject cursor when model calls retrieve_messages
+    // for the same channel scope even without explicit continuation intent
+    const shouldAutoInjectCursor =
+        !resetRetrievalSession &&
+        !shouldContinueSession &&
+        activeRetrievalSession != null &&
+        activeRetrievalSession.continuationAvailable &&
+        Object.keys(activeRetrievalSession.historyCursorByChannel).length > 0;
 
     if (nextCapability === "resolve_member_identity") {
         return {
@@ -1065,9 +1143,13 @@ function normalizeStepDecision(
                 ...(resolvedMember?.resolvedId || activeMember?.resolvedId
                     ? { authorId: resolvedMember?.resolvedId || activeMember?.resolvedId }
                     : {}),
-                ...(resolvedChannelIds.length
-                    ? { channelIds: resolvedChannelIds }
-                    : {}),
+                ...(Array.isArray(argumentsObject.channelIds) && argumentsObject.channelIds.length
+                    ? { channelIds: argumentsObject.channelIds }
+                    : resolvedChannelIds.length
+                      ? { channelIds: resolvedChannelIds }
+                      : extractAllChannelMentionIds(state.question).length
+                        ? { channelIds: extractAllChannelMentionIds(state.question) }
+                        : {}),
                 ...(resolvedBeforeTimestamp != null
                     ? {
                           beforeTimestamp: resolvedBeforeTimestamp,
@@ -1078,7 +1160,7 @@ function normalizeStepDecision(
                           afterTimestamp: resolvedAfterTimestamp,
                       }
                     : {}),
-                ...(shouldContinueSession &&
+                ...((shouldContinueSession || shouldAutoInjectCursor) &&
                 activeRetrievalSession?.historyCursorByChannel &&
                 Object.keys(activeRetrievalSession.historyCursorByChannel).length
                     ? {
@@ -1090,10 +1172,13 @@ function normalizeStepDecision(
                           } as unknown as ToolArgumentValue),
                       }
                     : {}),
-                    ...(shouldContinueSession && activeRetrievalSession?.seenMessageIds?.length
+                    ...((shouldContinueSession || shouldAutoInjectCursor) && activeRetrievalSession?.seenMessageIds?.length
                     ? {
                           excludedMessageIds: activeRetrievalSession.seenMessageIds,
                       }
+                    : {}),
+                ...(typeof argumentsObject.aroundMessageId === "string" && argumentsObject.aroundMessageId.trim()
+                    ? { aroundMessageId: argumentsObject.aroundMessageId.trim() }
                     : {}),
             },
             reason: sanitizeReason(

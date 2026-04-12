@@ -7,7 +7,7 @@ export class MessageEligibility {
         }
 
         const content = message.content.trim();
-        if (!content || message.author.bot || content.startsWith("/")) {
+        if (!content || content.startsWith("/")) {
             return false;
         }
 

@@ -1,12 +1,20 @@
 {
-  "defaultProfile": "smart",
+  "defaultProfile": "balanced",
   "profiles": {
-    "smart": {
+    "balanced": {
       "chatModel": "google/gemini-3.1-flash-lite-preview",
       "analysisModel": "google/gemini-3.1-flash-lite-preview",
       "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.2,
+      "temperature": 0.5,
       "maxOutputTokens": 1200,
+      "webEnabled": false
+    },
+    "smarter": {
+      "chatModel": "qwen/qwen3.6-plus",
+      "analysisModel": "qwen/qwen3.6-plus",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.1,
+      "maxOutputTokens": 1400,
       "webEnabled": false
     }
   }

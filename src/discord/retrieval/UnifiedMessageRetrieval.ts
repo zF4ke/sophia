@@ -13,7 +13,10 @@ import type {
 } from "@/shared/appTypes";
 
 const MAX_CHANNEL_ESCALATIONS = 2;
-const ESCALATION_FETCH_LIMIT = Math.min(150, INTERACTIVE_CRAWL_LIMIT);
+const ESCALATION_FETCH_LIMIT = Math.min(
+    Number(process.env.ESCALATION_FETCH_LIMIT || 150),
+    INTERACTIVE_CRAWL_LIMIT
+);
 
 function dedupeChunks(rows: RetrievedChunk[]): RetrievedChunk[] {
     const seen = new Set<string>();
@@ -208,6 +211,7 @@ export class UnifiedMessageRetrieval {
         mode?: RetrievalMode;
         beforeTimestamp?: number | null;
         afterTimestamp?: number | null;
+        aroundMessageId?: string;
         cursor?: {
             history?: Record<string, string | null>;
             semantic?: SemanticContinuationCursor | null;
@@ -215,7 +219,112 @@ export class UnifiedMessageRetrieval {
         excludedMessageIds?: string[];
         onProgress?: (toolName: string, summary: string) => Promise<void> | void;
     }): Promise<MultiLaneRetrievalResult> {
-        const limit = Math.max(1, options.limit ?? 8);
+        // --- Around-message shortcut: fetch context around a known message ---
+        if (options.aroundMessageId) {
+            const contextWindow = Number(process.env.RETRIEVAL_CONTEXT_WINDOW || 15);
+            let contextMessages = await DiscordMemoryService.getMessageThreadAsync(
+                options.aroundMessageId,
+                contextWindow
+            );
+
+            // If the message isn't cached, attempt a targeted live crawl
+            if (!contextMessages.length && options.guild) {
+                // We don't know the channel, so try scoped channels or skip
+                const channelIds = options.channelIds?.length
+                    ? options.channelIds
+                    : options.currentChannelId
+                      ? [options.currentChannelId]
+                      : [];
+                for (const channelId of channelIds) {
+                    const crawl = await DiscordChannelCrawlService.crawlChannelMessages(
+                        options.guild,
+                        channelId,
+                        ESCALATION_FETCH_LIMIT,
+                        options.question,
+                        options.onProgress
+                    );
+                    if (crawl.messagesFetched > 0) {
+                        await DiscordChannelCrawlService.waitForBackgroundIngest();
+                        contextMessages = await DiscordMemoryService.getMessageThreadAsync(
+                            options.aroundMessageId,
+                            contextWindow
+                        );
+                        if (contextMessages.length) break;
+                    }
+                }
+            }
+
+            const guildId = options.guild?.id || null;
+            const historyMessages: RetrievedChunk[] = contextMessages.map((message) => ({
+                messageId: message.id,
+                channelId: message.channelId,
+                channelName: message.channelName,
+                guildId,
+                authorId: message.authorId,
+                authorName: message.authorName,
+                authorUsername: message.authorUsername ?? null,
+                authorNickname: message.authorNickname ?? null,
+                content: message.content,
+                createdTimestamp: message.createdTimestamp,
+                jumpLink: message.jumpLink,
+                lexicalScore: 0,
+                semanticScore: 0,
+                recencyScore: 1,
+                totalScore: 1,
+            }));
+            const strength = summarizeStrength(historyMessages);
+            const channelIds = [...new Set(historyMessages.map((m) => m.channelId))];
+            return {
+                query: options.question,
+                mode: "history",
+                historyMessages,
+                semanticMatches: [],
+                combinedResults: historyMessages,
+                cacheHit: historyMessages.length > 0,
+                liveEscalated: false,
+                searchedChannelIds: channelIds,
+                fetchedChannelIds: [],
+                cacheEnriched: false,
+                evidenceSufficient: historyMessages.length > 0,
+                strongResultCount: strength.strongResultCount,
+                weakResultCount: strength.weakResultCount,
+                historyMessageCount: historyMessages.length,
+                semanticMatchCount: 0,
+                sourceOrigin: historyMessages.length ? "cache" : "none",
+                targetAuthorId: options.authorId || null,
+                targetChannelIds: channelIds,
+                continuation: {
+                    history: { perChannelOldestMessageId: {}, continuationAvailable: false },
+                    semantic: { cursor: null, continuationAvailable: false },
+                    perChannelOldestMessageId: {},
+                    continuationAvailable: false,
+                },
+                exhaustion: {
+                    historyExhaustedChannelIds: [],
+                    historyExhausted: true,
+                    semanticExhausted: true,
+                    exhaustedChannelIds: [],
+                    exhausted: true,
+                },
+                accumulatedWindow: {
+                    beforeTimestamp: null,
+                    afterTimestamp: null,
+                },
+                accumulatedUniqueCount: historyMessages.length,
+                beforeTimestamp: null,
+                afterTimestamp: null,
+                excludedMessageIds: [],
+                retrievalDiagnostics: {
+                    strictScopedQuery: false,
+                    continuationInputsApplied: false,
+                    scopedEmptyRetryAttempted: false,
+                    scopedEmptyRetryRecovered: false,
+                    retryStrategy: "none",
+                },
+            };
+        }
+
+        const limit = Math.max(1, options.limit ?? 20);
         const mode = options.mode ?? (options.channelIds?.length || options.currentChannelId ? "history" : "mixed");
         const scopedChannelIds =
             options.channelIds?.length
@@ -376,6 +485,112 @@ export class UnifiedMessageRetrieval {
                     );
                 }
                 sourceOrigin = historyMessages.length || semanticMatches.length ? "cache_after_refresh" : "live_refresh";
+            }
+
+            // Targeted time-scoped crawl: if we have a time range but the standard
+            // crawl (which fetches from the latest messages) didn't reach the target
+            // period, do a second crawl starting from the target timestamp.
+            const TARGETED_CRAWL_LIMIT = 100;
+            if (
+                !historyMessages.length &&
+                mode !== "semantic" &&
+                options.beforeTimestamp != null &&
+                searchedChannelIds.length &&
+                options.guild?.channels
+            ) {
+                for (const channelId of searchedChannelIds) {
+                    const targetedCrawl = await DiscordChannelCrawlService.crawlChannelMessagesAtTime(
+                        options.guild,
+                        channelId,
+                        options.beforeTimestamp,
+                        TARGETED_CRAWL_LIMIT,
+                        options.question,
+                        options.onProgress
+                    );
+                    crawlResults.push(targetedCrawl);
+                    if (targetedCrawl.messagesFetched > 0) {
+                        if (!fetchedChannelIds.includes(channelId)) {
+                            fetchedChannelIds.push(channelId);
+                        }
+                        cacheEnriched = true;
+                    }
+                }
+
+                if (cacheEnriched) {
+                    await DiscordChannelCrawlService.waitForBackgroundIngest();
+                    historyMessages = await fetchHistoryMessages({
+                        guildId: options.guild?.id || null,
+                        channelIds: searchedChannelIds,
+                        authorId: options.authorId || null,
+                        beforeTimestamp: options.beforeTimestamp ?? null,
+                        afterTimestamp: options.afterTimestamp ?? null,
+                        perChannelOldestMessageId: historyCursor,
+                        excludedMessageIds: options.excludedMessageIds,
+                        limit,
+                    });
+                    if (!semanticMatches.length && mode !== "history") {
+                        semanticMatches = await DiscordMemoryService.searchMessagesAsync(
+                            options.question,
+                            {
+                                ...scope,
+                                channelIds: searchedChannelIds.length ? searchedChannelIds : undefined,
+                            },
+                            limit
+                        );
+                    }
+                    sourceOrigin = historyMessages.length || semanticMatches.length ? "cache_after_refresh" : "live_refresh";
+                }
+            }
+
+            // Author-targeted deep crawl: when filtering by authorId but the
+            // standard crawl didn't reach any of their messages, continue
+            // crawling deeper.  crawlChannelMessages picks up from the saved
+            // cursor so each call extends further into history.
+            const AUTHOR_DEEP_CRAWL_MAX_PASSES = 3;
+            if (
+                !historyMessages.length &&
+                options.authorId &&
+                mode !== "semantic" &&
+                searchedChannelIds.length &&
+                options.guild?.channels
+            ) {
+                for (let pass = 0; pass < AUTHOR_DEEP_CRAWL_MAX_PASSES && !historyMessages.length; pass++) {
+                    let passEnriched = false;
+                    for (const channelId of searchedChannelIds) {
+                        const priorCrawl = crawlResults.filter((c) => c.channelId === channelId);
+                        if (priorCrawl.some((c) => c.exhausted)) continue;
+
+                        const deepCrawl = await DiscordChannelCrawlService.crawlChannelMessages(
+                            options.guild,
+                            channelId,
+                            ESCALATION_FETCH_LIMIT,
+                            options.question,
+                            options.onProgress
+                        );
+                        crawlResults.push(deepCrawl);
+                        if (deepCrawl.messagesFetched > 0) {
+                            if (!fetchedChannelIds.includes(channelId)) {
+                                fetchedChannelIds.push(channelId);
+                            }
+                            passEnriched = true;
+                        }
+                    }
+
+                    if (!passEnriched) break;
+
+                    await DiscordChannelCrawlService.waitForBackgroundIngest();
+                    historyMessages = await fetchHistoryMessages({
+                        guildId: options.guild?.id || null,
+                        channelIds: searchedChannelIds,
+                        authorId: options.authorId || null,
+                        beforeTimestamp: options.beforeTimestamp ?? null,
+                        afterTimestamp: options.afterTimestamp ?? null,
+                        perChannelOldestMessageId: historyCursor,
+                        excludedMessageIds: options.excludedMessageIds,
+                        limit,
+                    });
+                    sourceOrigin = historyMessages.length ? "cache_after_refresh" : "live_refresh";
+                }
             }
         }
 

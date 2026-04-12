@@ -146,6 +146,17 @@ describe("runtime user stories", () => {
                     successCriteria: "Avoid redundant retrieval when evidence already covers the question.",
                     candidateCapabilities: ["retrieve_messages"],
                     confidence: "best_effort",
+                    intent: {
+                        continuation: true,
+                        retrievalMode: null,
+                        beforeTimestamp: null,
+                        afterTimestamp: null,
+                        source: {
+                            continuation: "deterministic",
+                            retrievalMode: "none",
+                            timeBounds: "none",
+                        },
+                    },
                 } as any;
             }
             if (traceLabel === "runtime_judge_evidence") {

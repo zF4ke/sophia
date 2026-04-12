@@ -144,6 +144,7 @@ export interface EvidenceItem {
     evidenceRole: DiscordToolEvidenceRole;
     strength: EvidenceStrength;
     sourceOrigin: RetrievalSourceOrigin;
+    messageId?: string | null;
     authorId?: string | null;
     authorName?: string | null;
     authorUsername?: string | null;

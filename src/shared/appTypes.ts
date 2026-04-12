@@ -50,6 +50,10 @@ export interface AppConfig {
         maxChannelMessages: number;
         maxToolRunsContext: number;
         maxEvidenceSlice: number;
+        interactiveCrawlLimit: number;
+        escalationFetchLimit: number;
+        retrievalHistoryLimit: number;
+        retrievalContextWindow: number;
     };
 }
 

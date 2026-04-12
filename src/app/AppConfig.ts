@@ -63,6 +63,10 @@ export function getAppConfig(): AppConfig {
             maxChannelMessages: Number(process.env.RUNTIME_MAX_CHANNEL_MESSAGES || 15),
             maxToolRunsContext: Number(process.env.RUNTIME_MAX_TOOL_RUNS_CONTEXT || 12),
             maxEvidenceSlice: Number(process.env.RUNTIME_MAX_EVIDENCE_SLICE || 32),
+            interactiveCrawlLimit: Number(process.env.INTERACTIVE_CRAWL_LIMIT || 250),
+            escalationFetchLimit: Number(process.env.ESCALATION_FETCH_LIMIT || 150),
+            retrievalHistoryLimit: Number(process.env.RETRIEVAL_HISTORY_LIMIT || 50),
+            retrievalContextWindow: Number(process.env.RETRIEVAL_CONTEXT_WINDOW || 15),
         },
     };
 }

@@ -10,6 +10,8 @@ Rules:
 - Treat `retrieve_messages` as a history-first reader. For channel/category understanding, recent or ordered scoped history is usually the primary evidence lane.
 - Semantic matches are supplemental for targeted concepts inside the same scoped channels.
 - If an active retrieval session already exists for the same conversation, continuation-style follow-ups should usually stay in research mode.
+- When the user explicitly asks to "search", "try again", "look harder", "procure", "tenta procurar", or similar, ALWAYS use research mode with `retrieve_messages` in the candidate list — even if prior evidence exists. The user is asking for new retrieval, not a summary of old results.
+- When the user shifts the topic to a different channel or member than the active retrieval session, treat it as a fresh research request — include the relevant discovery and retrieval capabilities.
 - Guild structure alone is not enough to claim what a service does unless the names alone make that obvious.
 - Do not choose refusal for ordinary conversation. If the user is vague, the runtime should stay conversational and recover.
 - Keep the candidate capability list short and realistic. It is initial guidance — the step planner may use any registered capability based on what it discovers during research.

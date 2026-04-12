@@ -4,6 +4,7 @@ import {
     fallbackEvidenceDecision,
     fallbackStepDecision,
     guessPlan,
+    judgeEvidence,
     planNextStep,
     planWithModel,
     summarizeEvidence,
@@ -592,7 +593,7 @@ describe("runtime planning", () => {
         });
     });
 
-    it("does not auto-apply cursor or exclusions on a fresh follow-up without continuation intent", () => {
+    it("auto-injects cursor and exclusions on a fresh follow-up when retrieval session has continuation available", () => {
         const step = fallbackStepDecision({
             question: "ele comentou de quem era?",
             actorId: "u-requester",
@@ -643,9 +644,9 @@ describe("runtime planning", () => {
             query: "ele comentou de quem era?",
             channelIds: ["c-comandos"],
             authorId: "u-open",
+            cursor: { history: { "c-comandos": "100" } },
+            excludedMessageIds: ["104", "103", "102"],
         });
-        expect(step.arguments).not.toHaveProperty("cursor");
-        expect(step.arguments).not.toHaveProperty("excludedMessageIds");
     });
 
     it("escalates to get_member_profile when duplicate display names remain ambiguous", () => {
@@ -957,5 +958,126 @@ describe("runtime planning", () => {
             confidence: "insufficient",
             reason: "Message retrieval did not produce usable message evidence yet.",
         });
+    });
+
+    it("overrides model conversation mode to research when deterministic intent detects temporal bounds", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            mode: "conversation",
+            reason: "Handle it directly.",
+            goal: "Answer directly.",
+            successCriteria: "Reply casually.",
+            candidateCapabilities: [],
+            confidence: "confident",
+        } as any);
+
+        const plan = await planWithModel(
+            createInput({
+                question: "9 de fevereiro o openrosen mandou um link do youtube de uma musica para o canal de comandos",
+                trigger: "mention",
+            })
+        );
+
+        expect(plan.mode).toBe("research");
+        expect(plan.candidateCapabilities.length).toBeGreaterThan(0);
+    });
+
+    it("overrides model conversation mode to research when question has named member reference", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            mode: "conversation",
+            reason: "Handle it directly.",
+            goal: "Answer directly.",
+            successCriteria: "Reply casually.",
+            candidateCapabilities: [],
+            confidence: "confident",
+        } as any);
+
+        const plan = await planWithModel(
+            createInput({
+                question: "o openrosen mandou algo interessante ontem?",
+                trigger: "mention",
+            })
+        );
+
+        expect(plan.mode).toBe("research");
+    });
+
+    it("does not override model conversation mode when question has no research signals", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            mode: "conversation",
+            reason: "Casual greeting.",
+            goal: "Reply casually.",
+            successCriteria: "Be friendly.",
+            candidateCapabilities: [],
+            confidence: "confident",
+        } as any);
+
+        const plan = await planWithModel(
+            createInput({
+                question: "oi sophia, tudo bem?",
+                trigger: "mention",
+            })
+        );
+
+        expect(plan.mode).toBe("conversation");
+    });
+
+    it("does not force evidence sufficient when toolHistory is empty but checkpoint evidence exists", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            sufficient: false,
+            confidence: "insufficient",
+            reason: "The evidence does not mention M4rkim at all.",
+        } as any);
+
+        const decision = await judgeEvidence({
+            question: "É uma que eu cito o M4rkim, falando que está muito bom o vídeo dele.",
+            goal: "Find the message where the user mentions M4rkim.",
+            successCriteria: "Return the specific message citing M4rkim.",
+            toolHistory: [],
+            evidence: [
+                {
+                    tool: "retrieve_messages",
+                    summary: "#comandos",
+                    content: "F4zke: mensagem tecnica sobre arquitetura de sistemas.",
+                    evidenceRole: "message_evidence",
+                    strength: "weak",
+                    sourceOrigin: "cache",
+                },
+            ],
+            actorId: "u-openrosen",
+            candidateCapabilities: ["retrieve_messages"],
+        });
+
+        expect(decision.sufficient).toBe(false);
+    });
+
+    it("injects channel IDs from <#ID> mentions into retrieve_messages when resolvedChannelIds is empty", async () => {
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
+            nextCapability: "retrieve_messages",
+            arguments: { query: "o que aconteceu nos canais" },
+            reason: "Retrieve messages from the mentioned channels.",
+            learnedExpectation: "Find recent activity.",
+        } as any);
+
+        const step = await planNextStep({
+            question: "mano o que está acontecendo no canais <#111>, <#222>, <#333> e <#444>?",
+            goal: "Answer the question.",
+            successCriteria: "Use current guild tools.",
+            confidence: "best_effort",
+            actorId: "u-requester",
+            replyContext: null,
+            activeMemberTarget: null,
+            activeChannelTarget: null,
+            activeResolvedChannelIds: [],
+            activeRetrievalSession: null,
+            turnIntent: NULL_INTENT,
+            candidateCapabilities: [
+                "resolve_channel_targets",
+                "retrieve_messages",
+            ],
+            toolHistory: [],
+        });
+
+        expect(step.nextCapability).toBe("retrieve_messages");
+        expect(step.arguments.channelIds).toEqual(["111", "222", "333", "444"]);
     });
 });

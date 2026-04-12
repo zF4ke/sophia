@@ -1,4 +1,4 @@
-import { ChannelType, type Guild } from "discord.js";
+import { ChannelType, Collection, type Guild, type Message } from "discord.js";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type { ChannelCrawlResult } from "@/shared/appTypes";
 
@@ -19,7 +19,7 @@ type CrawlableChannel = {
         fetch: (options: { limit: number; before?: string }) => Promise<any>;
     };
 };
-export const INTERACTIVE_CRAWL_LIMIT = 250;
+export const INTERACTIVE_CRAWL_LIMIT = Number(process.env.INTERACTIVE_CRAWL_LIMIT || 250);
 const PREVIEW_MESSAGE_LIMIT = 12;
 
 let backgroundIngestQueue: Promise<void> = Promise.resolve();
@@ -99,7 +99,19 @@ async function enrichMessagesWithGuildMembers(guild: Guild | null, messages: Arr
             continue;
         }
 
-        message.member = await memberPromises.get(authorId);
+        const resolved = await memberPromises.get(authorId);
+        try {
+            message.member = resolved;
+        } catch {
+            // Discord.js Message objects expose `member` as a getter-only
+            // property on cached instances.  Fall back to a non-enumerable
+            // shadow property so downstream code can still read it.
+            Object.defineProperty(message, "member", {
+                value: resolved,
+                writable: true,
+                configurable: true,
+            });
+        }
     }
 }
 
@@ -402,6 +414,95 @@ export class DiscordChannelCrawlService {
 
     public static async waitForBackgroundIngest(): Promise<void> {
         await backgroundIngestQueue;
+    }
+
+    /**
+     * One-shot crawl targeting a specific time range using a Discord snowflake
+     * computed from the timestamp. Does NOT update channel crawl state.
+     */
+    public static async crawlChannelMessagesAtTime(
+        guild: Guild | null,
+        channelId: string,
+        beforeTimestamp: number,
+        limit: number,
+        queryHint?: string,
+        onProgress?: (toolName: string, summary: string) => Promise<void> | void
+    ): Promise<ChannelCrawlResult> {
+        if (!guild) {
+            return {
+                channelId,
+                channelName: channelId,
+                messagesFetched: 0,
+                messagesStored: 0,
+                exhausted: true,
+                oldestFetchedMessageId: null,
+                queryHint: queryHint || null,
+                backgroundIngestQueued: false,
+                previewMessages: [],
+            };
+        }
+
+        const channel = guild.channels.cache.get(channelId);
+        if (!isCrawlableChannel(channel)) {
+            return {
+                channelId,
+                channelName: channel?.name || channelId,
+                messagesFetched: 0,
+                messagesStored: 0,
+                exhausted: true,
+                oldestFetchedMessageId: null,
+                queryHint: queryHint || null,
+                backgroundIngestQueued: false,
+                previewMessages: [],
+            };
+        }
+
+        const DISCORD_EPOCH = 1420070400000;
+        const snowflakeNum = (beforeTimestamp - DISCORD_EPOCH) * 4194304;
+        let before: string | undefined = String(snowflakeNum);
+        let fetched = 0;
+        let exhausted = false;
+        const fetchedMessages: Array<Message> = [];
+
+        while (fetched < limit) {
+            const batch: Collection<string, Message> = await channel.messages.fetch({
+                limit: Math.min(100, limit - fetched),
+                before,
+            });
+
+            if (!batch.size) {
+                exhausted = true;
+                break;
+            }
+
+            const messages: Message[] = [...batch.values()].sort(
+                (left, right) => left.createdTimestamp - right.createdTimestamp
+            );
+            fetchedMessages.push(...messages);
+
+            fetched += batch.size;
+            before = messages[0]?.id;
+            await onProgress?.(
+                "crawl_channel_messages_at_time",
+                `coletadas ${fetched}/${limit} mensagens de ${channel.name} (targeted)`
+            );
+        }
+
+        await enrichMessagesWithGuildMembers(guild, fetchedMessages);
+        const previewMessages = buildPreviewMessages(fetchedMessages, queryHint);
+        this.enqueueBackgroundIngest(fetchedMessages);
+
+        return {
+            channelId: channel.id,
+            channelName: channel.name,
+            messagesFetched: fetched,
+            messagesStored: fetchedMessages.length,
+            exhausted,
+            oldestFetchedMessageId: before || null,
+            queryHint: queryHint || null,
+            backgroundIngestQueued: fetchedMessages.length > 0,
+            previewMessages,
+        };
     }
 }
 

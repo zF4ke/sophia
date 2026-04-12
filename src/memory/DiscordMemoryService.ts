@@ -485,6 +485,12 @@ export class DiscordMemoryService {
         void this.clearAllAsync();
     }
 
+    public static async rebuildFtsIndex(): Promise<void> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        await client.execute(`INSERT INTO message_chunks_fts(message_chunks_fts) VALUES('rebuild')`);
+    }
+
     public static async getStatsAsync(): Promise<{ messages: number; chunks: number; channels: number }> {
         await this.ensureInitialized();
         return { ...this.statsSnapshot };
@@ -502,7 +508,18 @@ export class DiscordMemoryService {
         await this.ensureInitialized();
         const client = OperationalStore.getClient();
         const terms = tokenize(query);
+        if (!terms.length) {
+            return [];
+        }
+
+        const ftsQuery = terms.map((t) => `"${t.replace(/"/g, '""')}"`).join(" OR ");
         const { sql: scopeSql, args } = buildScopeSql(scope, "m");
+        (args as Record<string, unknown>).ftsQuery = ftsQuery;
+
+        const whereClause = scopeSql
+            ? scopeSql.replace("WHERE", "WHERE message_chunks_fts MATCH :ftsQuery AND")
+            : "WHERE message_chunks_fts MATCH :ftsQuery";
+
         const rows = (
             await client.execute({
                 sql: `
@@ -518,20 +535,21 @@ export class DiscordMemoryService {
                         mc.content,
                         mc.created_timestamp,
                         m.jump_link
-                    FROM message_chunks mc
+                    FROM message_chunks_fts fts
+                    INNER JOIN message_chunks mc ON mc.rowid = fts.rowid
                     INNER JOIN messages m ON m.id = mc.message_id
-                    ${scopeSql}
-                    ORDER BY mc.created_timestamp DESC
-                    LIMIT 500
+                    ${whereClause}
+                    ORDER BY fts.rank
+                    LIMIT :ftsResultLimit
                 `,
-                args,
+                args: { ...args, ftsResultLimit: Math.max(limit * 5, 50) },
             })
         ).rows as Array<Record<string, unknown>>;
 
         return rows
             .map((row) => {
                 const content = String(row.content || "");
-                const haystack = content.toLowerCase();
+                const haystack = content.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
                 const lexicalScore = terms.reduce(
                     (total, term) => total + (haystack.includes(term) ? 1 : 0),
                     0
@@ -555,7 +573,6 @@ export class DiscordMemoryService {
                     totalScore: lexicalScore + recencyScore,
                 } satisfies RetrievedChunk;
             })
-            .filter((row) => (terms.length ? row.lexicalScore > 0 : true))
             .sort(
                 (left, right) =>
                     right.totalScore - left.totalScore ||

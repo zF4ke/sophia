@@ -347,6 +347,26 @@ export class OperationalStore {
                 occurred_at INTEGER NOT NULL,
                 created_timestamp INTEGER NOT NULL
             );
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS message_chunks_fts
+            USING fts5(content, content='message_chunks', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
+        `);
+
+        await client.execute(`
+            CREATE TRIGGER IF NOT EXISTS message_chunks_fts_ai AFTER INSERT ON message_chunks BEGIN
+                INSERT INTO message_chunks_fts(rowid, content) VALUES (new.rowid, new.content);
+            END
+        `);
+        await client.execute(`
+            CREATE TRIGGER IF NOT EXISTS message_chunks_fts_ad AFTER DELETE ON message_chunks BEGIN
+                INSERT INTO message_chunks_fts(message_chunks_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+            END
+        `);
+        await client.execute(`
+            CREATE TRIGGER IF NOT EXISTS message_chunks_fts_au AFTER UPDATE ON message_chunks BEGIN
+                INSERT INTO message_chunks_fts(message_chunks_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+                INSERT INTO message_chunks_fts(rowid, content) VALUES (new.rowid, new.content);
+            END
         `);
 
         await client.execute({
