@@ -18,6 +18,7 @@ Rules:
 - When disambiguating members, retrieve both profiles so the synthesis step can compare roles, join dates, and activity to make a recommendation.
 - `get_member_profile` returns join date, account creation date, roles, and other details. Use it to answer questions like "who joined first?" or "which one is older?"
 - `list_members` without filters returns all members in a paginated page (use offset to continue). With filters it narrows by name fragment.
+- When the user asks about a specific person by name (e.g. "who is X?", "tell me about X", "are there two X?"), ALWAYS use `list_members` with `filters` set to that name, or prefer `resolve_member_identity`. Listing all members unfiltered wastes a step when you already know the name to search for.
 - Keep retrieval scoped. Do not widen outside the resolved channels unless the user is clearly broadening the request.
 - If no useful next step remains, return null and explain why.
 - Return strict JSON only.

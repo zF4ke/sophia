@@ -358,6 +358,50 @@ function extractLatestResolvedChannelTarget(toolHistory: ToolInvocationRecord[])
     return null;
 }
 
+function extractUnfilteredListMembersNameHint(
+    toolHistory: ToolInvocationRecord[],
+    question: string
+): string | null {
+    const questionNorm = normalize(question);
+    if (!questionNorm) {
+        return null;
+    }
+    for (let index = toolHistory.length - 1; index >= 0; index -= 1) {
+        const item = toolHistory[index];
+        if (item.tool !== "list_members") {
+            continue;
+        }
+        if (typeof item.arguments.filters === "string" && item.arguments.filters.length > 0) {
+            continue;
+        }
+        const data = item.output.data as Record<string, unknown> | null;
+        const members = data && Array.isArray(data.members) ? data.members : [];
+        for (const raw of members) {
+            if (!raw || typeof raw !== "object") {
+                continue;
+            }
+            const member = raw as Record<string, unknown>;
+            const names: string[] = [];
+            if (typeof member.displayName === "string" && member.displayName.trim()) {
+                names.push(member.displayName.trim());
+            }
+            if (typeof member.nickname === "string" && member.nickname.trim()) {
+                names.push(member.nickname.trim());
+            }
+            if (typeof member.username === "string" && member.username.trim()) {
+                names.push(member.username.trim());
+            }
+            for (const name of names) {
+                const nameNorm = normalize(name);
+                if (nameNorm && nameNorm.length >= 3 && questionNorm.includes(nameNorm)) {
+                    return name;
+                }
+            }
+        }
+    }
+    return null;
+}
+
 function extractAmbiguousMemberCandidate(toolHistory: ToolInvocationRecord[]): {
     displayName: string;
     identifiers: string[];
@@ -406,16 +450,30 @@ function extractAmbiguousMemberCandidate(toolHistory: ToolInvocationRecord[]): {
                 typeof member.username === "string" && member.username.trim()
                     ? member.username.trim()
                     : null;
+            const nickname =
+                typeof member.nickname === "string" && member.nickname.trim()
+                    ? member.nickname.trim()
+                    : null;
             const distinctMarker = id || username || displayName;
             const bestIdentifier = username || id || displayName;
 
-            if (!byName.has(key)) {
-                byName.set(key, new Set<string>());
-                displayByName.set(key, displayName);
-                identifiersByName.set(key, []);
+            const keysToRegister = [key];
+            if (nickname) {
+                const nickKey = normalize(nickname);
+                if (nickKey && nickKey !== key) {
+                    keysToRegister.push(nickKey);
+                }
             }
-            byName.get(key)?.add(distinctMarker);
-            identifiersByName.get(key)?.push(bestIdentifier);
+
+            for (const k of keysToRegister) {
+                if (!byName.has(k)) {
+                    byName.set(k, new Set<string>());
+                    displayByName.set(k, nickname || displayName);
+                    identifiersByName.set(k, []);
+                }
+                byName.get(k)?.add(distinctMarker);
+                identifiersByName.get(k)?.push(bestIdentifier);
+            }
         }
 
         for (const [key, variants] of byName.entries()) {
@@ -1251,6 +1309,24 @@ export function fallbackStepDecision(
                     "Return a distinguishing profile for the ambiguous member so profiles can be compared.",
             });
         }
+    }
+
+    const unfilteredListMembersName = extractUnfilteredListMembersNameHint(state.toolHistory, state.question);
+    if (
+        unfilteredListMembersName &&
+        !state.toolHistory.some(
+            (r) =>
+                r.tool === "list_members" &&
+                typeof r.arguments.filters === "string" &&
+                r.arguments.filters.length > 0
+        )
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "list_members",
+            arguments: { filters: unfilteredListMembersName },
+            reason: "The previous member listing was unfiltered. Re-run with a name filter to surface all members matching the referenced name.",
+            learnedExpectation: "Return only the members whose name, username, or nickname matches the filter.",
+        });
     }
 
     if (
