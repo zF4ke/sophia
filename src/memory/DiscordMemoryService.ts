@@ -132,6 +132,7 @@ function mapStoredMessage(row: Record<string, unknown>): StoredMessage {
         channelName: String(row.channel_name),
         authorId: String(row.author_id),
         authorName: String(row.author_name),
+        authorUsername: row.author_username == null ? null : String(row.author_username),
         content: String(row.content || ""),
         attachmentsJson: String(row.attachments_json || "[]"),
         referenceMessageId:
@@ -283,11 +284,11 @@ export class DiscordMemoryService {
             {
                 sql: `
                     INSERT INTO messages (
-                        id, guild_id, channel_id, channel_name, author_id, author_name,
+                        id, guild_id, channel_id, channel_name, author_id, author_name, author_username,
                         content, attachments_json, reference_message_id, created_timestamp,
                         jump_link, is_bot
                     ) VALUES (
-                        :id, :guildId, :channelId, :channelName, :authorId, :authorName,
+                        :id, :guildId, :channelId, :channelName, :authorId, :authorName, :authorUsername,
                         :content, :attachmentsJson, :referenceMessageId, :createdTimestamp,
                         :jumpLink, :isBot
                     )
@@ -297,6 +298,7 @@ export class DiscordMemoryService {
                         channel_name = excluded.channel_name,
                         author_id = excluded.author_id,
                         author_name = excluded.author_name,
+                        author_username = excluded.author_username,
                         content = excluded.content,
                         attachments_json = excluded.attachments_json,
                         reference_message_id = excluded.reference_message_id,
@@ -311,6 +313,7 @@ export class DiscordMemoryService {
                     channelName: stored.channelName,
                     authorId: stored.authorId,
                     authorName: stored.authorName,
+                    authorUsername: stored.authorUsername ?? null,
                     content: stored.content,
                     attachmentsJson: stored.attachmentsJson,
                     referenceMessageId: stored.referenceMessageId,
@@ -494,6 +497,7 @@ export class DiscordMemoryService {
                         m.guild_id,
                         m.author_id,
                         m.author_name,
+                        m.author_username,
                         mc.content,
                         mc.created_timestamp,
                         m.jump_link
@@ -523,6 +527,7 @@ export class DiscordMemoryService {
                     guildId: row.guild_id == null ? null : String(row.guild_id),
                     authorId: String(row.author_id),
                     authorName: String(row.author_name),
+                    authorUsername: row.author_username == null ? null : String(row.author_username),
                     content,
                     createdTimestamp: Number(row.created_timestamp || 0),
                     jumpLink: String(row.jump_link || ""),

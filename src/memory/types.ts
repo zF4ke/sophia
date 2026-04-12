@@ -5,6 +5,7 @@ export interface StoredMessage {
     channelName: string;
     authorId: string;
     authorName: string;
+    authorUsername?: string | null;
     content: string;
     attachmentsJson: string;
     referenceMessageId: string | null;

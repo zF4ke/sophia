@@ -145,6 +145,7 @@ export interface EvidenceItem {
     sourceOrigin: RetrievalSourceOrigin;
     authorId?: string | null;
     authorName?: string | null;
+    authorUsername?: string | null;
     channelId?: string | null;
     channelName?: string | null;
     jumpLink?: string | null;

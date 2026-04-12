@@ -570,9 +570,14 @@ export function summarizeEvidence(state: Pick<GraphState, "evidence">): string {
     return state.evidence.length
         ? state.evidence
               .map((item) => {
+                  const authorLabel = item.authorName
+                      ? item.authorUsername && item.authorUsername !== item.authorName
+                          ? `${item.authorName} (@${item.authorUsername})`
+                          : item.authorName
+                      : null;
                   const meta = [
                       item.channelName ? `#${item.channelName}` : null,
-                      item.authorName || null,
+                      authorLabel,
                       item.sourceOrigin,
                       item.strength,
                   ]

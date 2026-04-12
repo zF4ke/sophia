@@ -198,6 +198,7 @@ export class OperationalStore {
                 channel_name TEXT NOT NULL,
                 author_id TEXT NOT NULL,
                 author_name TEXT NOT NULL,
+                author_username TEXT,
                 content TEXT NOT NULL,
                 attachments_json TEXT NOT NULL,
                 reference_message_id TEXT,

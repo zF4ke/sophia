@@ -76,6 +76,7 @@ export interface RetrievedChunk {
     guildId: string | null;
     authorId: string;
     authorName: string;
+    authorUsername?: string | null;
     content: string;
     createdTimestamp: number;
     jumpLink: string;
@@ -271,6 +272,7 @@ export interface ChannelCrawlResult {
         messageId: string;
         authorId: string;
         authorName: string;
+        authorUsername?: string | null;
         content: string;
         createdTimestamp: number;
         jumpLink: string;

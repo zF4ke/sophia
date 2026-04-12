@@ -11,6 +11,7 @@ export class MessageNormalizer {
                 "name" in message.channel ? message.channel.name || message.channelId : message.channelId,
             authorId: message.author.id,
             authorName: message.member?.displayName || message.author.username,
+            authorUsername: message.author.username,
             content: message.content.trim(),
             attachmentsJson: JSON.stringify(
                 message.attachments.map((attachment) => ({

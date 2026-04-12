@@ -545,6 +545,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
                 sourceOrigin,
                 authorId: item.authorId == null ? null : String(item.authorId),
                 authorName: item.authorName == null ? null : String(item.authorName),
+                authorUsername: item.authorUsername == null ? null : String(item.authorUsername),
                 channelId: item.channelId == null ? null : String(item.channelId),
                 channelName: item.channelName == null ? null : String(item.channelName),
                 jumpLink: item.jumpLink == null ? null : String(item.jumpLink),
@@ -568,6 +569,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
                 sourceOrigin,
                 authorId: item.authorId == null ? null : String(item.authorId),
                 authorName: item.authorName == null ? null : String(item.authorName),
+                authorUsername: item.authorUsername == null ? null : String(item.authorUsername),
                 channelId: item.channelId == null ? null : String(item.channelId),
                 channelName: item.channelName == null ? null : String(item.channelName),
                 jumpLink: item.jumpLink == null ? null : String(item.jumpLink),
@@ -864,7 +866,11 @@ export class Runtime {
                     recentChannelMessages: channelContext.map((m) => `${m.authorName}: ${m.content}`),
                     evidencePreview: evidence.slice(0, 6).map((item) => {
                         const channelLabel = item.channelName ? `#${item.channelName}` : "?";
-                        const authorLabel = item.authorName || "?";
+                        const authorLabel = item.authorName
+                            ? item.authorUsername && item.authorUsername !== item.authorName
+                                ? `${item.authorName} (@${item.authorUsername})`
+                                : item.authorName
+                            : "?";
                         return `[${item.tool}] ${channelLabel} · ${authorLabel}: ${item.content}`;
                     }),
                     recentTurns: recentTurns.map((t) => `Q: ${t.question} | A: ${t.answer}`),
@@ -1185,7 +1191,11 @@ export class Runtime {
                     recentChannelMessages: state.channelContext.map((m) => `${m.authorName}: ${m.content}`),
                     evidencePreview: evidence.slice(0, 6).map((e) => {
                         const channelLabel = e.channelName ? `#${e.channelName}` : "?";
-                        const authorLabel = e.authorName || "?";
+                        const authorLabel = e.authorName
+                            ? e.authorUsername && e.authorUsername !== e.authorName
+                                ? `${e.authorName} (@${e.authorUsername})`
+                                : e.authorName
+                            : "?";
                         return `[${e.tool}] ${channelLabel} · ${authorLabel}: ${e.content}`;
                     }),
                     recentTurns: state.recentTurns.map((t) => `Q: ${t.question} | A: ${t.answer}`),
