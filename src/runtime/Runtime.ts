@@ -540,9 +540,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             const authorName = item.authorName == null ? null : String(item.authorName);
             const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
             const authorPrefix = authorName
-                ? authorUsername && authorUsername !== authorName
-                    ? `[${authorName} (@${authorUsername})${authorId ? ` id=${authorId}` : ""}]: `
-                    : `[${authorName}${authorId ? ` id=${authorId}` : ""}]: `
+                ? `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorId ? ` id=${authorId}` : ""}]: `
                 : authorId
                   ? `[id=${authorId}]: `
                   : "";
@@ -574,9 +572,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             const authorName = item.authorName == null ? null : String(item.authorName);
             const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
             const authorPrefix = authorName
-                ? authorUsername && authorUsername !== authorName
-                    ? `[${authorName} (@${authorUsername})${authorId ? ` id=${authorId}` : ""}]: `
-                    : `[${authorName}${authorId ? ` id=${authorId}` : ""}]: `
+                ? `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorId ? ` id=${authorId}` : ""}]: `
                 : authorId
                   ? `[id=${authorId}]: `
                   : "";
@@ -606,11 +602,17 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
         const currentState =
             item.isCurrentGuildMember === false ? "historical guild memory" : "current guild";
         const resolvedId = item.resolvedId == null ? (item.id == null ? null : String(item.id)) : String(item.resolvedId);
+        const resolveParts = [
+            `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")})`,
+        ];
+        if (resolvedId) resolveParts.push(`id=${resolvedId}`);
+        if (item.nickname) resolveParts.push(`nick=${String(item.nickname)}`);
+        resolveParts.push(`from ${currentState}`);
         return [
             {
                 tool: "resolve_member_identity",
                 summary: run.summary,
-                content: `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")}) from ${currentState}${resolvedId ? `; id=${resolvedId}` : ""}`,
+                content: resolveParts.join("; "),
                 evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.resolve_member_identity,
                 strength: "metadata",
                 sourceOrigin: "none",
@@ -887,7 +889,7 @@ export class Runtime {
                     evidencePreview: evidence.slice(0, 6).map((item) => {
                         const channelLabel = item.channelName ? `#${item.channelName}` : "?";
                         const authorLabel = item.authorName
-                            ? item.authorUsername && item.authorUsername !== item.authorName
+                            ? item.authorUsername
                                 ? `${item.authorName} (@${item.authorUsername})`
                                 : item.authorName
                             : "?";
@@ -1232,7 +1234,7 @@ export class Runtime {
                     evidencePreview: evidence.slice(0, 6).map((e) => {
                         const channelLabel = e.channelName ? `#${e.channelName}` : "?";
                         const authorLabel = e.authorName
-                            ? e.authorUsername && e.authorUsername !== e.authorName
+                            ? e.authorUsername
                                 ? `${e.authorName} (@${e.authorUsername})`
                                 : e.authorName
                             : "?";
