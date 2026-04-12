@@ -6,6 +6,7 @@ export interface StoredMessage {
     authorId: string;
     authorName: string;
     authorUsername?: string | null;
+    authorNickname?: string | null;
     content: string;
     attachmentsJson: string;
     referenceMessageId: string | null;

@@ -381,6 +381,8 @@ function buildPreviewMessages(
         messageId: String(message.id),
         authorId: String(message.author?.id || ""),
         authorName: String(message.author?.username || message.author?.displayName || "unknown"),
+        authorUsername: String(message.author?.username || "") || null,
+        authorNickname: message.member?.nickname || null,
         content: String(message.content || ""),
         createdTimestamp: Number(message.createdTimestamp || 0),
         jumpLink:

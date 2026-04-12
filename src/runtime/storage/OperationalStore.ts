@@ -199,6 +199,7 @@ export class OperationalStore {
                 author_id TEXT NOT NULL,
                 author_name TEXT NOT NULL,
                 author_username TEXT,
+                author_nickname TEXT,
                 content TEXT NOT NULL,
                 attachments_json TEXT NOT NULL,
                 reference_message_id TEXT,

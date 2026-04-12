@@ -539,8 +539,9 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             const authorId = item.authorId == null ? null : String(item.authorId);
             const authorName = item.authorName == null ? null : String(item.authorName);
             const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
+            const authorNickname = item.authorNickname == null ? null : String(item.authorNickname);
             const authorPrefix = authorName
-                ? `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorId ? ` id=${authorId}` : ""}]: `
+                ? `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorNickname ? ` nick=${authorNickname}` : ""}${authorId ? ` id=${authorId}` : ""}]: `
                 : authorId
                   ? `[id=${authorId}]: `
                   : "";
@@ -555,6 +556,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
                 authorId,
                 authorName,
                 authorUsername,
+                authorNickname,
                 channelId: item.channelId == null ? null : String(item.channelId),
                 channelName: item.channelName == null ? null : String(item.channelName),
                 jumpLink: item.jumpLink == null ? null : String(item.jumpLink),
@@ -571,8 +573,9 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             const authorId = item.authorId == null ? null : String(item.authorId);
             const authorName = item.authorName == null ? null : String(item.authorName);
             const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
+            const authorNickname = item.authorNickname == null ? null : String(item.authorNickname);
             const authorPrefix = authorName
-                ? `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorId ? ` id=${authorId}` : ""}]: `
+                ? `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorNickname ? ` nick=${authorNickname}` : ""}${authorId ? ` id=${authorId}` : ""}]: `
                 : authorId
                   ? `[id=${authorId}]: `
                   : "";
@@ -588,6 +591,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
                 authorId,
                 authorName,
                 authorUsername,
+                authorNickname,
                 channelId: item.channelId == null ? null : String(item.channelId),
                 channelName: item.channelName == null ? null : String(item.channelName),
                 jumpLink: item.jumpLink == null ? null : String(item.jumpLink),

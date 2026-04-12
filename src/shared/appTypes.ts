@@ -77,6 +77,7 @@ export interface RetrievedChunk {
     authorId: string;
     authorName: string;
     authorUsername?: string | null;
+    authorNickname?: string | null;
     content: string;
     createdTimestamp: number;
     jumpLink: string;
@@ -273,6 +274,7 @@ export interface ChannelCrawlResult {
         authorId: string;
         authorName: string;
         authorUsername?: string | null;
+        authorNickname?: string | null;
         content: string;
         createdTimestamp: number;
         jumpLink: string;

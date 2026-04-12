@@ -12,6 +12,7 @@ export class MessageNormalizer {
             authorId: message.author.id,
             authorName: message.member?.displayName || message.author.username,
             authorUsername: message.author.username,
+            authorNickname: message.member?.nickname || null,
             content: message.content.trim(),
             attachmentsJson: JSON.stringify(
                 message.attachments.map((attachment) => ({
