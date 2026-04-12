@@ -119,6 +119,8 @@ The runtime then applies only narrow guardrails:
 - a generic fallback ladder if model output is invalid
 - short-lived resolved-target carry-over for the active conversation thread
 
+Goal shifting is model-led: when `plan_turn` returns `TurnIntent.continuation=false`, runtime clears active scoped targets and reconstructed carry-over evidence before research continues. This prevents stale scope from a previous objective leaking into the next objective inside the same thread.
+
 `candidateCapabilities` from `plan_turn` is surfaced to `select_next_step` as guidance, not a constraint. The model may freely choose any registered capability based on what it has discovered so far, and may call the same capability multiple times with different arguments when needed.
 
 ### Planning And Execution Diagram
@@ -178,6 +180,7 @@ This is the main composition boundary now:
 - deterministic intent remains the reliability guardrail
 - model intent fills gaps and broad paraphrases
 - merged `TurnIntent` drives continuation, lane preference, and time bounds in step shaping
+- when merged continuation is `false`, runtime resets carry-over scope/evidence before research
 
 ### `run_research_loop`
 

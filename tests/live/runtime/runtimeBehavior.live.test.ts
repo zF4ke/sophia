@@ -42,8 +42,8 @@ describeLive("live runtime behavior", () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
         process.env.DISCORD_TOKEN ||= "test-token";
-        process.env.RUNTIME_MAX_RESEARCH_PASSES = "4";
-        process.env.RUNTIME_MAX_TOOL_CALLS = "6";
+        process.env.RUNTIME_LOOP_MAX_RESEARCH_PASSES = "4";
+        process.env.RUNTIME_LOOP_MAX_TOOL_CALLS = "6";
         process.env.RUNTIME_OPERATIONAL_DB_PATH = path.join(
             process.cwd(),
             "storage",

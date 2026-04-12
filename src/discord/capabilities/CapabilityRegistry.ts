@@ -186,7 +186,7 @@ const capabilities: RuntimeCapability[] = [
                         : undefined,
                 cursor,
                 excludedMessageIds,
-                limit: Number(args.limit || process.env.RETRIEVAL_HISTORY_LIMIT || 50),
+                limit: Number(args.limit || process.env.TOOL_RETRIEVE_MESSAGES_DEFAULT_LIMIT || 50),
                 onProgress: context.onProgress,
             });
 

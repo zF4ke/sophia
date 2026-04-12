@@ -53,20 +53,35 @@ export function getAppConfig(): AppConfig {
             checkpointDbPath:
                 process.env.RUNTIME_CHECKPOINT_DB_PATH ||
                 path.join(runtimeDir, "checkpoints.sqlite"),
-            maxToolCalls: Number(process.env.RUNTIME_MAX_TOOL_CALLS || 6),
-            maxResearchPasses: Number(process.env.RUNTIME_MAX_RESEARCH_PASSES || 4),
+            maxToolCalls: Number(process.env.RUNTIME_LOOP_MAX_TOOL_CALLS || 6),
+            maxResearchPasses: Number(process.env.RUNTIME_LOOP_MAX_RESEARCH_PASSES || 4),
             maxRepeatedCallSignature: Number(
-                process.env.RUNTIME_MAX_REPEATED_CALL_SIGNATURE || 1
+                process.env.RUNTIME_LOOP_MAX_REPEATED_CALL_SIGNATURE || 1
             ),
-            maxLatencyBudgetMs: Number(process.env.RUNTIME_MAX_LATENCY_BUDGET_MS || 15000),
-            maxPriorTurns: Number(process.env.RUNTIME_MAX_PRIOR_TURNS || 5),
-            maxChannelMessages: Number(process.env.RUNTIME_MAX_CHANNEL_MESSAGES || 15),
-            maxToolRunsContext: Number(process.env.RUNTIME_MAX_TOOL_RUNS_CONTEXT || 12),
-            maxEvidenceSlice: Number(process.env.RUNTIME_MAX_EVIDENCE_SLICE || 32),
-            interactiveCrawlLimit: Number(process.env.INTERACTIVE_CRAWL_LIMIT || 250),
-            escalationFetchLimit: Number(process.env.ESCALATION_FETCH_LIMIT || 150),
-            retrievalHistoryLimit: Number(process.env.RETRIEVAL_HISTORY_LIMIT || 50),
-            retrievalContextWindow: Number(process.env.RETRIEVAL_CONTEXT_WINDOW || 15),
+            maxLatencyBudgetMs: Number(process.env.RUNTIME_LOOP_MAX_LATENCY_BUDGET_MS || 15000),
+            maxPriorTurns: Number(process.env.RUNTIME_CONTEXT_MAX_PRIOR_TURNS || 5),
+            maxChannelMessages: Number(process.env.RUNTIME_CONTEXT_MAX_CHANNEL_MESSAGES || 15),
+            maxToolRunsContext: Number(process.env.RUNTIME_CONTEXT_MAX_TOOL_RUNS || 12),
+            maxEvidenceSlice: Number(process.env.RUNTIME_CONTEXT_MAX_CARRIED_EVIDENCE_ITEMS || 32),
+            maxContextPreviewEvidenceItems: Number(
+                process.env.DEBUG_CONTEXT_PREVIEW_MAX_EVIDENCE_ITEMS || 6
+            ),
+            maxResolveChannelTargetEvidenceItems: Number(
+                process.env.TOOL_RESOLVE_CHANNEL_TARGETS_MAX_EVIDENCE_ITEMS || 6
+            ),
+            maxRetrieveHistoryEvidenceItems: Number(
+                process.env.TOOL_RETRIEVE_MESSAGES_MAX_HISTORY_EVIDENCE_ITEMS || 30
+            ),
+            maxRetrieveSemanticEvidenceItems: Number(
+                process.env.TOOL_RETRIEVE_MESSAGES_MAX_SEMANTIC_EVIDENCE_ITEMS || 30
+            ),
+            maxRetrieveEvidenceContentChars: Number(
+                process.env.TOOL_RETRIEVE_MESSAGES_MAX_EVIDENCE_CONTENT_CHARS || 260
+            ),
+            interactiveCrawlLimit: Number(process.env.TOOL_RETRIEVE_MESSAGES_MAX_INTERACTIVE_CRAWL_MESSAGES || 250),
+            escalationFetchLimit: Number(process.env.TOOL_RETRIEVE_MESSAGES_MAX_ESCALATION_FETCH_MESSAGES || 150),
+            retrievalHistoryLimit: Number(process.env.TOOL_RETRIEVE_MESSAGES_DEFAULT_LIMIT || 50),
+            retrievalContextWindow: Number(process.env.TOOL_RETRIEVE_MESSAGES_AROUND_CONTEXT_WINDOW || 15),
         },
     };
 }

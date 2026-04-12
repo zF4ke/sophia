@@ -21,6 +21,7 @@ import {
 } from "@/runtime/conversationRecovery";
 import { PromptRegistry } from "@/runtime/PromptRegistry";
 import { CheckpointStore } from "@/runtime/storage/CheckpointStore";
+import type { EvidenceExtractionLimits } from "@/runtime/tools/types";
 import { decideConversationWebMode } from "@/runtime/webFallback";
 import type {
     ActiveRetrievalSession,
@@ -35,15 +36,13 @@ import type {
     ToolInvocationRecord,
     TurnInput,
 } from "@/runtime/contracts";
-import { DISCORD_TOOL_EVIDENCE_ROLES, type DiscordToolName } from "@/shared/discordTools";
+import { getToolStrategy } from "@/runtime/tools";
+import { type DiscordToolName } from "@/shared/discordTools";
 import type {
     DiscordToolResult,
     GroundedAnswerMode,
-    GuildStructureEntry,
     ResolvedChannelTarget,
     ResolvedMemberIdentity,
-    RetrievalMode,
-    SemanticContinuationCursor,
 } from "@/shared/appTypes";
 
 const State = Annotation.Root({
@@ -83,307 +82,19 @@ const State = Annotation.Root({
 
 type RuntimeState = typeof State.State;
 
-type RetrievalPayload = {
-    mode?: RetrievalMode;
-    historyMessages?: Array<Record<string, unknown>>;
-    semanticMatches?: Array<Record<string, unknown>>;
-    combinedResults?: Array<Record<string, unknown>>;
-    sourceOrigin?: RetrievalSummary["sourceOrigin"];
-    targetAuthorId?: string | null;
-    targetChannelIds?: string[];
-    cacheHit?: boolean;
-    liveEscalated?: boolean;
-    searchedChannelIds?: string[];
-    fetchedChannelIds?: string[];
-    cacheEnriched?: boolean;
-    evidenceSufficient?: boolean;
-    strongResultCount?: number;
-    weakResultCount?: number;
-    historyMessageCount?: number;
-    semanticMatchCount?: number;
-    accumulatedUniqueCount?: number;
-    continuation?: {
-        history?: {
-            perChannelOldestMessageId?: Record<string, string | null>;
-            continuationAvailable?: boolean;
-        };
-        semantic?: {
-            cursor?: SemanticContinuationCursor | null;
-            continuationAvailable?: boolean;
-        };
-        perChannelOldestMessageId?: Record<string, string | null>;
-        continuationAvailable?: boolean;
-    };
-    exhaustion?: {
-        historyExhaustedChannelIds?: string[];
-        historyExhausted?: boolean;
-        semanticExhausted?: boolean;
-        exhaustedChannelIds?: string[];
-        exhausted?: boolean;
-    };
-    beforeTimestamp?: number | null;
-    afterTimestamp?: number | null;
-    excludedMessageIds?: string[];
-};
-
-type GuildStructurePayload = {
-    query?: string | null;
-    entries?: Array<Record<string, unknown>>;
-    focusedEntries?: Array<Record<string, unknown>>;
-    focusedResolvedIds?: string[];
-};
-
-function normalizeLookupValue(value: string): string {
-    return value
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]+/g, " ")
-        .trim();
-}
-
-function isCategoryStructureEntry(entry: Pick<GuildStructureEntry, "type">): boolean {
-    return entry.type === "4" || entry.type.toLowerCase().includes("category");
-}
-
-function asGuildStructureEntries(value: unknown): GuildStructureEntry[] {
-    if (!Array.isArray(value)) {
-        return [];
-    }
-
-    return value
-        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
-        .map((item) => ({
-            id: String(item.id || ""),
-            guildId: item.guildId == null ? null : String(item.guildId),
-            name: String(item.name || ""),
-            type: String(item.type || "unknown"),
-            parentCategoryId: item.parentCategoryId == null ? null : String(item.parentCategoryId),
-            parentCategoryName:
-                item.parentCategoryName == null ? null : String(item.parentCategoryName),
-            isReadable: Boolean(item.isReadable),
-            isViewable: Boolean(item.isViewable),
-            isIndexed: Boolean(item.isIndexed),
-            source: (item.source === "cached_only" ? "cached_only" : "live") as
-                | "live"
-                | "cached_only",
-            missingOrDeletedPossible: Boolean(item.missingOrDeletedPossible),
-        }))
-        .filter((entry) => entry.id && entry.name);
-}
-
-function selectFocusedStructureEntries(
-    entries: GuildStructureEntry[],
-    query: string | null
-): GuildStructureEntry[] {
-    if (!query) {
-        return [];
-    }
-
-    const normalizedQuery = normalizeLookupValue(query);
-    if (!normalizedQuery) {
-        return [];
-    }
-
-    return entries
-        .map((entry) => {
-            const normalizedName = normalizeLookupValue(entry.name);
-            const normalizedParent = normalizeLookupValue(entry.parentCategoryName || "");
-            let score = 0;
-
-            if (normalizedName === normalizedQuery) {
-                score += 10;
-            }
-            if (normalizedName && normalizedQuery.includes(normalizedName)) {
-                score += 6;
-            }
-            if (normalizedName.includes(normalizedQuery)) {
-                score += 5;
-            }
-            if (normalizedParent && normalizedQuery.includes(normalizedParent)) {
-                score += 3;
-            }
-            if (normalizedParent && normalizedParent.includes(normalizedQuery)) {
-                score += 2;
-            }
-
-            return { entry, score };
-        })
-        .filter((item) => item.score > 0)
-        .sort((left, right) => right.score - left.score || left.entry.name.localeCompare(right.entry.name))
-        .slice(0, 4)
-        .map((item) => item.entry);
-}
-
-function buildStructureEvidenceItems(
-    payload: GuildStructurePayload,
-    summary: string
-): EvidenceItem[] {
-    const allEntries = asGuildStructureEntries(payload.entries);
-    const focusedEntries = asGuildStructureEntries(payload.focusedEntries);
-    const query = typeof payload.query === "string" && payload.query.trim() ? payload.query.trim() : null;
-    const targets = focusedEntries.length ? focusedEntries : selectFocusedStructureEntries(allEntries, query);
-
-    if (!targets.length) {
-        return allEntries.slice(0, 8).map((entry) => ({
-            tool: "list_guild_structure",
-            summary,
-            content: isCategoryStructureEntry(entry)
-                ? `Category ${entry.name}. Viewable=${entry.isViewable ? "yes" : "no"}.`
-                : `Channel #${entry.name}${entry.parentCategoryName ? ` in ${entry.parentCategoryName}` : ""}. Readable=${entry.isReadable ? "yes" : "no"}. Indexed=${entry.isIndexed ? "yes" : "no"}.`,
-            evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
-            strength: "metadata",
-            sourceOrigin: "none",
-            channelId: entry.id,
-            channelName: entry.name,
-        }));
-    }
-
-    const evidence: EvidenceItem[] = [];
-    const seen = new Set<string>();
-
-    for (const entry of targets) {
-        if (seen.has(entry.id)) {
-            continue;
-        }
-        seen.add(entry.id);
-
-        if (isCategoryStructureEntry(entry)) {
-            const children = allEntries.filter((candidate) => candidate.parentCategoryId === entry.id);
-            const readableChildren = children.filter((candidate) => candidate.isReadable);
-            const indexedChildren = readableChildren.filter((candidate) => candidate.isIndexed);
-            const childLabels = readableChildren.slice(0, 6).map((candidate) => `#${candidate.name}`);
-            const childPhrase = childLabels.length ? childLabels.join(", ") : "none";
-
-            evidence.push({
-                tool: "list_guild_structure",
-                summary,
-                content: `Category ${entry.name}. Visible channels under ${entry.name}: ${childPhrase}. Readable children: ${readableChildren.length}. Indexed children: ${indexedChildren.length}.`,
-                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
-                strength: "metadata",
-                sourceOrigin: "none",
-                channelId: entry.id,
-                channelName: entry.name,
-            });
-
-            for (const child of readableChildren.slice(0, 4)) {
-                if (seen.has(child.id)) {
-                    continue;
-                }
-                seen.add(child.id);
-                evidence.push({
-                    tool: "list_guild_structure",
-                    summary,
-                    content: `Channel #${child.name} in category ${entry.name}. Readable=yes. Indexed=${child.isIndexed ? "yes" : "no"}.`,
-                    evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
-                    strength: "metadata",
-                    sourceOrigin: "none",
-                    channelId: child.id,
-                    channelName: child.name,
-                });
-            }
-            continue;
-        }
-
-        evidence.push({
-            tool: "list_guild_structure",
-            summary,
-            content: `Channel #${entry.name}${entry.parentCategoryName ? ` in category ${entry.parentCategoryName}` : ""}. Readable=${entry.isReadable ? "yes" : "no"}. Indexed=${entry.isIndexed ? "yes" : "no"}.`,
-            evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_guild_structure,
-            strength: "metadata",
-            sourceOrigin: "none",
-            channelId: entry.id,
-            channelName: entry.name,
-        });
-    }
-
-    return evidence;
-}
+// ── Payload types and guild structure helpers are in src/runtime/tools/ ──
+// ── Dispatcher functions delegate to per-tool strategies ──
 
 function extractResolvedMemberTarget(run: DiscordToolResult): ResolvedMemberIdentity | null {
-    if (
-        (run.tool !== "resolve_member_identity" && run.tool !== "get_member_profile") ||
-        !run.data ||
-        typeof run.data !== "object"
-    ) {
-        return null;
-    }
-
-    const item = run.data as Record<string, unknown>;
-    const resolvedId =
-        item.resolvedId == null ? (item.id == null ? null : String(item.id)) : String(item.resolvedId);
-    if (!resolvedId) {
-        return null;
-    }
-
-    return {
-        query: String(item.query || resolvedId),
-        resolvedId,
-        displayName: String(item.displayName || "No Display Name"),
-        username: String(item.username || "no username"),
-        globalName: item.globalName == null ? null : String(item.globalName),
-        nickname: item.nickname == null ? null : String(item.nickname),
-        isBot: Boolean(item.isBot),
-        isCurrentGuildMember:
-            item.isCurrentGuildMember == null ? true : Boolean(item.isCurrentGuildMember),
-        source:
-            item.source === "historical_author" ||
-            item.source === "live_exact" ||
-            item.source === "live_search" ||
-            item.source === "live_id"
-                ? item.source
-                : "live_id",
-        confidence:
-            item.confidence === "high" || item.confidence === "medium" || item.confidence === "exact"
-                ? item.confidence
-                : "medium",
-        roles: Array.isArray(item.roles) ? item.roles.map(String) : [],
-    };
+    if (run.tool === "finish") return null;
+    const strategy = getToolStrategy(run.tool);
+    return strategy.extractResolvedMember?.(run) ?? null;
 }
 
 function extractResolvedChannelTarget(run: DiscordToolResult): ResolvedChannelTarget | null {
-    if (
-        (run.tool !== "resolve_channel_targets" && run.tool !== "list_guild_structure") ||
-        !run.data ||
-        typeof run.data !== "object"
-    ) {
-        return null;
-    }
-
-    const item = run.data as GuildStructurePayload & Record<string, unknown>;
-    const entries =
-        run.tool === "resolve_channel_targets"
-            ? asGuildStructureEntries(item.entries)
-            : asGuildStructureEntries(item.focusedEntries);
-    const resolvedIds =
-        run.tool === "resolve_channel_targets"
-            ? Array.isArray(item.resolvedIds)
-                ? item.resolvedIds.map(String)
-                : []
-            : Array.isArray(item.focusedResolvedIds)
-              ? item.focusedResolvedIds.map(String)
-              : [];
-    const query = typeof item.query === "string" && item.query.trim() ? item.query.trim() : "";
-
-    if (!query && !entries.length && !resolvedIds.length) {
-        return null;
-    }
-
-    return {
-        query,
-        resolvedIds,
-        entries,
-        exactIdMatch: Boolean(item.exactIdMatch),
-        confidence:
-            item.confidence === "exact" ||
-            item.confidence === "high" ||
-            item.confidence === "medium" ||
-            item.confidence === "low"
-                ? item.confidence
-                : resolvedIds.length
-                  ? "high"
-                  : "low",
-    };
+    if (run.tool === "finish") return null;
+    const strategy = getToolStrategy(run.tool);
+    return strategy.extractResolvedChannel?.(run) ?? null;
 }
 
 function appendTrace(state: RuntimeState, label: string, detail: string): RuntimeTraceEvent[] {
@@ -417,81 +128,15 @@ function argsSignature(tool: DiscordToolName, args: ToolArguments) {
 }
 
 function getRetrievalSummary(run: DiscordToolResult): RetrievalSummary | null {
-    if (run.tool !== "retrieve_messages" || !run.data || typeof run.data !== "object") {
-        return null;
-    }
-
-    const payload = run.data as RetrievalPayload;
-    return {
-        mode: (payload.mode || "history") as RetrievalSummary["mode"],
-        cacheHit: Boolean(payload.cacheHit),
-        liveEscalated: Boolean(payload.liveEscalated),
-        searchedChannelIds: (payload.searchedChannelIds || []).map(String),
-        fetchedChannelIds: (payload.fetchedChannelIds || []).map(String),
-        cacheEnriched: Boolean(payload.cacheEnriched),
-        evidenceSufficient: Boolean(payload.evidenceSufficient),
-        strongResultCount: Number(payload.strongResultCount || 0),
-        weakResultCount: Number(payload.weakResultCount || 0),
-        historyMessageCount: Number(payload.historyMessageCount || 0),
-        semanticMatchCount: Number(payload.semanticMatchCount || 0),
-        accumulatedUniqueCount: Number(payload.accumulatedUniqueCount || 0),
-        sourceOrigin: (payload.sourceOrigin || "none") as RetrievalSummary["sourceOrigin"],
-        continuationAvailable: Boolean(payload.continuation?.continuationAvailable),
-        historyContinuationAvailable:
-            payload.continuation?.history?.continuationAvailable == null
-                ? Boolean(payload.continuation?.continuationAvailable)
-                : Boolean(payload.continuation?.history?.continuationAvailable),
-        historyCursorByChannel:
-            payload.continuation?.history?.perChannelOldestMessageId ||
-            payload.continuation?.perChannelOldestMessageId ||
-            {},
-        semanticContinuationAvailable: Boolean(payload.continuation?.semantic?.continuationAvailable),
-        semanticCursor: payload.continuation?.semantic?.cursor || null,
-        exhaustedChannelIds: (payload.exhaustion?.exhaustedChannelIds || []).map(String),
-        historyExhausted: Boolean(payload.exhaustion?.historyExhausted),
-        semanticExhausted: Boolean(payload.exhaustion?.semanticExhausted),
-        beforeTimestamp:
-            payload.beforeTimestamp == null ? null : Number(payload.beforeTimestamp),
-        afterTimestamp:
-            payload.afterTimestamp == null ? null : Number(payload.afterTimestamp),
-        activeChannelIds: (payload.targetChannelIds || []).map(String),
-    };
+    if (run.tool === "finish") return null;
+    const strategy = getToolStrategy(run.tool);
+    return strategy.extractRetrievalSummary?.(run) ?? null;
 }
 
 function extractActiveRetrievalSession(run: DiscordToolResult): ActiveRetrievalSession | null {
-    if (run.tool !== "retrieve_messages" || !run.data || typeof run.data !== "object") {
-        return null;
-    }
-
-    const payload = run.data as RetrievalPayload & Record<string, unknown>;
-    const targetChannelIds = Array.isArray(payload.targetChannelIds)
-        ? payload.targetChannelIds.map(String)
-        : [];
-
-    if (!targetChannelIds.length) {
-        return null;
-    }
-
-    return {
-        mode: (payload.mode || "history") as RetrievalMode,
-        channelIds: targetChannelIds,
-        authorId: payload.targetAuthorId == null ? null : String(payload.targetAuthorId),
-        beforeTimestamp: payload.beforeTimestamp == null ? null : Number(payload.beforeTimestamp),
-        afterTimestamp: payload.afterTimestamp == null ? null : Number(payload.afterTimestamp),
-        historyCursorByChannel:
-            payload.continuation?.history?.perChannelOldestMessageId ||
-            payload.continuation?.perChannelOldestMessageId ||
-            {},
-        semanticCursor: payload.continuation?.semantic?.cursor || null,
-        seenMessageIds: (payload.combinedResults || [])
-            .map((row) => (row && typeof row === "object" && "messageId" in row ? String((row as Record<string, unknown>).messageId) : null))
-            .filter((value): value is string => Boolean(value)),
-        accumulatedUniqueCount: Number(payload.accumulatedUniqueCount || 0),
-        exhaustedChannelIds: (payload.exhaustion?.exhaustedChannelIds || []).map(String),
-        historyExhausted: Boolean(payload.exhaustion?.historyExhausted),
-        semanticExhausted: Boolean(payload.exhaustion?.semanticExhausted),
-        continuationAvailable: Boolean(payload.continuation?.continuationAvailable),
-    };
+    if (run.tool === "finish") return null;
+    const strategy = getToolStrategy(run.tool);
+    return strategy.extractRetrievalSession?.(run) ?? null;
 }
 
 function sameRetrievalScope(
@@ -546,197 +191,23 @@ export function mergeActiveRetrievalSession(
     };
 }
 
-function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
-    if (run.tool === "retrieve_messages" && run.data && typeof run.data === "object") {
-        const payload = run.data as RetrievalPayload;
-        const historyRows = payload.historyMessages || [];
-        const semanticRows = payload.semanticMatches || [];
-        const sourceOrigin = (payload.sourceOrigin || "none") as RetrievalSummary["sourceOrigin"];
-        const historyEvidence = historyRows.slice(0, 30).map((item) => {
-            const body = String(item.content || "").slice(0, 260);
-            const authorId = item.authorId == null ? null : String(item.authorId);
-            const authorName = item.authorName == null ? null : String(item.authorName);
-            const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
-            const authorNickname = item.authorNickname == null ? null : String(item.authorNickname);
-            return {
-                tool: "retrieve_messages" as const,
-                summary: run.summary,
-                content: body,
-                evidenceRole: "history_evidence" as const,
-                strength: "strong" as const,
-                sourceOrigin,
-                messageId: item.messageId == null ? null : String(item.messageId),
-                authorId,
-                authorName,
-                authorUsername,
-                authorNickname,
-                channelId: item.channelId == null ? null : String(item.channelId),
-                channelName: item.channelName == null ? null : String(item.channelName),
-                jumpLink: item.jumpLink == null ? null : String(item.jumpLink),
-                createdTimestamp: item.createdTimestamp == null ? null : Number(item.createdTimestamp),
-            };
-        });
-        const semanticEvidence = semanticRows.slice(0, 30).map((item) => {
-            const body = String(item.content || "").slice(0, 260);
-            const lexicalScore = Number(item.lexicalScore || 0);
-            const strength: EvidenceItem["strength"] =
-                lexicalScore >= 2 || (lexicalScore >= 1 && body.length >= 80)
-                    ? "strong"
-                    : "weak";
-            const authorId = item.authorId == null ? null : String(item.authorId);
-            const authorName = item.authorName == null ? null : String(item.authorName);
-            const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
-            const authorNickname = item.authorNickname == null ? null : String(item.authorNickname);
+function extractEvidence(
+    run: DiscordToolResult,
+    limits?: EvidenceExtractionLimits
+): EvidenceItem[] {
+    if (run.tool === "finish") return [];
+    return getToolStrategy(run.tool).extractEvidence(run, limits);
+}
 
-            return {
-                tool: "retrieve_messages" as const,
-                summary: run.summary,
-                content: body,
-                evidenceRole: "semantic_evidence" as const,
-                strength,
-                sourceOrigin,
-                messageId: item.messageId == null ? null : String(item.messageId),
-                authorId,
-                authorName,
-                authorUsername,
-                authorNickname,
-                channelId: item.channelId == null ? null : String(item.channelId),
-                channelName: item.channelName == null ? null : String(item.channelName),
-                jumpLink: item.jumpLink == null ? null : String(item.jumpLink),
-                createdTimestamp: item.createdTimestamp == null ? null : Number(item.createdTimestamp),
-            };
-        });
-        return [...historyEvidence, ...semanticEvidence];
-    }
-
-    if (run.tool === "resolve_member_identity" && run.data) {
-        const item = run.data as Record<string, unknown>;
-        const currentState =
-            item.isCurrentGuildMember === false ? "historical guild memory" : "current guild";
-        const resolvedId = item.resolvedId == null ? (item.id == null ? null : String(item.id)) : String(item.resolvedId);
-        const resolveParts = [
-            `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")})`,
-        ];
-        if (resolvedId) resolveParts.push(`id=${resolvedId}`);
-        if (item.nickname) resolveParts.push(`nick=${String(item.nickname)}`);
-        resolveParts.push(`from ${currentState}`);
-        return [
-            {
-                tool: "resolve_member_identity",
-                summary: run.summary,
-                content: resolveParts.join("; "),
-                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.resolve_member_identity,
-                strength: "metadata",
-                sourceOrigin: "none",
-                authorId: resolvedId,
-                authorName: item.displayName == null ? null : String(item.displayName),
-            },
-        ];
-    }
-
-    if (run.tool === "resolve_channel_targets" && run.data) {
-        const item = run.data as { entries?: Array<Record<string, unknown>>; resolvedIds?: string[] };
-        const entries = asGuildStructureEntries(item.entries);
-        return entries.slice(0, 6).map((entry) => ({
-            tool: "resolve_channel_targets",
-            summary: run.summary,
-            content: isCategoryStructureEntry(entry)
-                ? `Category ${entry.name} resolved with ${Array.isArray(item.resolvedIds) ? item.resolvedIds.length : 0} visible message channels.`
-                : `Channel #${entry.name}${entry.parentCategoryName ? ` in category ${entry.parentCategoryName}` : ""}.`,
-            evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.resolve_channel_targets,
-            strength: "metadata",
-            sourceOrigin: "none",
-            channelId: entry.id,
-            channelName: entry.name,
-        }));
-    }
-
-    if (run.tool === "list_guild_structure" && run.data) {
-        return buildStructureEvidenceItems(run.data as GuildStructurePayload, run.summary);
-    }
-
-    if (run.tool === "get_member_profile" && run.data) {
-        const item = run.data as Record<string, unknown>;
-        const roles = Array.isArray(item.roles) ? item.roles.join(", ") : "none";
-        const parts = [
-            `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")})`,
-        ];
-        if (item.id != null) parts.push(`id=${String(item.id)}`);
-        if (item.nickname) parts.push(`nick=${String(item.nickname)}`);
-        if (item.joinedAt) parts.push(`joined=${String(item.joinedAt)}`);
-        if (item.accountCreatedAt) parts.push(`created=${String(item.accountCreatedAt)}`);
-        parts.push(`roles=${roles || "none"}`);
-        if (item.isBot) parts.push("bot=true");
-        if (item.premiumSince) parts.push(`nitro_since=${String(item.premiumSince)}`);
-        if (item.pending) parts.push("pending=true");
-        return [
-            {
-                tool: "get_member_profile",
-                summary: run.summary,
-                content: parts.join("; "),
-                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.get_member_profile,
-                strength: "metadata",
-                sourceOrigin: "none",
-                authorId: item.id == null ? null : String(item.id),
-                authorName: item.displayName == null ? null : String(item.displayName),
-            },
-        ];
-    }
-
-    if (run.tool === "list_members" && run.data && typeof run.data === "object") {
-        const payload = run.data as { members?: Array<Record<string, unknown>>; hasMore?: boolean; totalCount?: number; offset?: number };
-        const members = payload.members || [];
-        const evidence = members.slice(0, 10).map((item) => {
-            const parts = [
-                `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")})`,
-            ];
-            if (item.id != null) parts.push(`id=${String(item.id)}`);
-            if (item.nickname) parts.push(`nick=${String(item.nickname)}`);
-            if (item.joinedTimestamp) {
-                parts.push(`joined=${new Date(Number(item.joinedTimestamp)).toISOString()}`);
-            }
-            if (item.isBot) parts.push("bot=true");
-            return {
-                tool: "list_members" as const,
-                summary: run.summary,
-                content: parts.join("; "),
-                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_members,
-                strength: "metadata" as const,
-                sourceOrigin: "none" as const,
-                authorId: item.id == null ? null : String(item.id),
-                authorName: item.displayName == null ? null : String(item.displayName),
-            };
-        });
-        if (payload.hasMore) {
-            evidence.push({
-                tool: "list_members" as const,
-                summary: run.summary,
-                content: `...and ${(payload.totalCount || 0) - members.length} more members (use offset=${(payload.offset || 0) + members.length} to continue).`,
-                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_members,
-                strength: "metadata" as const,
-                sourceOrigin: "none" as const,
-                authorId: null,
-                authorName: null,
-            });
-        }
-        return evidence;
-    }
-
-    if (run.tool === "get_guild_context" && run.data) {
-        const item = run.data as Record<string, unknown>;
-        return [
-            {
-                tool: "get_guild_context",
-                summary: run.summary,
-                content: `${String(item.name || "Guild")}: ${String(item.memberCount || 0)} members, ${String(item.channelCount || 0)} channels`,
-                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.get_guild_context,
-                strength: "metadata",
-                sourceOrigin: "none",
-            },
-        ];
-    }
-
-    return [];
+function toEvidenceExtractionLimits(
+    constraints: RuntimeState["constraints"]
+): EvidenceExtractionLimits {
+    return {
+        maxResolveChannelTargetEvidenceItems: constraints.maxResolveChannelTargetEvidenceItems,
+        maxRetrieveHistoryEvidenceItems: constraints.maxRetrieveHistoryEvidenceItems,
+        maxRetrieveSemanticEvidenceItems: constraints.maxRetrieveSemanticEvidenceItems,
+        maxRetrieveEvidenceContentChars: constraints.maxRetrieveEvidenceContentChars,
+    };
 }
 
 function summarizeRecentTurns(turns: GraphState["recentTurns"]): string {
@@ -870,7 +341,10 @@ export class Runtime {
                         const resolvedChannel = extractResolvedChannelTarget(parsedOutput);
                         const retrieval = getRetrievalSummary(parsedOutput);
                         const retrievalSession = extractActiveRetrievalSession(parsedOutput);
-                        const evidenceItems = extractEvidence(parsedOutput);
+                        const evidenceItems = extractEvidence(
+                            parsedOutput,
+                            toEvidenceExtractionLimits(state.constraints)
+                        );
 
                         if (resolvedMember) {
                             activeMemberTarget = resolvedMember;
@@ -911,7 +385,9 @@ export class Runtime {
                 const input = this.requestContext.get(state.requestId);
                 await input?.debugSession?.setContextPreview?.({
                     recentChannelMessages: channelContext.map((m) => `${m.authorName}: ${m.content}`),
-                    evidencePreview: evidence.slice(0, 6).map((item) => {
+                    evidencePreview: evidence
+                        .slice(0, state.constraints.maxContextPreviewEvidenceItems)
+                        .map((item) => {
                         const channelLabel = item.channelName ? `#${item.channelName}` : "?";
                         const authorLabel = formatAuthorIdentity(item);
                         return `[${item.tool}] ${channelLabel} · ${authorLabel}: ${item.content}`;
@@ -929,7 +405,7 @@ export class Runtime {
                     traceEvents: appendTrace(
                         state,
                         "load_memory",
-                        `Loaded ${recentTurns.length} prior conversation turn(s), ${channelContext.length} recent channel message(s), ${recentToolRuns.length} recent tool run(s), and reused ${evidence.length} evidence item(s).`
+                        `Loaded ${recentTurns.length} prior conversation turn(s), ${channelContext.length} recent channel message(s), ${recentToolRuns.length} recent tool run(s), reused ${evidence.length} evidence item(s).`
                     ),
                 };
             })
@@ -961,6 +437,11 @@ export class Runtime {
                     }
                 );
 
+                // When the model decides this is NOT a continuation of the
+                // prior turn, discard stale active targets and evidence so the
+                // research loop starts with a clean slate.
+                const scopeReset = !plan.intent.continuation;
+
                 return {
                     mode: plan.mode,
                     classification: classify(plan.mode),
@@ -969,7 +450,20 @@ export class Runtime {
                     candidateCapabilities: plan.candidateCapabilities,
                     confidence: plan.confidence,
                     turnIntent: plan.intent,
-                    traceEvents: appendTrace(state, "plan_turn", plan.reason),
+                    ...(scopeReset
+                        ? {
+                              activeMemberTarget: null,
+                              activeChannelTarget: null,
+                              activeResolvedChannelIds: [],
+                              activeRetrievalSession: null,
+                              evidence: [],
+                          }
+                        : {}),
+                    traceEvents: appendTrace(
+                        state,
+                        "plan_turn",
+                        `${plan.reason}${scopeReset ? " [scope reset: not a continuation]" : ""}`
+                    ),
                 };
             })
             .addNode("route_mode", async (state: RuntimeState) => ({
@@ -1130,7 +624,10 @@ export class Runtime {
                         step.arguments
                     );
 
-                    const evidenceItems = extractEvidence(output);
+                    const evidenceItems = extractEvidence(
+                        output,
+                        toEvidenceExtractionLimits(state.constraints)
+                    );
                     const learned = evidenceItems.map((item) => item.content).join(" | ") || output.summary;
                     const retrieval = getRetrievalSummary(output);
                     const resolvedMemberTarget = extractResolvedMemberTarget(output);
@@ -1498,6 +995,16 @@ export class Runtime {
                 maxChannelMessages: config.runtime.maxChannelMessages,
                 maxToolRunsContext: config.runtime.maxToolRunsContext,
                 maxEvidenceSlice: config.runtime.maxEvidenceSlice,
+                maxContextPreviewEvidenceItems:
+                    config.runtime.maxContextPreviewEvidenceItems,
+                maxResolveChannelTargetEvidenceItems:
+                    config.runtime.maxResolveChannelTargetEvidenceItems,
+                maxRetrieveHistoryEvidenceItems:
+                    config.runtime.maxRetrieveHistoryEvidenceItems,
+                maxRetrieveSemanticEvidenceItems:
+                    config.runtime.maxRetrieveSemanticEvidenceItems,
+                maxRetrieveEvidenceContentChars:
+                    config.runtime.maxRetrieveEvidenceContentChars,
             },
         };
 

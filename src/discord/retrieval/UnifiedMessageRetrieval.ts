@@ -14,7 +14,7 @@ import type {
 
 const MAX_CHANNEL_ESCALATIONS = 2;
 const ESCALATION_FETCH_LIMIT = Math.min(
-    Number(process.env.ESCALATION_FETCH_LIMIT || 150),
+    Number(process.env.TOOL_RETRIEVE_MESSAGES_MAX_ESCALATION_FETCH_MESSAGES || 150),
     INTERACTIVE_CRAWL_LIMIT
 );
 
@@ -221,7 +221,9 @@ export class UnifiedMessageRetrieval {
     }): Promise<MultiLaneRetrievalResult> {
         // --- Around-message shortcut: fetch context around a known message ---
         if (options.aroundMessageId) {
-            const contextWindow = Number(process.env.RETRIEVAL_CONTEXT_WINDOW || 15);
+            const contextWindow = Number(
+                process.env.TOOL_RETRIEVE_MESSAGES_AROUND_CONTEXT_WINDOW || 15
+            );
             let contextMessages = await DiscordMemoryService.getMessageThreadAsync(
                 options.aroundMessageId,
                 contextWindow

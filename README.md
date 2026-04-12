@@ -32,7 +32,7 @@ When a turn does depend on Discord, she uses a cache-first retrieval pipeline:
 
 That local storage is a Discord retrieval cache plus runtime state. It is not a separate memory-search product.
 
-Runtime budget defaults such as tool-call limits, research-pass count, and latency budget are documented in [.env.example](c:/Users/yFake/OneDrive/Ambiente%20de%20Trabalho/www/Projects/Sophia3/.env.example).
+Runtime budget defaults such as tool-call limits, research-pass count, and latency budget are documented in [.env.example](.env.example).
 
 ## Conversation Continuity
 
@@ -86,7 +86,19 @@ The runtime still enforces:
 - tool and latency budgets
 - refusal prevention for ordinary conversation
 
+Goal shifting is model-led. If `plan_turn` marks a turn as `continuation=false`, Sophia resets active scoped targets and carried evidence before the research loop. This prevents stale scope leakage from prior tasks when the user changes objective mid-thread.
+
 If model planning fails, Sophia falls back to a small generic current-guild recovery ladder instead of brittle language-specific routing.
+
+## Runtime Tuning
+
+You can tune context and evidence carry-over behavior from env values:
+- `RUNTIME_CONTEXT_MAX_CARRIED_EVIDENCE_ITEMS`: max reconstructed evidence items carried from recent tool runs.
+- `DEBUG_CONTEXT_PREVIEW_MAX_EVIDENCE_ITEMS`: max evidence items rendered in debug context preview.
+- `TOOL_RESOLVE_CHANNEL_TARGETS_MAX_EVIDENCE_ITEMS`: max channel/category metadata evidence items emitted by `resolve_channel_targets`.
+- `TOOL_RETRIEVE_MESSAGES_MAX_HISTORY_EVIDENCE_ITEMS`: max history rows converted into evidence per `retrieve_messages` run.
+- `TOOL_RETRIEVE_MESSAGES_MAX_SEMANTIC_EVIDENCE_ITEMS`: max semantic rows converted into evidence per `retrieve_messages` run.
+- `TOOL_RETRIEVE_MESSAGES_MAX_EVIDENCE_CONTENT_CHARS`: max characters kept per retrieved evidence snippet.
 
 For category and channel questions, the runtime now prefers:
 1. resolve the likely target

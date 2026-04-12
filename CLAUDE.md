@@ -40,6 +40,7 @@ Planning policy:
 - `select_next_step` may choose any registered capability regardless of the initial candidate list.
 - The same capability may be called multiple times with different arguments (e.g. `get_member_profile` per each ambiguous member).
 - The runtime provides argument enrichment (resolved IDs, cursors, time bounds) but does not redirect the model's tool choice with pre-flight overrides.
+- If `plan_turn` marks `intent.continuation=false`, runtime resets active scoped targets and reconstructed carry-over evidence before research starts.
 - `fallbackStepDecision` is a safety net for model failures and is also no longer gated on `candidateCapabilities`.
 
 ## Stable Tool Contract

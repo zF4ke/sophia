@@ -29,6 +29,11 @@ vi.mock("@/app/AppConfig", () => ({
             maxChannelMessages: 15,
             maxToolRunsContext: 12,
             maxEvidenceSlice: 32,
+            maxContextPreviewEvidenceItems: 6,
+            maxResolveChannelTargetEvidenceItems: 6,
+            maxRetrieveHistoryEvidenceItems: 30,
+            maxRetrieveSemanticEvidenceItems: 30,
+            maxRetrieveEvidenceContentChars: 260,
         },
     }),
 }));

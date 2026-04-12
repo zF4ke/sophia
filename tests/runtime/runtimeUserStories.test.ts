@@ -37,8 +37,8 @@ describe("runtime user stories", () => {
         vi.restoreAllMocks();
         process.env.DISCORD_TOKEN = "test-token";
         process.env.OPENROUTER_API_KEY = "test-key";
-        process.env.RUNTIME_MAX_RESEARCH_PASSES = "4";
-        process.env.RUNTIME_MAX_TOOL_CALLS = "6";
+        process.env.RUNTIME_LOOP_MAX_RESEARCH_PASSES = "4";
+        process.env.RUNTIME_LOOP_MAX_TOOL_CALLS = "6";
         process.env.RUNTIME_OPERATIONAL_DB_PATH = path.join(
             process.cwd(),
             "storage",
@@ -184,6 +184,151 @@ describe("runtime user stories", () => {
         );
 
         expect(result.answer).toBe("Sim, ele comparou a foto com o M4rkim.");
+        expect(result.toolRuns).toEqual([]);
+    });
+
+    it("drops stale scoped targets when a new question explicitly retargets a different channel group", async () => {
+        const priorMemberRun = {
+            requestId: "req-member",
+            toolName: "resolve_member_identity",
+            argumentsJson: JSON.stringify({ query: "nMarkov" }),
+            summary: "resolved nMarkov",
+            learned: "Resolved the author target.",
+            outputJson: JSON.stringify({
+                tool: "resolve_member_identity",
+                summary: "resolved nMarkov",
+                data: {
+                    query: "nMarkov",
+                    resolvedId: "569277281046888488",
+                    displayName: "nMarkov",
+                    username: "nMarkov",
+                    globalName: null,
+                    nickname: null,
+                    isBot: true,
+                    isCurrentGuildMember: true,
+                    source: "live_exact",
+                    confidence: "exact",
+                    roles: [],
+                },
+            }),
+            createdTimestamp: Date.now() - 10_000,
+        };
+
+        const priorRetrievalRun = {
+            requestId: "req-retrieval",
+            toolName: "retrieve_messages",
+            argumentsJson: JSON.stringify({
+                query: "markov",
+                channelIds: ["731278507740495882"],
+                authorId: "569277281046888488",
+            }),
+            summary: "ordered history evidence",
+            learned: "Retrieved prior scoped discussion messages.",
+            outputJson: JSON.stringify({
+                tool: "retrieve_messages",
+                summary: "ordered history evidence",
+                data: {
+                    mode: "history",
+                    sourceOrigin: "cache_after_refresh",
+                    targetAuthorId: "569277281046888488",
+                    targetChannelIds: ["731278507740495882"],
+                    searchedChannelIds: ["731278507740495882"],
+                    historyMessages: [
+                        {
+                            messageId: "m-disc-1",
+                            channelId: "731278507740495882",
+                            channelName: "discussão",
+                            guildId: "g1",
+                            authorId: "569277281046888488",
+                            authorName: "nMarkov",
+                            authorUsername: "nMarkov",
+                            content: "Eu não sou eu.",
+                            createdTimestamp: 1707510000000,
+                            jumpLink: "https://discord.com/channels/g1/731278507740495882/m-disc-1",
+                            lexicalScore: 4,
+                        },
+                    ],
+                    semanticMatches: [],
+                    combinedResults: [
+                        {
+                            messageId: "m-disc-1",
+                            channelId: "731278507740495882",
+                            channelName: "discussão",
+                            guildId: "g1",
+                            authorId: "569277281046888488",
+                            authorName: "nMarkov",
+                            authorUsername: "nMarkov",
+                            content: "Eu não sou eu.",
+                            createdTimestamp: 1707510000000,
+                            jumpLink: "https://discord.com/channels/g1/731278507740495882/m-disc-1",
+                            lexicalScore: 4,
+                        },
+                    ],
+                    continuation: {
+                        history: {
+                            perChannelOldestMessageId: { "731278507740495882": "m-disc-1" },
+                            continuationAvailable: true,
+                        },
+                        semantic: {
+                            cursor: null,
+                            continuationAvailable: false,
+                        },
+                        continuationAvailable: true,
+                    },
+                },
+            }),
+            createdTimestamp: Date.now() - 9_000,
+        };
+
+        vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([
+            priorMemberRun as any,
+            priorRetrievalRun as any,
+        ]);
+
+        const previewSpy = vi.fn().mockResolvedValue(undefined);
+
+        vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
+            const traceLabel = options?.traceContext?.traceLabel;
+            if (traceLabel === "runtime_plan_turn") {
+                return {
+                    mode: "research",
+                    reason: "New topic about Serviços channels.",
+                    goal: "Summarize services channels.",
+                    successCriteria: "Describe each channel under Serviços.",
+                    candidateCapabilities: ["resolve_channel_targets", "retrieve_messages"],
+                    confidence: "best_effort",
+                    continuation: false,
+                    retrievalMode: null,
+                    beforeTimestamp: null,
+                    afterTimestamp: null,
+                } as any;
+            }
+            return fallback as any;
+        });
+
+        const result = await Runtime.answer(
+            createInput({
+                question:
+                    "estou com pressa e precisava de um resumo do que tem nos canais do Serviços. quero uma descrição de cada serviço",
+                trigger: "mention",
+                debugSession: {
+                    setClassifying: vi.fn().mockResolvedValue(undefined),
+                    setClassification: vi.fn().mockResolvedValue(undefined),
+                    setPlanning: vi.fn().mockResolvedValue(undefined),
+                    setToolRunning: vi.fn().mockResolvedValue(undefined),
+                    setToolResult: vi.fn().mockResolvedValue(undefined),
+                    setGroundingSummary: vi.fn().mockResolvedValue(undefined),
+                    setGenerating: vi.fn().mockResolvedValue(undefined),
+                    finishSuccess: vi.fn().mockResolvedValue(undefined),
+                    finishError: vi.fn().mockResolvedValue(undefined),
+                    setContextPreview: previewSpy,
+                },
+            })
+        );
+
+        expect(result.answer.length).toBeGreaterThan(0);
+        // After plan_turn with continuation=false, scope is reset.
+        // The research loop starts fresh — no stale tools are reused.
         expect(result.toolRuns).toEqual([]);
     });
 

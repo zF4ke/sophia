@@ -223,6 +223,11 @@ export interface GraphState {
         maxChannelMessages: number;
         maxToolRunsContext: number;
         maxEvidenceSlice: number;
+        maxContextPreviewEvidenceItems: number;
+        maxResolveChannelTargetEvidenceItems: number;
+        maxRetrieveHistoryEvidenceItems: number;
+        maxRetrieveSemanticEvidenceItems: number;
+        maxRetrieveEvidenceContentChars: number;
     };
 }
 

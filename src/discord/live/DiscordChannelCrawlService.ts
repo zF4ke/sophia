@@ -19,7 +19,9 @@ type CrawlableChannel = {
         fetch: (options: { limit: number; before?: string }) => Promise<any>;
     };
 };
-export const INTERACTIVE_CRAWL_LIMIT = Number(process.env.INTERACTIVE_CRAWL_LIMIT || 250);
+export const INTERACTIVE_CRAWL_LIMIT = Number(
+    process.env.TOOL_RETRIEVE_MESSAGES_MAX_INTERACTIVE_CRAWL_MESSAGES || 250
+);
 const PREVIEW_MESSAGE_LIMIT = 12;
 
 let backgroundIngestQueue: Promise<void> = Promise.resolve();

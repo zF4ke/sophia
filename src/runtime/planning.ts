@@ -7,6 +7,8 @@ import {
     parseModelIntent,
 } from "@/runtime/intentExtraction";
 import { PromptRegistry } from "@/runtime/PromptRegistry";
+import { getToolStrategy } from "@/runtime/tools";
+import type { ArgumentEnrichmentContext } from "@/runtime/tools/types";
 import type {
     ActiveRetrievalSession,
     ChannelContextMessage,
@@ -1070,219 +1072,41 @@ function normalizeStepDecision(
         activeRetrievalSession.continuationAvailable &&
         Object.keys(activeRetrievalSession.historyCursorByChannel).length > 0;
 
-    if (nextCapability === "resolve_member_identity") {
-        return {
-            nextCapability,
-            arguments: {
-                query:
-                    typeof argumentsObject.query === "string" && argumentsObject.query.trim()
-                        ? argumentsObject.query.trim()
-                        : structuralMember || activeMember?.resolvedId || state.actorId,
-            },
-            reason: sanitizeReason(
-                step.reason,
-                "Resolve the relevant member or bot before answering."
-            ),
-            learnedExpectation: sanitizeReason(
-                step.learnedExpectation,
-                "Return the best current-guild identity match or historical author fallback."
-            ),
-        };
-    }
-
-    if (nextCapability === "resolve_channel_targets") {
-        return {
-            nextCapability,
-            arguments: {
-                targetText:
-                    typeof argumentsObject.targetText === "string" && argumentsObject.targetText.trim()
-                        ? argumentsObject.targetText.trim()
-                        : structuralChannel || activeChannelTarget?.query || state.question,
-            },
-            reason: sanitizeReason(
-                step.reason,
-                "Resolve the referenced channel or category before answering."
-            ),
-            learnedExpectation: sanitizeReason(
-                step.learnedExpectation,
-                "Return exact message-channel ids for the current guild target."
-            ),
-        };
-    }
-
-    if (nextCapability === "retrieve_messages") {
-        const forensicScopedLookup = Boolean(
-            timeBounds.beforeTimestamp != null ||
-                timeBounds.afterTimestamp != null ||
-                structuralMember
-        );
-
-        const resolvedBeforeTimestamp =
-            timeBounds.beforeTimestamp ??
-            explicitBeforeTimestamp ??
-            activeRetrievalSession?.beforeTimestamp;
-        const resolvedAfterTimestamp =
-            timeBounds.afterTimestamp ??
-            explicitAfterTimestamp ??
-            activeRetrievalSession?.afterTimestamp;
-
-        return {
-            nextCapability,
-            arguments: {
-                query:
-                    typeof argumentsObject.query === "string" && argumentsObject.query.trim()
-                        ? argumentsObject.query.trim()
-                        : state.question,
-                mode:
-                    typeof argumentsObject.mode === "string" &&
-                    ["history", "semantic", "mixed"].includes(argumentsObject.mode)
-                        ? argumentsObject.mode
-                        : state.turnIntent?.retrievalMode ?? activeRetrievalSession?.mode ?? "history",
-                limit:
-                    typeof argumentsObject.limit === "number" ? argumentsObject.limit : 8,
-                ...(resolvedMember?.resolvedId || activeMember?.resolvedId
-                    ? { authorId: resolvedMember?.resolvedId || activeMember?.resolvedId }
-                    : {}),
-                ...(Array.isArray(argumentsObject.channelIds) && argumentsObject.channelIds.length
-                    ? { channelIds: argumentsObject.channelIds }
-                    : resolvedChannelIds.length
-                      ? { channelIds: resolvedChannelIds }
-                      : extractAllChannelMentionIds(state.question).length
-                        ? { channelIds: extractAllChannelMentionIds(state.question) }
-                        : {}),
-                ...(resolvedBeforeTimestamp != null
-                    ? {
-                          beforeTimestamp: resolvedBeforeTimestamp,
-                      }
-                    : {}),
-                ...(resolvedAfterTimestamp != null
-                    ? {
-                          afterTimestamp: resolvedAfterTimestamp,
-                      }
-                    : {}),
-                ...((shouldContinueSession || shouldAutoInjectCursor) &&
-                activeRetrievalSession?.historyCursorByChannel &&
-                Object.keys(activeRetrievalSession.historyCursorByChannel).length
-                    ? {
-                          cursor: ({
-                              history: activeRetrievalSession.historyCursorByChannel,
-                              ...(activeRetrievalSession.semanticCursor
-                                  ? { semantic: activeRetrievalSession.semanticCursor }
-                                  : {}),
-                          } as unknown as ToolArgumentValue),
-                      }
-                    : {}),
-                    ...((shouldContinueSession || shouldAutoInjectCursor) && activeRetrievalSession?.seenMessageIds?.length
-                    ? {
-                          excludedMessageIds: activeRetrievalSession.seenMessageIds,
-                      }
-                    : {}),
-                ...(typeof argumentsObject.aroundMessageId === "string" && argumentsObject.aroundMessageId.trim()
-                    ? { aroundMessageId: argumentsObject.aroundMessageId.trim() }
-                    : {}),
-            },
-            reason: sanitizeReason(
-                step.reason,
-                "Read scoped Discord history first, then supplement with semantic matches if needed."
-            ),
-            learnedExpectation: sanitizeReason(
-                step.learnedExpectation,
-                "Return ordered scoped history, semantic matches, and a continuation cursor."
-            ),
-        };
-    }
-
-    if (nextCapability === "get_member_profile") {
-        const profiled = ambiguousMemberCandidate
+    const enrichmentContext: ArgumentEnrichmentContext = {
+        question: state.question,
+        actorId: state.actorId,
+        resolvedMember,
+        resolvedChannelIds,
+        structuralMember,
+        structuralChannel,
+        activeMember,
+        activeChannelTarget,
+        activeRetrievalSession,
+        timeBounds,
+        explicitBeforeTimestamp,
+        explicitAfterTimestamp,
+        shouldContinueSession,
+        shouldAutoInjectCursor,
+        turnIntent: state.turnIntent,
+        ambiguousMemberCandidate,
+        profiledMemberIdentifiers: ambiguousMemberCandidate
             ? extractProfiledMemberIdentifiers(state.toolHistory)
-            : null;
-        const nextUnprofiled = ambiguousMemberCandidate?.identifiers.find(
-            (id) => profiled && !profiled.has(normalize(id)) && !profiled.has(id)
-        );
-        const modelProvided =
-            typeof argumentsObject.nameOrId === "string" && argumentsObject.nameOrId.trim()
-                ? argumentsObject.nameOrId.trim()
-                : null;
-        // When there are unprofiled ambiguous members, prefer the specific identifier
-        // over the model's argument — the model often passes the shared display name
-        // which resolves to the already-profiled member again.
-        const nameOrId =
-            nextUnprofiled ||
-            modelProvided ||
-            ambiguousMemberCandidate?.displayName ||
-            resolvedMember?.resolvedId ||
-            activeMember?.resolvedId ||
-            structuralMember ||
-            state.question;
-        return {
-            nextCapability,
-            arguments: { nameOrId },
-            reason: sanitizeReason(
-                step.reason,
-                "Fetch member profile details after identity resolution."
-            ),
-            learnedExpectation: sanitizeReason(
-                step.learnedExpectation,
-                "Return the current guild member profile when available."
-            ),
-        };
-    }
+            : null,
+        channelMentionIds: extractAllChannelMentionIds(state.question),
+    };
 
-    if (nextCapability === "list_guild_structure") {
-        return {
-            nextCapability,
-            arguments: {
-                ...(typeof argumentsObject.targetText === "string" && argumentsObject.targetText.trim()
-                    ? { targetText: argumentsObject.targetText.trim() }
-                    : activeChannelTarget?.query
-                      ? { targetText: activeChannelTarget.query }
-                      : structuralChannel
-                        ? { targetText: structuralChannel }
-                        : { targetText: state.question }),
-            },
-            reason: sanitizeReason(
-                step.reason,
-                "Inspect the current guild structure around the resolved or likely category/channel target."
-            ),
-            learnedExpectation: sanitizeReason(
-                step.learnedExpectation,
-                "Return matched categories/channels plus visible child-channel structure."
-            ),
-        };
-    }
-
-    if (nextCapability === "list_members") {
-        return {
-            nextCapability,
-            arguments: {
-                filters:
-                    typeof argumentsObject.filters === "string"
-                        ? argumentsObject.filters
-                        : undefined,
-                limit:
-                    typeof argumentsObject.limit === "number" ? argumentsObject.limit : 20,
-                offset:
-                    typeof argumentsObject.offset === "number" ? argumentsObject.offset : 0,
-            },
-            reason: sanitizeReason(
-                step.reason,
-                "List guild members when broader identity context may help."
-            ),
-            learnedExpectation: sanitizeReason(
-                step.learnedExpectation,
-                "Return the relevant current-guild members."
-            ),
-        };
-    }
+    const strategy = getToolStrategy(nextCapability);
+    const enriched = strategy.enrichArguments(
+        argumentsObject,
+        { reason: step.reason, learnedExpectation: step.learnedExpectation },
+        enrichmentContext
+    );
 
     return {
         nextCapability,
-        arguments: argumentsObject,
-        reason: sanitizeReason(step.reason, "Use the selected capability."),
-        learnedExpectation: sanitizeReason(
-            step.learnedExpectation,
-            "Use the capability output to improve the answer."
-        ),
+        arguments: enriched.arguments,
+        reason: enriched.reason,
+        learnedExpectation: enriched.learnedExpectation,
     };
 }
 
