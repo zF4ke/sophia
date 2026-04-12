@@ -394,6 +394,24 @@ function appendTrace(state: RuntimeState, label: string, detail: string): Runtim
     });
 }
 
+function formatAuthorIdentity(value: {
+    authorId?: string | null;
+    authorName?: string | null;
+    authorUsername?: string | null;
+    authorNickname?: string | null;
+}): string {
+    const authorName = value.authorName == null ? null : String(value.authorName);
+    const authorUsername = value.authorUsername == null ? null : String(value.authorUsername);
+    const authorNickname = value.authorNickname == null ? null : String(value.authorNickname);
+    const authorId = value.authorId == null ? null : String(value.authorId);
+
+    if (!authorName) {
+        return authorId ? `[id=${authorId}]` : "?";
+    }
+
+    return `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorNickname ? ` nick=${authorNickname}` : ""}${authorId ? ` id=${authorId}` : ""}]`;
+}
+
 function argsSignature(tool: DiscordToolName, args: ToolArguments) {
     return `${tool}:${JSON.stringify(args)}`;
 }
@@ -540,11 +558,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             const authorName = item.authorName == null ? null : String(item.authorName);
             const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
             const authorNickname = item.authorNickname == null ? null : String(item.authorNickname);
-            const authorPrefix = authorName
-                ? `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorNickname ? ` nick=${authorNickname}` : ""}${authorId ? ` id=${authorId}` : ""}]: `
-                : authorId
-                  ? `[id=${authorId}]: `
-                  : "";
+            const authorPrefix = `${formatAuthorIdentity({ authorId, authorName, authorUsername, authorNickname })}: `;
             const content = authorPrefix + body;
             return {
                 tool: "retrieve_messages" as const,
@@ -574,11 +588,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             const authorName = item.authorName == null ? null : String(item.authorName);
             const authorUsername = item.authorUsername == null ? null : String(item.authorUsername);
             const authorNickname = item.authorNickname == null ? null : String(item.authorNickname);
-            const authorPrefix = authorName
-                ? `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorNickname ? ` nick=${authorNickname}` : ""}${authorId ? ` id=${authorId}` : ""}]: `
-                : authorId
-                  ? `[id=${authorId}]: `
-                  : "";
+            const authorPrefix = `${formatAuthorIdentity({ authorId, authorName, authorUsername, authorNickname })}: `;
             const content = authorPrefix + body;
 
             return {
@@ -892,11 +902,7 @@ export class Runtime {
                     recentChannelMessages: channelContext.map((m) => `${m.authorName}: ${m.content}`),
                     evidencePreview: evidence.slice(0, 6).map((item) => {
                         const channelLabel = item.channelName ? `#${item.channelName}` : "?";
-                        const authorLabel = item.authorName
-                            ? item.authorUsername
-                                ? `${item.authorName} (@${item.authorUsername})`
-                                : item.authorName
-                            : "?";
+                        const authorLabel = formatAuthorIdentity(item);
                         return `[${item.tool}] ${channelLabel} · ${authorLabel}: ${item.content}`;
                     }),
                     recentTurns: recentTurns.map((t) => `Q: ${t.question} | A: ${t.answer}`),
@@ -1237,11 +1243,7 @@ export class Runtime {
                     recentChannelMessages: state.channelContext.map((m) => `${m.authorName}: ${m.content}`),
                     evidencePreview: evidence.slice(0, 6).map((e) => {
                         const channelLabel = e.channelName ? `#${e.channelName}` : "?";
-                        const authorLabel = e.authorName
-                            ? e.authorUsername
-                                ? `${e.authorName} (@${e.authorUsername})`
-                                : e.authorName
-                            : "?";
+                        const authorLabel = formatAuthorIdentity(e);
                         return `[${e.tool}] ${channelLabel} · ${authorLabel}: ${e.content}`;
                     }),
                     recentTurns: state.recentTurns.map((t) => `Q: ${t.question} | A: ${t.answer}`),

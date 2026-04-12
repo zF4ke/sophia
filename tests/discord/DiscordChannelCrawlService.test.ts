@@ -234,5 +234,54 @@ describe("DiscordChannelCrawlService", () => {
             }),
         ]);
     });
+
+    it("prefers guild display name and nickname over username in preview messages", async () => {
+        const fetchedMessages = new Collection([
+            [
+                "m1",
+                {
+                    id: "m1",
+                    createdTimestamp: 100,
+                    content: "A qualidade audiovisual desse vídeo é bizarra.",
+                    author: {
+                        id: "u1",
+                        username: "oneperson",
+                        globalName: "One Person",
+                    },
+                    member: {
+                        displayName: "openrosen",
+                        nickname: "openrosen",
+                    },
+                    guildId: "g1",
+                    channelId: "c1",
+                } as any,
+            ],
+        ]);
+        const channel = createChannel("c1", "comandos", {
+            messages: {
+                fetch: vi
+                    .fn()
+                    .mockResolvedValueOnce(fetchedMessages)
+                    .mockResolvedValueOnce(new Collection()),
+            },
+        });
+        const guild = {
+            id: "g1",
+            channels: {
+                cache: new Collection([["c1", channel]]),
+            },
+        } as any;
+
+        const result = await DiscordChannelCrawlService.crawlChannelMessages(guild, "c1", 250, "vídeo");
+
+        expect(result.previewMessages).toEqual([
+            expect.objectContaining({
+                messageId: "m1",
+                authorName: "openrosen",
+                authorUsername: "oneperson",
+                authorNickname: "openrosen",
+            }),
+        ]);
+    });
 });
 

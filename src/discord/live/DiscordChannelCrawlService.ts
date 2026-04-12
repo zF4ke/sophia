@@ -33,6 +33,31 @@ function normalizeLookupValue(value: string): string {
         .trim();
 }
 
+function resolveMessageAuthorIdentity(message: any): {
+    authorName: string;
+    authorUsername: string | null;
+    authorNickname: string | null;
+} {
+    const guildMember = message.member || message.guild?.members?.cache?.get?.(message.author?.id) || null;
+    const authorUsername =
+        typeof message.author?.username === "string" && message.author.username.trim()
+            ? message.author.username
+            : null;
+    const authorName =
+        guildMember?.displayName ||
+        (typeof message.author?.globalName === "string" && message.author.globalName.trim()
+            ? message.author.globalName
+            : null) ||
+        authorUsername ||
+        "unknown";
+
+    return {
+        authorName,
+        authorUsername,
+        authorNickname: guildMember?.nickname || null,
+    };
+}
+
 function isThreadLike(channel: { type?: ChannelType | number | string } | null | undefined): boolean {
     return (
         channel?.type === ChannelType.PublicThread ||
@@ -377,17 +402,20 @@ function buildPreviewMessages(
               )
               .slice(0, PREVIEW_MESSAGE_LIMIT);
 
-    return effective.map(({ message }) => ({
+    return effective.map(({ message }) => {
+        const authorIdentity = resolveMessageAuthorIdentity(message);
+        return {
         messageId: String(message.id),
         authorId: String(message.author?.id || ""),
-        authorName: String(message.author?.username || message.author?.displayName || "unknown"),
-        authorUsername: String(message.author?.username || "") || null,
-        authorNickname: message.member?.nickname || null,
+        authorName: authorIdentity.authorName,
+        authorUsername: authorIdentity.authorUsername,
+        authorNickname: authorIdentity.authorNickname,
         content: String(message.content || ""),
         createdTimestamp: Number(message.createdTimestamp || 0),
         jumpLink:
             typeof message.url === "string"
                 ? message.url
                 : `https://discord.com/channels/${message.guildId}/${message.channelId}/${message.id}`,
-    }));
+        };
+    });
 }

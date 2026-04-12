@@ -3,6 +3,12 @@ import type { StoredMessage } from "@/memory/types";
 
 export class MessageNormalizer {
     public static toStoredMessage(message: Message): StoredMessage {
+        const guildMember = message.member || message.guild?.members?.cache.get(message.author.id) || null;
+        const authorDisplayName =
+            guildMember?.displayName ||
+            message.author.globalName ||
+            message.author.username;
+
         return {
             id: message.id,
             guildId: message.guildId || null,
@@ -10,9 +16,9 @@ export class MessageNormalizer {
             channelName:
                 "name" in message.channel ? message.channel.name || message.channelId : message.channelId,
             authorId: message.author.id,
-            authorName: message.member?.displayName || message.author.username,
+            authorName: authorDisplayName,
             authorUsername: message.author.username,
-            authorNickname: message.member?.nickname || null,
+            authorNickname: guildMember?.nickname || null,
             content: message.content.trim(),
             attachmentsJson: JSON.stringify(
                 message.attachments.map((attachment) => ({
