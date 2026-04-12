@@ -374,7 +374,7 @@ export function renderDebugTrace(
             contextLines.push("**Evidence:**");
             contextLines.push(
                 ...state.contextPreview.evidencePreview
-                    .slice(0, 4)
+                    .slice(0, 20)
                     .map((item) => `- ${trimPreview(item, 120)}`)
             );
         }

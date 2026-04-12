@@ -319,7 +319,7 @@ const capabilities: RuntimeCapability[] = [
     {
         id: "get_member_profile",
         kind: "tool",
-        description: "Fetch a live guild member profile.",
+        description: "Fetch a detailed live guild member profile including roles, join date, account age, and avatar.",
         inputSchema: z.object({
             nameOrId: z.string(),
         }),
@@ -339,7 +339,16 @@ const capabilities: RuntimeCapability[] = [
             return {
                 tool: "get_member_profile",
                 summary: profile
-                    ? `${profile.displayName} (@${profile.username}) with ${profile.roles.length} visible roles.`
+                    ? [
+                          `${profile.displayName} (@${profile.username})`,
+                          profile.nickname ? `nick="${profile.nickname}"` : null,
+                          profile.joinedAt ? `joined=${profile.joinedAt}` : null,
+                          `${profile.roles.length} roles`,
+                          profile.isBot ? "bot" : null,
+                          profile.premiumSince ? "nitro" : null,
+                      ]
+                          .filter(Boolean)
+                          .join(", ")
                     : "Member not found.",
                 data: profile,
             };
@@ -348,11 +357,11 @@ const capabilities: RuntimeCapability[] = [
     {
         id: "list_members",
         kind: "tool",
-        description: "List live guild members with optional filtering.",
+        description: "List live guild members sorted by join date. Pass filters to narrow by name/username fragment, or omit filters to list all members in pages.",
         inputSchema: z.object({
-            filters: z.string().optional(),
-            limit: z.number().int().positive().optional(),
-            offset: z.number().int().nonnegative().optional(),
+            filters: z.string().describe("Optional name or username fragment. Omit to list all members.").optional(),
+            limit: z.number().int().positive().describe("Page size, default 20.").optional(),
+            offset: z.number().int().nonnegative().describe("Pagination offset.").optional(),
         }),
         outputSchema: z.any(),
         sideEffectLevel: "none",
@@ -423,7 +432,11 @@ export class CapabilityRegistry {
         return this.list()
             .map((capability) => {
                 const args = Object.entries((capability.inputSchema as z.ZodObject<any>).shape || {})
-                    .map(([name]) => name)
+                    .map(([name, schema]) => {
+                        const def = (schema as z.ZodTypeAny)._def as unknown as Record<string, unknown>;
+                        const desc = typeof def?.description === "string" ? def.description : undefined;
+                        return desc ? `${name} (${desc})` : name;
+                    })
                     .join(", ");
                 return [
                     `${capability.id}: ${capability.description}`,

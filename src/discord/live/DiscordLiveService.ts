@@ -138,6 +138,17 @@ function findExactNormalizedMember(guild: Guild, query: string): GuildMember | n
         return null;
     }
 
+    // Prefer a username-exact match over a displayName-only match.
+    // This matters when multiple members share the same display name
+    // but have distinct usernames (e.g. two "Glonos" with usernames
+    // "subjectless" and "glonos" — querying "glonos" should find the latter).
+    const usernameMatch = guild.members.cache.find(
+        (candidate) => normalizeMemberLookupValue(candidate.user.username) === normalizedQuery
+    );
+    if (usernameMatch) {
+        return usernameMatch;
+    }
+
     return (
         guild.members.cache.find((candidate) =>
             getMemberSearchFields(candidate).some(
@@ -260,6 +271,12 @@ export class DiscordLiveService {
                 globalName: resolved.globalName,
                 nickname: resolved.nickname,
                 roles: [],
+                joinedAt: null,
+                joinedTimestamp: null,
+                accountCreatedAt: null,
+                avatarUrl: null,
+                premiumSince: null,
+                pending: false,
                 bannerUrl: null,
                 accentColor: null,
                 bio: null,
@@ -280,6 +297,12 @@ export class DiscordLiveService {
                 globalName: resolved.globalName,
                 nickname: resolved.nickname,
                 roles: resolved.roles,
+                joinedAt: null,
+                joinedTimestamp: null,
+                accountCreatedAt: null,
+                avatarUrl: null,
+                premiumSince: null,
+                pending: false,
                 bannerUrl: null,
                 accentColor: null,
                 bio: null,
@@ -302,6 +325,12 @@ export class DiscordLiveService {
                 .filter((role) => role.name !== "@everyone")
                 .map((role) => role.name)
                 .slice(0, 10),
+            joinedAt: member.joinedAt?.toISOString() ?? null,
+            joinedTimestamp: member.joinedTimestamp ?? null,
+            accountCreatedAt: member.user.createdAt?.toISOString() ?? null,
+            avatarUrl: member.displayAvatarURL({ size: 256 }) ?? null,
+            premiumSince: member.premiumSince?.toISOString() ?? null,
+            pending: Boolean(member.pending),
             bannerUrl: fetchedUser.bannerURL() ?? member.displayBannerURL() ?? null,
             accentColor: fetchedUser.hexAccentColor ?? null,
             bio: null,
@@ -349,7 +378,7 @@ export class DiscordLiveService {
 
         await fetchAllMembers(guild);
 
-        const limit = Math.max(1, Math.min(250, options.limit ?? 100));
+        const limit = Math.max(1, Math.min(250, options.limit ?? 20));
         const offset = Math.max(0, options.offset ?? 0);
         const sort = options.sort ?? "joined_at";
 

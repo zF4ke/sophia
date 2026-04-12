@@ -424,9 +424,10 @@ describe("runtime planning", () => {
             toolHistory: [],
         });
 
-        expect(step.nextCapability).toBe("list_guild_structure");
+        expect(step.nextCapability).toBe("retrieve_messages");
         expect(step.arguments).toMatchObject({
-            targetText: "serviços",
+            query: "que serviços estão disponíveis nesse servidor?",
+            channelIds: ["c-bots", "c-logs"],
         });
     });
 
@@ -772,7 +773,7 @@ describe("runtime planning", () => {
         });
     });
 
-    it("normalizes model-selected retrieve_messages into channel resolution for named channel questions", async () => {
+    it("honors model-selected retrieve_messages without overriding to channel resolution", async () => {
         vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({
             nextCapability: "retrieve_messages",
             arguments: {},
@@ -800,12 +801,9 @@ describe("runtime planning", () => {
             toolHistory: [],
         });
 
-        expect(step).toEqual({
-            nextCapability: "resolve_channel_targets",
-            arguments: { targetText: "who-riddle" },
-            reason: "Resolve the referenced channel or category before unscoped retrieval.",
-            learnedExpectation:
-                "Return exact message-channel ids for the named current-guild target.",
+        expect(step.nextCapability).toBe("retrieve_messages");
+        expect(step.arguments).toMatchObject({
+            query: "o que tem nesse canal who-riddle?",
         });
     });
 

@@ -12,7 +12,7 @@ Rules:
 - If an active retrieval session already exists for the same conversation, continuation-style follow-ups should usually stay in research mode.
 - Guild structure alone is not enough to claim what a service does unless the names alone make that obvious.
 - Do not choose refusal for ordinary conversation. If the user is vague, the runtime should stay conversational and recover.
-- Keep the candidate capability list short and realistic.
+- Keep the candidate capability list short and realistic. It is initial guidance — the step planner may use any registered capability based on what it discovers during research.
 - Use only capability IDs that exist in the registry.
 - The `intent` block is optional guidance. Fill in what you can infer from the question — continuation desire, retrieval mode preference, time window. Use null for uncertain fields. The runtime may override with structural signals.
 - Return strict JSON only.

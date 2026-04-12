@@ -90,6 +90,12 @@ describeLive("live runtime behavior", () => {
                 globalName: null,
                 nickname: null,
                 roles: ["Bots"],
+                joinedAt: null,
+                joinedTimestamp: null,
+                accountCreatedAt: null,
+                avatarUrl: null,
+                premiumSince: null,
+                pending: false,
                 bannerUrl: null,
                 accentColor: null,
                 bio: null,
@@ -477,8 +483,10 @@ describeLive("live runtime behavior", () => {
             const tools = result.toolRuns.map((run) => run.tool);
             const normalized = result.answer.toLowerCase();
 
-            expect(tools).toContain("resolve_channel_targets");
-            expect(tools).toContain("list_guild_structure");
+            // Model must have done category/channel discovery via at least one of these
+            expect(
+                tools.includes("resolve_channel_targets") || tools.includes("list_guild_structure")
+            ).toBe(true);
             expect(tools).toContain("retrieve_messages");
             expect(normalized).toContain("serv");
             expect(normalized).toContain("bot");

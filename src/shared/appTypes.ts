@@ -207,6 +207,12 @@ export interface MemberProfileResult {
     globalName: string | null;
     nickname: string | null;
     roles: string[];
+    joinedAt: string | null;
+    joinedTimestamp: number | null;
+    accountCreatedAt: string | null;
+    avatarUrl: string | null;
+    premiumSince: string | null;
+    pending: boolean;
     bannerUrl: string | null;
     accentColor: string | null;
     bio: string | null;

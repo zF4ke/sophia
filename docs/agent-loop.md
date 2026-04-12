@@ -50,9 +50,17 @@ For strict scoped reads (author/time bounded), retrieval performs guarded empty-
 - retry once without cursor when needed
 - record diagnostics in tool output and debug timeline
 
-`resolve_member_identity`, `list_guild_structure`, and `resolve_channel_targets` are the current-guild discovery layer. The others are live metadata capabilities.
+`resolve_member_identity`, `list_guild_structure`, and `resolve_channel_targets` are the current-guild discovery layer.
+
+`get_member_profile` returns rich profile data surfaced as evidence content: display name, username, nickname, roles, join date, account creation date, bot status, Nitro/premium status, pending status, and avatar URL. This makes profile comparisons (e.g. "who joined first?") answerable from evidence alone.
+
+`list_members` supports offset-based pagination with a default page size of 20. An optional `filters` parameter narrows results by name/username fragment; omitting it returns all guild members in pages. When more members exist beyond the current page, a `hasMore` flag and pagination hint are included in evidence so the model can request the next page.
 
 The runtime chooses capabilities from the registry. The planner is model-led by default, and the core loop should not grow language-specific routing or tool-specific branching for each new capability.
+
+`candidateCapabilities` from `plan_turn` is initial planning guidance surfaced to the step planner in its prompt. It is not a hard gate. `select_next_step` may choose any capability from the registry based on what it has learned so far, regardless of what was initially planned. The same capability may be called multiple times with different arguments when the model determines that is needed (e.g. `get_member_profile` once per ambiguous member).
+
+The runtime provides argument enrichment (resolved IDs, cursors, time bounds) to help the model execute correctly. It does not override the model's tool choice with pre-flight redirects.
 
 ## Stop Policy
 

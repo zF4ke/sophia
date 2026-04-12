@@ -624,11 +624,21 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
     if (run.tool === "get_member_profile" && run.data) {
         const item = run.data as Record<string, unknown>;
         const roles = Array.isArray(item.roles) ? item.roles.join(", ") : "none";
+        const parts = [
+            `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")})`,
+        ];
+        if (item.nickname) parts.push(`nick=${String(item.nickname)}`);
+        if (item.joinedAt) parts.push(`joined=${String(item.joinedAt)}`);
+        if (item.accountCreatedAt) parts.push(`created=${String(item.accountCreatedAt)}`);
+        parts.push(`roles=${roles || "none"}`);
+        if (item.isBot) parts.push("bot=true");
+        if (item.premiumSince) parts.push(`nitro_since=${String(item.premiumSince)}`);
+        if (item.pending) parts.push("pending=true");
         return [
             {
                 tool: "get_member_profile",
                 summary: run.summary,
-                content: `${String(item.displayName || "Unknown")} (@${String(item.username || "unknown")}) roles=${roles || "none"}`,
+                content: parts.join("; "),
                 evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.get_member_profile,
                 strength: "metadata",
                 sourceOrigin: "none",
@@ -639,17 +649,41 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
     }
 
     if (run.tool === "list_members" && run.data && typeof run.data === "object") {
-        const members = (run.data as { members?: Array<Record<string, unknown>> }).members || [];
-        return members.slice(0, 4).map((item) => ({
-            tool: "list_members",
-            summary: run.summary,
-            content: `${String(item.displayName || "Unknown")} (@${String(item.username || "unknown")})`,
-            evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_members,
-            strength: "metadata",
-            sourceOrigin: "none",
-            authorId: item.id == null ? null : String(item.id),
-            authorName: item.displayName == null ? null : String(item.displayName),
-        }));
+        const payload = run.data as { members?: Array<Record<string, unknown>>; hasMore?: boolean; totalCount?: number; offset?: number };
+        const members = payload.members || [];
+        const evidence = members.slice(0, 10).map((item) => {
+            const parts = [
+                `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")})`,
+            ];
+            if (item.nickname) parts.push(`nick=${String(item.nickname)}`);
+            if (item.joinedTimestamp) {
+                parts.push(`joined=${new Date(Number(item.joinedTimestamp)).toISOString()}`);
+            }
+            if (item.isBot) parts.push("bot=true");
+            return {
+                tool: "list_members" as const,
+                summary: run.summary,
+                content: parts.join("; "),
+                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_members,
+                strength: "metadata" as const,
+                sourceOrigin: "none" as const,
+                authorId: item.id == null ? null : String(item.id),
+                authorName: item.displayName == null ? null : String(item.displayName),
+            };
+        });
+        if (payload.hasMore) {
+            evidence.push({
+                tool: "list_members" as const,
+                summary: run.summary,
+                content: `...and ${(payload.totalCount || 0) - members.length} more members (use offset=${(payload.offset || 0) + members.length} to continue).`,
+                evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.list_members,
+                strength: "metadata" as const,
+                sourceOrigin: "none" as const,
+                authorId: null,
+                authorName: null,
+            });
+        }
+        return evidence;
     }
 
     if (run.tool === "get_guild_context" && run.data) {

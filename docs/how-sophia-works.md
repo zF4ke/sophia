@@ -112,11 +112,14 @@ The runtime does not hardcode a large phrase-classification tree anymore. The mo
 
 The runtime then applies only narrow guardrails:
 - exact-id structural shortcuts
-- capability validation
-- loop/budget limits
+- capability validation (tool name must be in the registry)
+- budget limits (max tool calls, max passes, latency)
+- repeated-call guard (blocks exact-same-arguments duplicates)
 - refusal prevention for ordinary conversation
-- a small generic fallback plan if model output is invalid
+- a generic fallback ladder if model output is invalid
 - short-lived resolved-target carry-over for the active conversation thread
+
+`candidateCapabilities` from `plan_turn` is surfaced to `select_next_step` as guidance, not a constraint. The model may freely choose any registered capability based on what it has discovered so far, and may call the same capability multiple times with different arguments when needed.
 
 ### Planning And Execution Diagram
 
@@ -151,7 +154,7 @@ It then returns one plan:
 - `reason`
 - `goal`
 - `successCriteria`
-- `candidateCapabilities`
+- `candidateCapabilities` (initial guidance for the step planner — not a hard constraint)
 - `confidence`
 
 ### Intent Arbitration Diagram
@@ -185,16 +188,18 @@ Current planner-visible capabilities:
 - `resolve_member_identity`
 - `list_guild_structure`
 - `resolve_channel_targets`
-- `get_member_profile`
-- `list_members`
+- `get_member_profile` — returns rich profile evidence: display name, username, nickname, roles, join date, account creation date, bot status, Nitro/premium, pending, and avatar URL
+- `list_members` — offset-based pagination (default page size 20); optional `filters` narrows by name/username fragment, omitting it returns all guild members in pages
 - `get_guild_context`
 
-For category/channel questions, the intended chain is:
+For category/channel questions, the common execution pattern is:
 1. resolve the target category/channel
 2. inspect the matched guild structure
 3. retrieve scoped messages from the resolved child channels
 
-The runtime now defaults to enough research passes to complete that chain even when the channel is not indexed yet and `retrieve_messages` has to do a cache-first miss followed by live Discord escalation.
+This is a common pattern, not a hardcoded sequence. The model may adapt freely based on what it discovers — it can skip steps it doesn't need, call tools in a different order, or call the same tool more than once with different arguments (e.g. `get_member_profile` once per ambiguous member). The runtime provides argument enrichment to help the model execute well but does not redirect tool choices.
+
+The runtime defaults to enough research passes to complete multi-step compositions even when channels are not indexed yet.
 
 ### Capability Composition Diagram
 
@@ -369,7 +374,8 @@ She then turns the result into the final reply or a best-effort conversational f
 - automatically fetch more live Discord history when cached evidence is weak
 - continue scoped channel history across turns without rereading duplicate messages
 - combine ordered history with scoped semantic matches inside the same retrieval capability
-- inspect live member and guild metadata
+- inspect live member profiles including roles, join date, account age, bot status, Nitro/premium, nickname, and avatar
+- list all guild members with offset-based pagination (default 20 per page) or filter by name fragment
 - resolve exact member, bot, channel, and category ids in the current guild
 - distinguish current live guild structure from cached-only remembered entries
 - carry short-lived resolved member/channel targets across follow-up turns in the same conversation

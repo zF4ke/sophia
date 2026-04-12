@@ -44,6 +44,13 @@ Intent parsing policy:
 - Use `src/runtime/intentExtraction.ts` for deterministic lexicon parsing plus model-intent merge.
 - Add or tune phrase support by updating lexicon groups in `intentExtraction.ts`, not by scattering regex heuristics through planner logic.
 
+Planning policy:
+- `candidateCapabilities` from `plan_turn` is surfaced to `select_next_step` as initial guidance only. It is not a hard gate.
+- `select_next_step` may choose any registered capability regardless of the initial candidate list.
+- The same capability may be called multiple times with different arguments (e.g. `get_member_profile` per each ambiguous member).
+- The runtime provides argument enrichment (resolved IDs, cursors, time bounds) but does not redirect the model's tool choice with pre-flight overrides.
+- `fallbackStepDecision` is a safety net for model failures and is also no longer gated on `candidateCapabilities`.
+
 ## Stable Tool Contract
 
 These capability ids are prompt- and runtime-stable:

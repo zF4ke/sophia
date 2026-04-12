@@ -28,7 +28,7 @@ Sophia runs on one conversational runtime and one unified Discord retrieval pipe
 - Conversation identity is reply-chain first, then native thread, then channel fallback.
 - Weak grounding should lead to best-effort continuation or a targeted follow-up, not a dead-end refusal.
 - Capability execution is registry-driven, not hardcoded per tool in the core runtime.
-- `retrieve_messages` is the main message-evidence capability. `resolve_member_identity` handles exact member and bot resolution with same-guild historical fallback. `list_guild_structure` and `resolve_channel_targets` provide current-guild discovery. `get_member_profile`, `list_members`, and `get_guild_context` remain live metadata capabilities.
+- `retrieve_messages` is the main message-evidence capability. `resolve_member_identity` handles exact member and bot resolution with same-guild historical fallback. `list_guild_structure` and `resolve_channel_targets` provide current-guild discovery. `get_member_profile` returns rich profile data including roles, join date, account creation date, nickname, bot status, Nitro/premium status, and avatar. `list_members` supports offset-based pagination (default page size 20) with an optional name/username fragment filter — omitting the filter returns all members. `get_guild_context` provides live guild-level metadata.
 - `/find` stays separate as a specialized retrieval workflow built on the same primitives.
 
 ## Active Runtime Flow

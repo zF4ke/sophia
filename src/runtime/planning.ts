@@ -87,11 +87,16 @@ function extractStructuralMemberReference(
         return namedMemberMatch;
     }
 
-    return (
-        extractMemberMentionId(question) ||
-        extractBareSnowflake(question) ||
-        null
-    );
+    if (extractMemberMentionId(question)) {
+        return extractMemberMentionId(question);
+    }
+
+    const bare = extractBareSnowflake(question);
+    if (bare && !extractChannelMentionId(question)) {
+        return bare;
+    }
+
+    return null;
 }
 
 function extractStructuralChannelReference(
@@ -879,12 +884,7 @@ function normalizeStepDecision(
 ): StepDecision {
     const ambiguousMemberCandidate = extractAmbiguousMemberCandidate(state.toolHistory);
     const nextCapability =
-        step.nextCapability &&
-        VALID_TOOL_NAMES.has(step.nextCapability) &&
-        (
-            state.candidateCapabilities.includes(step.nextCapability) ||
-            (step.nextCapability === "get_member_profile" && ambiguousMemberCandidate != null)
-        )
+        step.nextCapability && VALID_TOOL_NAMES.has(step.nextCapability)
             ? step.nextCapability
             : null;
 
@@ -976,56 +976,6 @@ function normalizeStepDecision(
                 structuralMember
         );
 
-        if (
-            structuralMember &&
-            !resolvedMember?.resolvedId &&
-            !activeMember?.resolvedId &&
-            state.candidateCapabilities.includes("resolve_member_identity") &&
-            !hasToolRun(state.toolHistory, "resolve_member_identity")
-        ) {
-            return normalizeStepDecision(state, {
-                nextCapability: "resolve_member_identity",
-                arguments: {
-                    query: structuralMember,
-                },
-                reason: "Resolve the referenced member before scoped retrieval.",
-                learnedExpectation:
-                    "Return the best current-guild identity match so retrieval can use a strict author scope.",
-            });
-        }
-
-        if (
-            structuralChannel &&
-            !resolvedChannelIds.length &&
-            state.candidateCapabilities.includes("resolve_channel_targets") &&
-            !hasToolRun(state.toolHistory, "resolve_channel_targets")
-        ) {
-            return normalizeStepDecision(state, {
-                nextCapability: "resolve_channel_targets",
-                arguments: {
-                    targetText: structuralChannel,
-                },
-                reason: "Resolve the referenced channel or category before unscoped retrieval.",
-                learnedExpectation: "Return exact message-channel ids for the named current-guild target.",
-            });
-        }
-
-        if (
-            resolvedChannelIds.length &&
-            !forensicScopedLookup &&
-            state.candidateCapabilities.includes("list_guild_structure") &&
-            !hasToolRun(state.toolHistory, "list_guild_structure")
-        ) {
-            return normalizeStepDecision(state, {
-                nextCapability: "list_guild_structure",
-                arguments: {
-                    targetText: activeChannelTarget?.query || structuralChannel || state.question,
-                },
-                reason: "Inspect the resolved category or channel structure before scoped retrieval.",
-                learnedExpectation: "Confirm the visible child channels before reading scoped messages.",
-            });
-        }
-
         const resolvedBeforeTimestamp =
             timeBounds.beforeTimestamp ??
             explicitBeforeTimestamp ??
@@ -1094,26 +1044,6 @@ function normalizeStepDecision(
         };
     }
 
-    if (
-        nextCapability === "list_guild_structure" &&
-        !activeChannelTarget &&
-        !resolvedChannelIds.length &&
-        state.candidateCapabilities.includes("resolve_channel_targets") &&
-        !hasToolRun(state.toolHistory, "resolve_channel_targets")
-    ) {
-        return normalizeStepDecision(state, {
-            nextCapability: "resolve_channel_targets",
-            arguments: {
-                targetText:
-                    typeof argumentsObject.targetText === "string" && argumentsObject.targetText.trim()
-                        ? argumentsObject.targetText.trim()
-                        : structuralChannel || state.question,
-            },
-            reason: "Resolve the likely category or channel target before inspecting guild structure.",
-            learnedExpectation: "Return the exact or best-matched guild target before structure inspection.",
-        });
-    }
-
     if (nextCapability === "get_member_profile") {
         const profiled = ambiguousMemberCandidate
             ? extractProfiledMemberIdentifiers(state.toolHistory)
@@ -1121,19 +1051,24 @@ function normalizeStepDecision(
         const nextUnprofiled = ambiguousMemberCandidate?.identifiers.find(
             (id) => profiled && !profiled.has(normalize(id)) && !profiled.has(id)
         );
+        const modelProvided =
+            typeof argumentsObject.nameOrId === "string" && argumentsObject.nameOrId.trim()
+                ? argumentsObject.nameOrId.trim()
+                : null;
+        // When there are unprofiled ambiguous members, prefer the specific identifier
+        // over the model's argument — the model often passes the shared display name
+        // which resolves to the already-profiled member again.
+        const nameOrId =
+            nextUnprofiled ||
+            modelProvided ||
+            ambiguousMemberCandidate?.displayName ||
+            resolvedMember?.resolvedId ||
+            activeMember?.resolvedId ||
+            structuralMember ||
+            state.question;
         return {
             nextCapability,
-            arguments: {
-                nameOrId:
-                    typeof argumentsObject.nameOrId === "string" && argumentsObject.nameOrId.trim()
-                        ? argumentsObject.nameOrId.trim()
-                        : nextUnprofiled ||
-                          ambiguousMemberCandidate?.displayName ||
-                          resolvedMember?.resolvedId ||
-                          activeMember?.resolvedId ||
-                          structuralMember ||
-                          state.question,
-            },
+            arguments: { nameOrId },
             reason: sanitizeReason(
                 step.reason,
                 "Fetch member profile details after identity resolution."
@@ -1175,9 +1110,9 @@ function normalizeStepDecision(
                 filters:
                     typeof argumentsObject.filters === "string"
                         ? argumentsObject.filters
-                        : state.question,
+                        : undefined,
                 limit:
-                    typeof argumentsObject.limit === "number" ? argumentsObject.limit : 10,
+                    typeof argumentsObject.limit === "number" ? argumentsObject.limit : 20,
                 offset:
                     typeof argumentsObject.offset === "number" ? argumentsObject.offset : 0,
             },
@@ -1246,7 +1181,6 @@ export function fallbackStepDecision(
     if (
         activeRetrievalSession?.continuationAvailable &&
         !changedScope &&
-        state.candidateCapabilities.includes("retrieve_messages") &&
         state.turnIntent?.continuation === true
     ) {
         return normalizeStepDecision(state, {
@@ -1261,8 +1195,7 @@ export function fallbackStepDecision(
 
     if (
         changedScope &&
-        structuralChannel &&
-        state.candidateCapabilities.includes("resolve_channel_targets")
+        structuralChannel
     ) {
         return normalizeStepDecision(state, {
             nextCapability: "resolve_channel_targets",
@@ -1275,7 +1208,6 @@ export function fallbackStepDecision(
     if (
         structuralMember &&
         !resolvedMember?.resolvedId &&
-        state.candidateCapabilities.includes("resolve_member_identity") &&
         !hasToolRun(state.toolHistory, "resolve_member_identity")
     ) {
         return normalizeStepDecision(state, {
@@ -1289,7 +1221,6 @@ export function fallbackStepDecision(
     if (
         structuralChannel &&
         !resolvedChannelIds.length &&
-        state.candidateCapabilities.includes("resolve_channel_targets") &&
         !hasToolRun(state.toolHistory, "resolve_channel_targets")
     ) {
         return normalizeStepDecision(state, {
@@ -1297,54 +1228,6 @@ export function fallbackStepDecision(
             arguments: { targetText: structuralChannel },
             reason: "Resolve the exact channel or category reference before broader retrieval.",
             learnedExpectation: "Return exact message-channel ids for the current guild target.",
-        });
-    }
-
-    if (
-        !activeChannelTarget &&
-        !resolvedChannelIds.length &&
-        state.candidateCapabilities.includes("resolve_channel_targets") &&
-        !hasToolRun(state.toolHistory, "resolve_channel_targets")
-    ) {
-        return normalizeStepDecision(state, {
-            nextCapability: "resolve_channel_targets",
-            arguments: {
-                targetText: structuralChannel || state.question,
-            },
-            reason: "Resolve the most likely channel or category target before broader discovery.",
-            learnedExpectation: "Return exact message-channel ids for the likely current-guild target.",
-        });
-    }
-
-    if (
-        resolvedChannelIds.length &&
-        state.candidateCapabilities.includes("retrieve_messages") &&
-        !hasToolRun(state.toolHistory, "retrieve_messages")
-    ) {
-        return normalizeStepDecision(state, {
-            nextCapability: "retrieve_messages",
-            arguments: {
-                query: state.question,
-                channelIds: resolvedChannelIds,
-            },
-            reason: "Use the resolved channel scope to retrieve Discord messages before answering.",
-            learnedExpectation: "Return scoped message evidence from the resolved category or channel area.",
-        });
-    }
-
-    if (
-        !forensicScopedLookup &&
-        (activeChannelTarget || resolvedChannelIds.length) &&
-        state.candidateCapabilities.includes("list_guild_structure") &&
-        !hasToolRun(state.toolHistory, "list_guild_structure")
-    ) {
-        return normalizeStepDecision(state, {
-            nextCapability: "list_guild_structure",
-            arguments: {
-                targetText: activeChannelTarget?.query || structuralChannel || state.question,
-            },
-            reason: "Inspect the matched category or channel structure before summarizing it.",
-            learnedExpectation: "Return the matched structure plus visible child channels.",
         });
     }
 
@@ -1365,10 +1248,54 @@ export function fallbackStepDecision(
         }
     }
 
+    if (
+        !activeChannelTarget &&
+        !resolvedChannelIds.length &&
+        !hasToolRun(state.toolHistory, "resolve_channel_targets")
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "resolve_channel_targets",
+            arguments: {
+                targetText: structuralChannel || state.question,
+            },
+            reason: "Resolve the most likely channel or category target before broader discovery.",
+            learnedExpectation: "Return exact message-channel ids for the likely current-guild target.",
+        });
+    }
+
+    if (
+        resolvedChannelIds.length &&
+        !hasToolRun(state.toolHistory, "retrieve_messages")
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "retrieve_messages",
+            arguments: {
+                query: state.question,
+                channelIds: resolvedChannelIds,
+            },
+            reason: "Use the resolved channel scope to retrieve Discord messages before answering.",
+            learnedExpectation: "Return scoped message evidence from the resolved category or channel area.",
+        });
+    }
+
+    if (
+        !forensicScopedLookup &&
+        (activeChannelTarget || resolvedChannelIds.length) &&
+        !hasToolRun(state.toolHistory, "list_guild_structure")
+    ) {
+        return normalizeStepDecision(state, {
+            nextCapability: "list_guild_structure",
+            arguments: {
+                targetText: activeChannelTarget?.query || structuralChannel || state.question,
+            },
+            reason: "Inspect the matched category or channel structure before summarizing it.",
+            learnedExpectation: "Return the matched structure plus visible child channels.",
+        });
+    }
+
     const nextCapability =
         GENERIC_STEP_ORDER.find(
-            (tool) =>
-                state.candidateCapabilities.includes(tool) && !hasToolRun(state.toolHistory, tool)
+            (tool) => !hasToolRun(state.toolHistory, tool)
         ) || null;
 
     if (!nextCapability) {

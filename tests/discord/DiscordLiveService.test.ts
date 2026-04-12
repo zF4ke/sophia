@@ -16,6 +16,7 @@ function createMember(
             username,
             globalName: null,
             bot: Boolean(options.bot),
+            createdAt: new Date(joinedTimestamp - 86400000),
             fetch: vi.fn().mockResolvedValue({
                 globalName: null,
                 hexAccentColor: null,
@@ -25,9 +26,13 @@ function createMember(
         displayName,
         nickname: null as string | null,
         joinedTimestamp,
+        joinedAt: new Date(joinedTimestamp),
+        premiumSince: null as Date | null,
+        pending: false,
         roles: {
             cache: new Collection(),
         },
+        displayAvatarURL: () => "https://cdn.discordapp.com/avatars/mock.png",
         displayBannerURL: () => null,
     };
 }
@@ -225,5 +230,105 @@ describe("DiscordLiveService.listMembers", () => {
 
         expect(fetch).toHaveBeenCalledTimes(2);
         expect(result.returnedCount).toBe(1);
+    });
+
+    it("returns all members without filters and paginates with offset", async () => {
+        const members = Array.from({ length: 5 }, (_, i) =>
+            createMember(`m${i}`, `user${i}`, `User ${i}`, (i + 1) * 100)
+        );
+        const guild = {
+            members: {
+                fetch: vi.fn().mockResolvedValue(undefined),
+                cache: new Collection(members.map((m) => [m.id, m])),
+            },
+        } as any;
+
+        const page1 = await DiscordLiveService.listMembers(guild, { limit: 2, offset: 0 });
+        expect(page1.totalCount).toBe(5);
+        expect(page1.returnedCount).toBe(2);
+        expect(page1.hasMore).toBe(true);
+        expect(page1.members.map((m) => m.id)).toEqual(["m0", "m1"]);
+
+        const page2 = await DiscordLiveService.listMembers(guild, { limit: 2, offset: 2 });
+        expect(page2.returnedCount).toBe(2);
+        expect(page2.hasMore).toBe(true);
+        expect(page2.members.map((m) => m.id)).toEqual(["m2", "m3"]);
+
+        const page3 = await DiscordLiveService.listMembers(guild, { limit: 2, offset: 4 });
+        expect(page3.returnedCount).toBe(1);
+        expect(page3.hasMore).toBe(false);
+        expect(page3.members.map((m) => m.id)).toEqual(["m4"]);
+    });
+
+    it("pages never contain duplicate members", async () => {
+        const members = Array.from({ length: 10 }, (_, i) =>
+            createMember(`m${i}`, `user${i}`, `User ${i}`, (i + 1) * 100)
+        );
+        const guild = {
+            members: {
+                fetch: vi.fn().mockResolvedValue(undefined),
+                cache: new Collection(members.map((m) => [m.id, m])),
+            },
+        } as any;
+
+        const allIds: string[] = [];
+        let offset = 0;
+        const pageSize = 3;
+        let hasMore = true;
+        while (hasMore) {
+            const page = await DiscordLiveService.listMembers(guild, {
+                limit: pageSize,
+                offset,
+            });
+            allIds.push(...page.members.map((m) => m.id));
+            offset += page.returnedCount;
+            hasMore = page.hasMore;
+        }
+
+        expect(allIds).toHaveLength(10);
+        expect(new Set(allIds).size).toBe(10);
+    });
+
+    it("defaults to 20 members per page when no limit is specified", async () => {
+        const members = Array.from({ length: 25 }, (_, i) =>
+            createMember(`m${i}`, `user${i}`, `User ${i}`, (i + 1) * 100)
+        );
+        const guild = {
+            members: {
+                fetch: vi.fn().mockResolvedValue(undefined),
+                cache: new Collection(members.map((m) => [m.id, m])),
+            },
+        } as any;
+
+        const result = await DiscordLiveService.listMembers(guild);
+
+        expect(result.returnedCount).toBe(20);
+        expect(result.hasMore).toBe(true);
+        expect(result.totalCount).toBe(25);
+    });
+
+    it("returns profile with joinedAt, accountCreatedAt, and premiumSince fields", async () => {
+        const member = createMember("u1", "testuser", "Test User", 1700000000000);
+        member.premiumSince = new Date(1710000000000);
+        member.roles.cache.set("r1", { id: "r1", name: "Admin" } as any);
+
+        const guild = {
+            members: {
+                fetch: vi.fn().mockResolvedValue(undefined),
+                search: vi.fn().mockResolvedValue(new Collection([[member.id, member]])),
+                cache: new Collection([[member.id, member]]),
+            },
+        } as any;
+
+        const profile = await DiscordLiveService.getMemberProfile(guild, "testuser");
+
+        expect(profile).not.toBeNull();
+        expect(profile!.joinedAt).toBe(new Date(1700000000000).toISOString());
+        expect(profile!.joinedTimestamp).toBe(1700000000000);
+        expect(profile!.accountCreatedAt).toBe(new Date(1700000000000 - 86400000).toISOString());
+        expect(profile!.premiumSince).toBe(new Date(1710000000000).toISOString());
+        expect(profile!.pending).toBe(false);
+        expect(profile!.avatarUrl).toContain("cdn.discordapp.com");
+        expect(profile!.roles).toContain("Admin");
     });
 });

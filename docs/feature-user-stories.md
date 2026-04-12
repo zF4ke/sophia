@@ -24,12 +24,15 @@ Current runtime capabilities and workflows:
 
 ### `get_member_profile`
 
-- As a user, I can ask for a member or bot profile and Sophia can return current-guild profile details such as display name and visible roles.
+- As a user, I can ask for a member or bot profile and Sophia can return rich profile evidence: display name, username, nickname, roles, join date, account creation date, bot status, Nitro/premium status, pending status, and avatar URL.
+- Profile evidence is surfaced directly in evidence content so the model can compare members (e.g. "who joined first?") without needing raw data access.
 - This tool is for profile metadata, not message-history answers.
 
 ### `list_members`
 
 - As an operator or user, I can ask for matching guild members and Sophia can enumerate them from the current guild.
+- Omitting the `filters` parameter returns all guild members in offset-based pages (default page size 20).
+- When more members exist beyond the current page, a `hasMore` flag and pagination hint are included in evidence.
 - Exact IDs and filtered lookups should not rely only on cache fragments.
 
 ### `resolve_channel_targets`
@@ -62,6 +65,13 @@ Current runtime capabilities and workflows:
 - `/find` should reuse the same shared member/channel/category resolution primitives as the main runtime.
 
 ## Composition Stories
+
+### Ambiguous identity disambiguation
+
+- User asks: `Qual Glonos é o verdadeiro?`
+- Runtime resolves members with `resolve_member_identity` or `list_members`.
+- If multiple current-guild members share the same display name, the runtime should fetch a profile for each with `get_member_profile` (once per member, different arguments).
+- Sophia compares the profiles (roles, join date, account age, activity history) and makes a specific recommendation instead of asking the user to choose manually.
 
 ### Identity then profile
 
@@ -123,6 +133,8 @@ Current runtime capabilities and workflows:
 - Exact IDs should be first-class inputs for members, bots, channels, and categories.
 - Same-guild historical fallbacks must be labeled as historical, not current membership or live structure.
 - Tool composition should stay bounded by runtime budgets and repeated-call guards.
+- The model may call any registered capability, in any order, as many times as needed — `candidateCapabilities` is planning guidance, not a constraint.
+- If multiple guild members share the same display name, Sophia should fetch a profile for each before answering so she can compare and recommend the right one.
 - Category or channel existence alone is not enough to claim what a service does; Sophia should prefer scoped messages when those channels are readable.
 - Sophia should not say a category is empty unless the evidence explicitly shows zero visible child channels.
 - If a target channel is readable but not indexed, Sophia should still try scoped retrieval and let the retrieval layer do the cache miss -> live fetch -> ingest path automatically.
