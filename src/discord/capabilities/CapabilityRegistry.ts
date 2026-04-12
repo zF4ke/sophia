@@ -214,9 +214,9 @@ const capabilities: RuntimeCapability[] = [
         id: "resolve_member_identity",
         kind: "tool",
         description:
-            "Resolve a member or bot in the current guild using exact ids, live guild fetches, and same-guild historical message authors.",
+            "Resolve a member or bot in the current guild using exact ids, live guild fetches, and same-guild historical message authors. Pass a Discord snowflake ID, a username, a display name, or a nickname — snowflake IDs resolve directly without a search.",
         inputSchema: z.object({
-            query: z.string(),
+            query: z.string().describe("Member name, username, nickname, or Discord snowflake ID."),
         }),
         outputSchema: z.any(),
         sideEffectLevel: "none",
@@ -319,9 +319,9 @@ const capabilities: RuntimeCapability[] = [
     {
         id: "get_member_profile",
         kind: "tool",
-        description: "Fetch a detailed live guild member profile including roles, join date, account age, and avatar.",
+        description: "Fetch a detailed live guild member profile including roles, join date, account age, and avatar. Pass a Discord snowflake ID, a username, a display name, or a nickname — snowflake IDs resolve directly without a search.",
         inputSchema: z.object({
-            nameOrId: z.string(),
+            nameOrId: z.string().describe("Member name, username, nickname, or Discord snowflake ID."),
         }),
         outputSchema: z.any(),
         sideEffectLevel: "none",
