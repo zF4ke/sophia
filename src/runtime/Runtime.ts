@@ -583,20 +583,16 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
         const item = run.data as Record<string, unknown>;
         const currentState =
             item.isCurrentGuildMember === false ? "historical guild memory" : "current guild";
+        const resolvedId = item.resolvedId == null ? (item.id == null ? null : String(item.id)) : String(item.resolvedId);
         return [
             {
                 tool: "resolve_member_identity",
                 summary: run.summary,
-                content: `${String(item.displayName || "Unknown")} (@${String(item.username || "unknown")}) from ${currentState}`,
+                content: `${String(item.displayName || "Unknown")} (@${String(item.username || "unknown")}) from ${currentState}${resolvedId ? `; id=${resolvedId}` : ""}`,
                 evidenceRole: DISCORD_TOOL_EVIDENCE_ROLES.resolve_member_identity,
                 strength: "metadata",
                 sourceOrigin: "none",
-                authorId:
-                    item.resolvedId == null
-                        ? item.id == null
-                            ? null
-                            : String(item.id)
-                        : String(item.resolvedId),
+                authorId: resolvedId,
                 authorName: item.displayName == null ? null : String(item.displayName),
             },
         ];
@@ -629,6 +625,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
         const parts = [
             `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")})`,
         ];
+        if (item.id != null) parts.push(`id=${String(item.id)}`);
         if (item.nickname) parts.push(`nick=${String(item.nickname)}`);
         if (item.joinedAt) parts.push(`joined=${String(item.joinedAt)}`);
         if (item.accountCreatedAt) parts.push(`created=${String(item.accountCreatedAt)}`);
@@ -657,6 +654,7 @@ function extractEvidence(run: DiscordToolResult): EvidenceItem[] {
             const parts = [
                 `${String(item.displayName || "No Display Name")} (@${String(item.username || "no username")})`,
             ];
+            if (item.id != null) parts.push(`id=${String(item.id)}`);
             if (item.nickname) parts.push(`nick=${String(item.nickname)}`);
             if (item.joinedTimestamp) {
                 parts.push(`joined=${new Date(Number(item.joinedTimestamp)).toISOString()}`);
