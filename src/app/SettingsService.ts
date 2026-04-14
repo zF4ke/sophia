@@ -20,6 +20,7 @@ export interface BotSettings {
         retrievalHistoryLimit: number;
         retrievalContextWindow: number;
         approvalTimeoutMs: number;
+        autoApproveWrites: boolean;
     };
     debug: boolean;
 }
@@ -44,6 +45,7 @@ const DEFAULT_SETTINGS: BotSettings = {
         retrievalHistoryLimit: 50,
         retrievalContextWindow: 15,
         approvalTimeoutMs: 60_000,
+        autoApproveWrites: false,
     },
     debug: false,
 };

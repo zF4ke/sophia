@@ -80,7 +80,18 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
         label: "Max Tool Calls",
         shortDescription: "Hard cap on tool executions per turn.",
         longDescription: "Hard cap on how many tool executions Sophia can make in one turn before it must finish or fall back.",
-        presets: [4, 6, 8, 10, 12],
+        presets: [
+            2,
+            4,
+            6,
+            8,
+            10,
+            12,
+            15,
+            20,
+            25,
+            30,
+        ],
     },
     maxRepeatedCallSignature: {
         label: "Repeated Call Guard",
@@ -92,7 +103,19 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
         label: "Latency Budget",
         shortDescription: "Total runtime budget per turn.",
         longDescription: "Maximum wall-clock time the loop can spend on one turn before stopping with a budget exit.",
-        presets: [10000, 15000, 20000, 30000, 45000],
+        presets: [
+            10000,
+            15000,
+            20000,
+            30000,
+            45000,
+            60000,
+            90000,
+            120000,
+            180000,
+            240000,
+            300000,
+        ],
     },
     interactiveCrawlLimit: {
         label: "Interactive Crawl Limit",
@@ -172,6 +195,7 @@ function buildSettingsPanel(settings: BotSettings) {
         `**Profile:** ${settings.modelProfile}${selectedProfile ? ` · ${selectedProfile.chatModel}` : ""}`,
         selectedProfile ? `**Context:** ${formatNumber(selectedProfile.contextWindow)} tokens · **Max Output:** ${formatNumber(selectedProfile.maxOutputTokens)}` : null,
         `**Debug:** ${settings.debug ? "enabled" : "disabled"}`,
+        `**Auto-Approve Writes (non-destructive):** ${settings.runtime.autoApproveWrites ? "enabled" : "disabled"}`,
         "",
         ...runtimeLines,
     ].filter((x): x is string => x !== null);
@@ -217,6 +241,10 @@ function buildSettingsPanel(settings: BotSettings) {
     );
 
     const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setCustomId("settings:auto-approve-writes:toggle")
+            .setLabel(settings.runtime.autoApproveWrites ? "Disable Auto-Approve Writes" : "Enable Auto-Approve Writes")
+            .setStyle(settings.runtime.autoApproveWrites ? ButtonStyle.Secondary : ButtonStyle.Primary),
         new ButtonBuilder()
             .setCustomId("settings:debug:toggle")
             .setLabel(settings.debug ? "Disable Debug" : "Enable Debug")
@@ -295,11 +323,12 @@ export default {
 };
 
 export function handleSettingsInteraction(customId: string): {
-    type: "profile" | "runtime_pick" | "runtime_set" | "debug_toggle" | "reset" | null;
+    type: "profile" | "runtime_pick" | "runtime_set" | "auto_approve_writes_toggle" | "debug_toggle" | "reset" | null;
     key?: RuntimeSettingKey;
 } {
     if (customId === "settings:profile") return { type: "profile" };
     if (customId === "settings:runtime") return { type: "runtime_pick" };
+    if (customId === "settings:auto-approve-writes:toggle") return { type: "auto_approve_writes_toggle" };
     if (customId === "settings:debug:toggle") return { type: "debug_toggle" };
     if (customId === "settings:reset") return { type: "reset" };
     if (customId.startsWith("settings:runtime:set:")) {

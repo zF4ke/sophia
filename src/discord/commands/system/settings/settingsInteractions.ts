@@ -54,6 +54,17 @@ export async function handleSettingsPanelInteraction(
                 await interaction.update(buildSettingsPanel(updated));
                 break;
             }
+            case "auto_approve_writes_toggle": {
+                const current = SettingsService.load();
+                const updated = SettingsService.update({
+                    runtime: {
+                        ...current.runtime,
+                        autoApproveWrites: !current.runtime.autoApproveWrites,
+                    },
+                });
+                await interaction.update(buildSettingsPanel(updated));
+                break;
+            }
             case "debug_toggle": {
                 const settings = SettingsService.load();
                 const newDebug = !settings.debug;
