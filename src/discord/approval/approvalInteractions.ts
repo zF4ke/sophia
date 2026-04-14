@@ -451,18 +451,17 @@ async function handleBatchCategorySelect(interaction: StringSelectMenuInteractio
         return true;
     }
 
-    const selectedCategory = interaction.values[0];
+    const selectedCategoryId = interaction.values[0];
     const decisions: Record<string, BatchItemDecision> = {};
+    let categoryName = selectedCategoryId;
     for (const item of pending.request.items) {
-        decisions[item.toolCallId] = item.category === selectedCategory ? "approved" : "denied";
+        if (item.targetCategory?.id === selectedCategoryId) {
+            decisions[item.toolCallId] = "approved";
+            categoryName = item.targetCategory.name;
+        } else {
+            decisions[item.toolCallId] = "denied";
+        }
     }
-
-    const CATEGORY_LABELS: Record<string, string> = {
-        messages: "📨 Mensagens",
-        channels: "📁 Canais",
-        roles: "🎭 Roles",
-        other: "🛠️ Outro",
-    };
 
     resolvePendingBatchApproval(batchId, {
         decisions,
@@ -473,7 +472,7 @@ async function handleBatchCategorySelect(interaction: StringSelectMenuInteractio
     try {
         await interaction.update({
             components: [buildResolvedBatchContainer(pending.request, "partial", {
-                categoryLabel: CATEGORY_LABELS[selectedCategory] || selectedCategory,
+                categoryLabel: `📁 ${categoryName}`,
             })],
         });
     } catch (error) {

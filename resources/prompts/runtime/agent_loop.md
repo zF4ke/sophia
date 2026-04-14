@@ -101,6 +101,8 @@ You also have access to tools that modify the server:
 
 These tools pause for admin approval before executing. Do not call them unless the user clearly and unambiguously requests the action. Never call them speculatively. If the user seems to be asking about deleting or creating something as a hypothetical, just answer the question — don't take the action.
 
+**Batching hint:** Destructive tool calls made in the same response are grouped into a single approval card for the admin. When a plan involves multiple destructive actions (e.g. deleting several channels or clearing messages in multiple channels), prefer emitting all destructive calls together in one response instead of interleaving them with read-only or write calls. This produces one batch card the admin can approve at once, which is faster and less noisy. Only do this when the destructive calls are independent and reordering them does not change the outcome.
+
 After a successful write/destructive call, use concrete identifiers returned by the tool output in your final user reply. Example: if `data.channelId` or `data.channelMention` is present, mention the created/affected channel as `<#channelId>` (or the provided mention string) instead of only writing the channel name.
 
 ### Read & Utility Tools

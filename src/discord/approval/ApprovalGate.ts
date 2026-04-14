@@ -16,7 +16,6 @@ import type {
     BatchApprovalRequest,
     BatchApprovalResult,
     BatchItemDecision,
-    DestructiveCategory,
 } from "@/runtime/contracts";
 import { SettingsService } from "@/app/SettingsService";
 import { getToolDisplay } from "@/tools/registry";
@@ -170,30 +169,6 @@ export function createApprovalGate(channel: SendableChannels) {
 
 // ── Batch destructive approval ──
 
-const CATEGORY_LABELS: Record<DestructiveCategory, string> = {
-    messages: "📨 Mensagens",
-    channels: "📁 Canais",
-    roles: "🎭 Roles",
-    other: "🛠️ Outro",
-};
-
-export function getDestructiveCategory(toolName: string): DestructiveCategory {
-    switch (toolName) {
-        case "clear_messages":
-            return "messages";
-        case "delete_channel":
-        case "create_channel":
-        case "create_category":
-        case "create_thread":
-        case "move_channel":
-            return "channels";
-        case "manage_member_roles":
-            return "roles";
-        default:
-            return "other";
-    }
-}
-
 export interface PendingBatchApproval {
     request: BatchApprovalRequest;
     resolve: (result: BatchApprovalResult) => void;
@@ -310,19 +285,24 @@ export function createBatchApprovalGate(channel: SendableChannels) {
                 .setStyle(ButtonStyle.Secondary),
         );
 
-        // Only show category select if there are 2+ distinct categories
-        const categories = [...new Set(request.items.map((i) => i.category))];
+        // Only show category select if there are 2+ distinct Discord Categories
+        const categoryMap = new Map<string, string>(); // id → name
+        for (const item of request.items) {
+            if (item.targetCategory) {
+                categoryMap.set(item.targetCategory.id, item.targetCategory.name);
+            }
+        }
         const components: (ContainerBuilder | ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>)[] = [container, buttonRow];
-        if (categories.length > 1) {
+        if (categoryMap.size > 1) {
             const categoryRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
                 new StringSelectMenuBuilder()
                     .setCustomId(`${BATCH_CATEGORY_PREFIX}${request.batchId}`)
                     .setPlaceholder("Aprovar por categoria…")
                     .addOptions(
-                        categories.map((cat) => ({
-                            label: CATEGORY_LABELS[cat],
-                            value: cat,
-                            description: `Aprovar apenas ações de ${CATEGORY_LABELS[cat].toLowerCase()}`,
+                        [...categoryMap.entries()].map(([catId, catName]) => ({
+                            label: `📁 ${catName}`,
+                            value: catId,
+                            description: `Aprovar apenas ações em ${catName}`,
                         })),
                     ),
             );

@@ -108,7 +108,11 @@ export interface ApprovalResult {
 
 // ── Batch destructive approval ──
 
-export type DestructiveCategory = "messages" | "channels" | "roles" | "other";
+/** Discord Category (parent channel) that an action targets. null = uncategorized / no channel target. */
+export interface DiscordCategoryRef {
+    id: string;
+    name: string;
+}
 
 export interface BatchedDestructiveItem {
     /** Matches the OpenRouter tool_call id so we can push the right tool result. */
@@ -116,7 +120,8 @@ export interface BatchedDestructiveItem {
     toolName: string;
     toolArgs: ToolArguments;
     description: string;
-    category: DestructiveCategory;
+    /** The Discord Category the target channel belongs to, or null for top-level / non-channel tools. */
+    targetCategory: DiscordCategoryRef | null;
 }
 
 export interface BatchApprovalRequest {

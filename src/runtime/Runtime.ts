@@ -29,7 +29,6 @@ import type {
 import { getToolStrategy } from "@/runtime/tools";
 import { type DiscordToolName, DISCORD_TOOL_NAMES, T } from "@/shared/discordTools";
 import { isMutatingTool, describeApproval } from "@/tools/registry";
-import { getDestructiveCategory } from "@/discord/approval/ApprovalGate";
 import type {
     DiscordToolResult,
     GroundedAnswerMode,
@@ -699,13 +698,24 @@ export class Runtime {
                         }
                     } else {
                         const batchId = `${requestId}:batch:${iteration}`;
-                        const batchItems: BatchedDestructiveItem[] = destructiveBatch.map((item) => ({
-                            toolCallId: item.tc.id,
-                            toolName: item.toolName,
-                            toolArgs: item.parsedArgs,
-                            description: item.description,
-                            category: getDestructiveCategory(item.toolName),
-                        }));
+                        const batchItems: BatchedDestructiveItem[] = destructiveBatch.map((item) => {
+                            // Resolve the Discord Category the target channel belongs to
+                            const channelId = (item.parsedArgs.channel_id as string) ?? null;
+                            let targetCategory: BatchedDestructiveItem["targetCategory"] = null;
+                            if (channelId && input.guild?.channels) {
+                                const ch = input.guild.channels.cache.get(channelId);
+                                if (ch?.parent) {
+                                    targetCategory = { id: ch.parent.id, name: ch.parent.name };
+                                }
+                            }
+                            return {
+                                toolCallId: item.tc.id,
+                                toolName: item.toolName,
+                                toolArgs: item.parsedArgs,
+                                description: item.description,
+                                targetCategory,
+                            };
+                        });
                         const batchRequest: BatchApprovalRequest = {
                             batchId,
                             items: batchItems,

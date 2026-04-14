@@ -217,7 +217,7 @@ describe("approval gate", () => {
         const request = batchApprovalGate.mock.calls[0][0];
         expect(request.items).toHaveLength(1);
         expect(request.items[0].toolName).toBe("clear_messages");
-        expect(request.items[0].category).toBe("messages");
+        expect(request.items[0].targetCategory).toBeNull(); // no guild mock → no parent category
         expect(result.answer).toBe("Messages cleared.");
     });
 
