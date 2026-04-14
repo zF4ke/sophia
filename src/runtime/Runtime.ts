@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { getAppConfig } from "@/app/AppConfig";
+import { SettingsService } from "@/app/SettingsService";
 import { ModelGateway, type ToolChatMessage } from "@/ai/ModelGateway";
 import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
@@ -13,6 +14,8 @@ import { PromptRegistry } from "@/runtime/PromptRegistry";
 import { TOOL_DEFINITIONS } from "@/runtime/toolSchemas";
 import type {
     ApprovalRequest,
+    BatchApprovalRequest,
+    BatchedDestructiveItem,
     ChannelContextMessage,
     ConversationTurnSummary,
     EvidenceItem,
@@ -26,6 +29,7 @@ import type {
 import { getToolStrategy } from "@/runtime/tools";
 import { type DiscordToolName, DISCORD_TOOL_NAMES, T } from "@/shared/discordTools";
 import { isMutatingTool, describeApproval } from "@/tools/registry";
+import { getDestructiveCategory } from "@/discord/approval/ApprovalGate";
 import type {
     DiscordToolResult,
     GroundedAnswerMode,
@@ -203,6 +207,7 @@ export class Runtime {
             maxToolRunsContext: config.runtime.maxToolRunsContext,
             maxEvidenceSlice: config.runtime.maxEvidenceSlice,
         };
+        const settings = SettingsService.load();
 
         const traceEvents: RuntimeTraceEvent[] = [];
         const toolHistory: ToolInvocationRecord[] = [];
@@ -380,6 +385,111 @@ export class Runtime {
 
                 let loopDone = false;
 
+                // Helper: execute a tool and record results
+                const executeToolCall = async (
+                    tc: typeof result.toolCalls[number],
+                    toolName: DiscordToolName,
+                    parsedArgs: ToolArguments,
+                ) => {
+                    const capability = CapabilityRegistry.get(toolName);
+                    await input.debugSession?.setToolRunning(toolName, []);
+                    const toolStartedAt = Date.now();
+                    const output = await capability.run(
+                        {
+                            guild: input.guild || null,
+                            question: input.question,
+                            currentChannelId: channelId,
+                            onProgress: async (tn, summary) => {
+                                trace("tool_progress", `${tn}: ${summary}`);
+                                await input.debugSession?.setToolProgress?.(tn, summary);
+                            },
+                        },
+                        parsedArgs,
+                    );
+                    const toolDurationMs = Date.now() - toolStartedAt;
+                    totalToolCalls += 1;
+
+                    const evidenceItems = extractEvidence(output);
+                    const learned = evidenceItems.map((item) => item.content).join(" | ") || output.summary;
+                    const retrieval = getRetrievalSummary(output);
+
+                    const record: ToolInvocationRecord = {
+                        tool: toolName,
+                        arguments: parsedArgs,
+                        summary: output.summary,
+                        learned,
+                        confidenceImproved: evidenceItems.some((item) => item.strength !== "weak"),
+                        output,
+                        durationMs: toolDurationMs,
+                        retrievalSummary: retrieval,
+                    };
+                    toolHistory.push(record);
+                    evidence.push(...evidenceItems);
+
+                    trace("tool_result", `${toolName}: ${output.summary}`);
+
+                    const resultPayload = output.errorMessage
+                        ? JSON.stringify({ error: output.errorMessage })
+                        : JSON.stringify({ summary: output.summary, data: output.data });
+                    messages.push({
+                        role: "tool",
+                        tool_call_id: tc.id,
+                        content: truncateToolResult(resultPayload),
+                    });
+
+                    await DiscordMemoryService.recordToolRun(
+                        requestId,
+                        guildId,
+                        channelId,
+                        actorId,
+                        input.question,
+                        toolName,
+                        JSON.stringify(parsedArgs),
+                        output.summary,
+                        learned,
+                        JSON.stringify(output),
+                        record.confidenceImproved,
+                        toolDurationMs,
+                    );
+
+                    await input.debugSession?.setToolResult(toolName, output.summary);
+                    await input.debugSession?.setRetrievalSummary?.(retrieval || {
+                        mode: "history",
+                        cacheHit: false,
+                        liveEscalated: false,
+                        searchedChannelIds: [],
+                        fetchedChannelIds: [],
+                        cacheEnriched: false,
+                        evidenceSufficient: false,
+                        strongResultCount: 0,
+                        weakResultCount: 0,
+                        historyMessageCount: 0,
+                        semanticMatchCount: 0,
+                        accumulatedUniqueCount: 0,
+                        sourceOrigin: "none",
+                        continuationAvailable: false,
+                        historyContinuationAvailable: false,
+                        historyCursorByChannel: {},
+                        semanticContinuationAvailable: false,
+                        semanticCursor: null,
+                        exhaustedChannelIds: [],
+                        historyExhausted: false,
+                        semanticExhausted: false,
+                        beforeTimestamp: null,
+                        afterTimestamp: null,
+                        activeChannelIds: [],
+                    });
+                };
+
+                // Collect destructive tool calls for batch approval
+                interface QueuedDestructiveCall {
+                    tc: typeof result.toolCalls[number];
+                    toolName: DiscordToolName;
+                    parsedArgs: ToolArguments;
+                    description: string;
+                }
+                const destructiveBatch: QueuedDestructiveCall[] = [];
+
                 for (const tc of result.toolCalls) {
                     const toolName = tc.function.name;
                     let parsedArgs: ToolArguments;
@@ -462,6 +572,23 @@ export class Runtime {
                     // ── Approval gate for write/destructive tools ──
                     const capability = CapabilityRegistry.get(toolName);
                     if (capability.sideEffectLevel !== "none") {
+                        const autoApproveWrite =
+                            capability.sideEffectLevel === "write" &&
+                            settings.runtime.autoApproveWrites;
+                        if (autoApproveWrite) {
+                            trace("approval_auto_approved", `${toolName}: auto-approved by setting (write-only).`);
+                        }
+
+                        // ── Destructive → queue for batch approval ──
+                        if (!autoApproveWrite && capability.sideEffectLevel === "destructive") {
+                            const approvalDescription = describeApproval(toolName, parsedArgs);
+                            destructiveBatch.push({ tc, toolName, parsedArgs, description: approvalDescription });
+                            trace("batch_queued", `${toolName}: queued for batch approval — ${approvalDescription}`);
+                            continue; // skip execution; will be resolved after batch approval
+                        }
+
+                        // ── Write (non-auto-approved) → individual approval ──
+                        if (!autoApproveWrite) {
                         const approvalDescription = describeApproval(toolName, parsedArgs);
                         const approvalRequest: ApprovalRequest = {
                             requestId: `${requestId}:${toolName}:${totalToolCalls}`,
@@ -499,8 +626,35 @@ export class Runtime {
                             "approval_wait",
                             `${toolName}: waited ${approvalWaitMs}ms for admin approval (excluded from latency budget).`,
                         );
+                        if (approvalResult.haltExecution) {
+                            const stopMsg = `Execution stopped by ${approvalResult.decidedBy}.`;
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: JSON.stringify({ error: stopMsg }),
+                            });
+                            const stoppedRecord: ToolInvocationRecord = {
+                                tool: toolName,
+                                arguments: parsedArgs,
+                                summary: `Execution stopped by ${approvalResult.decidedBy}.`,
+                                learned: stopMsg,
+                                confidenceImproved: false,
+                                output: { tool: toolName, summary: stopMsg, data: null, errorMessage: stopMsg },
+                                durationMs: 0,
+                                blocked: true,
+                            };
+                            toolHistory.push(stoppedRecord);
+                            trace("stop", `${toolName}: execution stopped by ${approvalResult.decidedBy}`);
+                            stopReason = "execution_stopped_by_admin";
+                            loopDone = true;
+                            await input.activityIndicator?.startThinking();
+                            break;
+                        }
                         if (!approvalResult.approved) {
-                            const denyMsg = `Action denied by ${approvalResult.decidedBy}.`;
+                            const correctionNote = approvalResult.correction
+                                ? ` Admin correction: "${approvalResult.correction}". Adjust your approach based on this feedback.`
+                                : "";
+                            const denyMsg = `Action denied by ${approvalResult.decidedBy}.${correctionNote}`;
                             messages.push({
                                 role: "tool",
                                 tool_call_id: tc.id,
@@ -509,7 +663,7 @@ export class Runtime {
                             const deniedRecord: ToolInvocationRecord = {
                                 tool: toolName,
                                 arguments: parsedArgs,
-                                summary: `Denied by ${approvalResult.decidedBy}.`,
+                                summary: `Denied by ${approvalResult.decidedBy}.${correctionNote}`,
                                 learned: denyMsg,
                                 confidenceImproved: false,
                                 output: { tool: toolName, summary: denyMsg, data: null, errorMessage: denyMsg },
@@ -517,107 +671,114 @@ export class Runtime {
                                 blocked: true,
                             };
                             toolHistory.push(deniedRecord);
-                            trace("approval_denied", `${toolName}: denied by ${approvalResult.decidedBy}`);
+                            trace("approval_denied", `${toolName}: denied by ${approvalResult.decidedBy}${approvalResult.correction ? ` (correction: ${approvalResult.correction})` : ""}`);
                             await input.activityIndicator?.startThinking();
                             continue;
                         }
                         trace("approval_granted", `${toolName}: approved by ${approvalResult.decidedBy}`);
                         await input.activityIndicator?.startThinking();
+                        }
                     }
 
                     // Execute the capability
-                    await input.debugSession?.setToolRunning(toolName, []);
-                    const toolStartedAt = Date.now();
-                    const output = await capability.run(
-                        {
-                            guild: input.guild || null,
-                            question: input.question,
-                            currentChannelId: channelId,
-                            onProgress: async (tn, summary) => {
-                                trace("tool_progress", `${tn}: ${summary}`);
-                                await input.debugSession?.setToolProgress?.(tn, summary);
-                            },
-                        },
-                        parsedArgs
-                    );
-                    const toolDurationMs = Date.now() - toolStartedAt;
-                    totalToolCalls += 1;
+                    await executeToolCall(tc, toolName, parsedArgs);
+                }
 
-                    // Extract evidence
-                    const evidenceItems = extractEvidence(
-                        output
-                    );
-                    const learned = evidenceItems.map((item) => item.content).join(" | ") || output.summary;
-                    const retrieval = getRetrievalSummary(output);
+                // ── Batch destructive approval (after processing all tool calls in this iteration) ──
+                if (destructiveBatch.length > 0 && !loopDone) {
+                    if (!input.batchApprovalGate) {
+                        // No batch gate — auto-deny all queued destructive tools
+                        for (const item of destructiveBatch) {
+                            const denyMsg = "Destructive operations require admin approval, but no approval channel is available.";
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: item.tc.id,
+                                content: JSON.stringify({ error: denyMsg }),
+                            });
+                            trace("approval_denied", `${item.toolName}: auto-denied (no gate)`);
+                        }
+                    } else {
+                        const batchId = `${requestId}:batch:${iteration}`;
+                        const batchItems: BatchedDestructiveItem[] = destructiveBatch.map((item) => ({
+                            toolCallId: item.tc.id,
+                            toolName: item.toolName,
+                            toolArgs: item.parsedArgs,
+                            description: item.description,
+                            category: getDestructiveCategory(item.toolName),
+                        }));
+                        const batchRequest: BatchApprovalRequest = {
+                            batchId,
+                            items: batchItems,
+                            requesterId: actorId,
+                        };
+                        trace("batch_approval_requested", `${destructiveBatch.length} destructive action(s) pending batch approval.`);
+                        await input.debugSession?.setToolRunning("batch_approval", [`⏳ Awaiting batch approval (${destructiveBatch.length} actions)`]);
+                        await input.activityIndicator?.stop();
 
-                    const record: ToolInvocationRecord = {
-                        tool: toolName,
-                        arguments: parsedArgs,
-                        summary: output.summary,
-                        learned,
-                        confidenceImproved: evidenceItems.some((item) => item.strength !== "weak"),
-                        output,
-                        durationMs: toolDurationMs,
-                        retrievalSummary: retrieval,
-                    };
-                    toolHistory.push(record);
-                    evidence.push(...evidenceItems);
+                        const batchWaitStartedAt = Date.now();
+                        const batchResult = await input.batchApprovalGate(batchRequest);
+                        const batchWaitMs = Math.max(0, Date.now() - batchWaitStartedAt);
+                        pausedLatencyMs += batchWaitMs;
+                        trace("batch_approval_wait", `Waited ${batchWaitMs}ms for batch approval (excluded from latency budget).`);
 
-                    trace("tool_result", `${toolName}: ${output.summary}`);
+                        if (batchResult.haltExecution) {
+                            for (const item of destructiveBatch) {
+                                const stopMsg = `Execution stopped by ${batchResult.decidedBy}.`;
+                                messages.push({
+                                    role: "tool",
+                                    tool_call_id: item.tc.id,
+                                    content: JSON.stringify({ error: stopMsg }),
+                                });
+                                const stoppedRecord: ToolInvocationRecord = {
+                                    tool: item.toolName,
+                                    arguments: item.parsedArgs,
+                                    summary: stopMsg,
+                                    learned: stopMsg,
+                                    confidenceImproved: false,
+                                    output: { tool: item.toolName, summary: stopMsg, data: null, errorMessage: stopMsg },
+                                    durationMs: 0,
+                                    blocked: true,
+                                };
+                                toolHistory.push(stoppedRecord);
+                            }
+                            stopReason = "execution_stopped_by_admin";
+                            loopDone = true;
+                            trace("stop", `Batch execution stopped by ${batchResult.decidedBy}`);
+                            await input.activityIndicator?.startThinking();
+                        } else {
+                            await input.activityIndicator?.startThinking();
+                            const batchCorrectionNote = batchResult.correction
+                                ? ` Admin correction: "${batchResult.correction}". Adjust your approach based on this feedback.`
+                                : "";
 
-                    // Inject tool result back into conversation
-                    const resultPayload = output.errorMessage
-                        ? JSON.stringify({ error: output.errorMessage })
-                        : JSON.stringify({ summary: output.summary, data: output.data });
-                    messages.push({
-                        role: "tool",
-                        tool_call_id: tc.id,
-                        content: truncateToolResult(resultPayload),
-                    });
-
-                    // Record in memory
-                    await DiscordMemoryService.recordToolRun(
-                        requestId,
-                        guildId,
-                        channelId,
-                        actorId,
-                        input.question,
-                        toolName,
-                        JSON.stringify(parsedArgs),
-                        output.summary,
-                        learned,
-                        JSON.stringify(output),
-                        record.confidenceImproved,
-                        toolDurationMs
-                    );
-
-                    await input.debugSession?.setToolResult(toolName, output.summary);
-                    await input.debugSession?.setRetrievalSummary?.(retrieval || {
-                        mode: "history",
-                        cacheHit: false,
-                        liveEscalated: false,
-                        searchedChannelIds: [],
-                        fetchedChannelIds: [],
-                        cacheEnriched: false,
-                        evidenceSufficient: false,
-                        strongResultCount: 0,
-                        weakResultCount: 0,
-                        historyMessageCount: 0,
-                        semanticMatchCount: 0,
-                        accumulatedUniqueCount: 0,
-                        sourceOrigin: "none",
-                        continuationAvailable: false,
-                        historyContinuationAvailable: false,
-                        historyCursorByChannel: {},
-                        semanticContinuationAvailable: false,
-                        semanticCursor: null,
-                        exhaustedChannelIds: [],
-                        historyExhausted: false,
-                        semanticExhausted: false,
-                        beforeTimestamp: null,
-                        afterTimestamp: null,
-                        activeChannelIds: [],
-                    });
+                            for (const item of destructiveBatch) {
+                                const decision = batchResult.decisions[item.tc.id];
+                                if (decision === "approved") {
+                                    trace("batch_item_approved", `${item.toolName}: approved in batch by ${batchResult.decidedBy}`);
+                                    await executeToolCall(item.tc, item.toolName, item.parsedArgs);
+                                } else {
+                                    const denyMsg = `Action denied by ${batchResult.decidedBy}.${batchCorrectionNote}`;
+                                    messages.push({
+                                        role: "tool",
+                                        tool_call_id: item.tc.id,
+                                        content: JSON.stringify({ error: denyMsg }),
+                                    });
+                                    const deniedRecord: ToolInvocationRecord = {
+                                        tool: item.toolName,
+                                        arguments: item.parsedArgs,
+                                        summary: `Denied by ${batchResult.decidedBy}.${batchCorrectionNote}`,
+                                        learned: denyMsg,
+                                        confidenceImproved: false,
+                                        output: { tool: item.toolName, summary: denyMsg, data: null, errorMessage: denyMsg },
+                                        durationMs: 0,
+                                        blocked: true,
+                                    };
+                                    toolHistory.push(deniedRecord);
+                                    trace("batch_item_denied", `${item.toolName}: denied in batch by ${batchResult.decidedBy}${batchResult.correction ? ` (correction: ${batchResult.correction})` : ""}`);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if (loopDone) break;
@@ -765,6 +926,10 @@ function deriveStopDetail(
         return findLast(
             (event) => event.label === "step" && event.detail.startsWith("Blocked repeated call ")
         );
+    }
+
+    if (stopReason === "execution_stopped_by_admin") {
+        return findLast((event) => event.label === "stop");
     }
 
     if (stopReason === "no_useful_next_step") {

@@ -3,8 +3,9 @@ import { ModelGateway, type ToolChatResult } from "@/ai/ModelGateway";
 import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { Runtime } from "@/runtime/Runtime";
-import type { ApprovalRequest, ApprovalResult, TurnInput } from "@/runtime/contracts";
+import type { ApprovalRequest, ApprovalResult, BatchApprovalRequest, BatchApprovalResult, TurnInput } from "@/runtime/contracts";
 import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
+import { SettingsService } from "@/app/SettingsService";
 
 function createInput(overrides: Partial<TurnInput> = {}): TurnInput {
     return {
@@ -68,6 +69,14 @@ describe("approval gate", () => {
         process.env.DISCORD_TOKEN = "test-token";
         process.env.OPENROUTER_API_KEY = "test-key";
 
+        vi.spyOn(SettingsService, "load").mockReturnValue({
+            runtime: {
+                maxToolCalls: 10,
+                maxLatencyBudgetMs: 30000,
+                approvalTimeoutMs: 60000,
+                autoApproveWrites: false,
+            },
+        } as any);
         vi.spyOn(DiscordMemoryService, "getRecentRuntimeRunsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
@@ -111,9 +120,15 @@ describe("approval gate", () => {
         expect(result.answer).toBe("Channel created.");
     });
 
-    it("injects denied result when approvalGate denies", async () => {
-        const approvalGate = vi.fn<(req: ApprovalRequest) => Promise<ApprovalResult>>()
-            .mockResolvedValue({ approved: false, decidedBy: "admin-1", decidedAt: Date.now() });
+    it("injects denied result when batchApprovalGate denies destructive tools", async () => {
+        const batchApprovalGate = vi.fn<(req: BatchApprovalRequest) => Promise<BatchApprovalResult>>()
+            .mockImplementation(async (req) => {
+                const decisions: Record<string, "denied"> = {};
+                for (const item of req.items) {
+                    decisions[item.toolCallId] = "denied";
+                }
+                return { decisions, decidedBy: "admin-1", decidedAt: Date.now() };
+            });
 
         vi.spyOn(ModelGateway, "generateWithTools")
             .mockResolvedValueOnce(makeToolCallResult([
@@ -121,9 +136,9 @@ describe("approval gate", () => {
             ]))
             .mockResolvedValueOnce(makeFinishResult("Action was denied."));
 
-        const result = await Runtime.answer(createInput({ approvalGate }));
+        const result = await Runtime.answer(createInput({ batchApprovalGate }));
 
-        expect(approvalGate).toHaveBeenCalledOnce();
+        expect(batchApprovalGate).toHaveBeenCalledOnce();
         expect(result.answer).toBe("Action was denied.");
         // The tool should appear as denied in toolRuns
         expect(result.toolRuns.some((r) => r.tool === "clear_messages")).toBe(false);
@@ -164,9 +179,15 @@ describe("approval gate", () => {
         expect(result.answer).toBe("Here is the guild info.");
     });
 
-    it("calls approvalGate for destructive tools with sideEffectLevel destructive", async () => {
-        const approvalGate = vi.fn<(req: ApprovalRequest) => Promise<ApprovalResult>>()
-            .mockResolvedValue({ approved: true, decidedBy: "admin-1", decidedAt: Date.now() });
+    it("calls batchApprovalGate for destructive tools with category info", async () => {
+        const batchApprovalGate = vi.fn<(req: BatchApprovalRequest) => Promise<BatchApprovalResult>>()
+            .mockImplementation(async (req) => {
+                const decisions: Record<string, "approved"> = {};
+                for (const item of req.items) {
+                    decisions[item.toolCallId] = "approved";
+                }
+                return { decisions, decidedBy: "admin-1", decidedAt: Date.now() };
+            });
 
         const originalGet = CapabilityRegistry.get.bind(CapabilityRegistry);
         vi.spyOn(CapabilityRegistry, "get").mockImplementation((id) => {
@@ -190,11 +211,13 @@ describe("approval gate", () => {
             ]))
             .mockResolvedValueOnce(makeFinishResult("Messages cleared."));
 
-        const result = await Runtime.answer(createInput({ approvalGate }));
+        const result = await Runtime.answer(createInput({ batchApprovalGate }));
 
-        expect(approvalGate).toHaveBeenCalledOnce();
-        const request = approvalGate.mock.calls[0][0];
-        expect(request.sideEffectLevel).toBe("destructive");
+        expect(batchApprovalGate).toHaveBeenCalledOnce();
+        const request = batchApprovalGate.mock.calls[0][0];
+        expect(request.items).toHaveLength(1);
+        expect(request.items[0].toolName).toBe("clear_messages");
+        expect(request.items[0].category).toBe("messages");
         expect(result.answer).toBe("Messages cleared.");
     });
 
@@ -250,5 +273,36 @@ describe("approval gate", () => {
         expect(ModelGateway.generateWithTools).toHaveBeenCalledTimes(2);
 
         vi.useRealTimers();
+    });
+
+    it("feeds correction text back to the model when batch denied with correction", async () => {
+        const correctionText = "Use channel #logs instead of #general";
+        const batchApprovalGate = vi.fn<(req: BatchApprovalRequest) => Promise<BatchApprovalResult>>()
+            .mockImplementation(async (req) => {
+                const decisions: Record<string, "denied"> = {};
+                for (const item of req.items) {
+                    decisions[item.toolCallId] = "denied";
+                }
+                return { decisions, decidedBy: "admin-1", decidedAt: Date.now(), correction: correctionText };
+            });
+
+        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeToolCallResult([
+                { name: "clear_messages", args: { channel_id: "c1", count: 5 } },
+            ]))
+            .mockResolvedValueOnce(makeFinishResult("Understood, action adjusted."));
+
+        const result = await Runtime.answer(createInput({ batchApprovalGate }));
+
+        expect(batchApprovalGate).toHaveBeenCalledOnce();
+        expect(result.answer).toBe("Understood, action adjusted.");
+
+        // The second generateWithTools call should contain the correction in the tool result
+        const secondCallMessages = generateSpy.mock.calls[1][0];
+        const toolResultMsg = secondCallMessages.find(
+            (m: any) => m.role === "tool" && typeof m.content === "string" && m.content.includes("correction"),
+        );
+        expect(toolResultMsg).toBeDefined();
+        expect((toolResultMsg as any).content).toContain(correctionText);
     });
 });

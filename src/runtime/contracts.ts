@@ -17,6 +17,7 @@ export type StopReason =
     | "evidence_sufficient"
     | "budget_exhausted"
     | "confidence_plateau"
+    | "execution_stopped_by_admin"
     | "no_useful_next_step"
     | "insufficient_evidence";
 export type RetrievalSourceOrigin = "none" | "cache" | "live_refresh" | "cache_after_refresh";
@@ -78,6 +79,7 @@ export interface TurnInput {
     referencedMessage?: Message | null;
     conversation: ConversationContext;
     approvalGate?: (request: ApprovalRequest) => Promise<ApprovalResult>;
+    batchApprovalGate?: (request: BatchApprovalRequest) => Promise<BatchApprovalResult>;
     activityIndicator?: {
         startThinking(): Promise<void>;
         startTyping(): Promise<void>;
@@ -98,6 +100,38 @@ export interface ApprovalRequest {
 
 export interface ApprovalResult {
     approved: boolean;
+    decidedBy: string;
+    decidedAt: number;
+    haltExecution?: boolean;
+    correction?: string;
+}
+
+// ── Batch destructive approval ──
+
+export type DestructiveCategory = "messages" | "channels" | "roles" | "other";
+
+export interface BatchedDestructiveItem {
+    /** Matches the OpenRouter tool_call id so we can push the right tool result. */
+    toolCallId: string;
+    toolName: string;
+    toolArgs: ToolArguments;
+    description: string;
+    category: DestructiveCategory;
+}
+
+export interface BatchApprovalRequest {
+    batchId: string;
+    items: BatchedDestructiveItem[];
+    requesterId: string;
+}
+
+export type BatchItemDecision = "approved" | "denied";
+
+export interface BatchApprovalResult {
+    /** Per-item decision keyed by toolCallId. */
+    decisions: Record<string, BatchItemDecision>;
+    haltExecution?: boolean;
+    correction?: string;
     decidedBy: string;
     decidedAt: number;
 }

@@ -3,7 +3,7 @@ import {
     Message,
     ThreadChannel,
 } from "discord.js";
-import { createApprovalGate } from "@/discord/approval/ApprovalGate";
+import { createApprovalGate, createBatchApprovalGate } from "@/discord/approval/ApprovalGate";
 import { buildConversationContext, buildReplyContext } from "@/discord/conversation/ConversationIdentity";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type { RuntimeAnswer, RuntimeDebugSession, TurnInput, TurnTrigger } from "@/runtime/contracts";
@@ -49,6 +49,9 @@ export class ConversationAdapter {
             approvalGate: interaction.channel && "send" in interaction.channel
                 ? createApprovalGate(interaction.channel as import("discord.js").SendableChannels)
                 : undefined,
+            batchApprovalGate: interaction.channel && "send" in interaction.channel
+                ? createBatchApprovalGate(interaction.channel as import("discord.js").SendableChannels)
+                : undefined,
             conversation: await buildConversationContext({
                 guild: interaction.guild,
                 currentChannelId: interaction.channelId,
@@ -86,6 +89,9 @@ export class ConversationAdapter {
             referencedMessage,
             approvalGate: message.channel && "send" in message.channel
                 ? createApprovalGate(message.channel as import("discord.js").SendableChannels)
+                : undefined,
+            batchApprovalGate: message.channel && "send" in message.channel
+                ? createBatchApprovalGate(message.channel as import("discord.js").SendableChannels)
                 : undefined,
             activityIndicator: activityIndicator ?? null,
             conversation: await buildConversationContext({

@@ -24,7 +24,7 @@ export = {
             interaction.isUserSelectMenu() ||
             interaction.isModalSubmit()
         ) {
-            if (interaction.isButton() || interaction.isModalSubmit()) {
+            if (interaction.isButton() || interaction.isModalSubmit() || interaction.isStringSelectMenu()) {
                 if (await handleApprovalInteraction(interaction)) {
                     return;
                 }
