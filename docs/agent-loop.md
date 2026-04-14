@@ -90,6 +90,15 @@ Soft exit:
 - model calls `finish` when it has enough
 - fallback answer when model produces no tool calls and no text
 
+## Mutating Tool Output Contract
+
+For all `write` and `destructive` capabilities (current and future), tool output must be mention-ready so post-action confirmations can reference the exact affected resource.
+
+Required shape and behavior:
+- `summary` must include a concrete resource identifier, not only a display name.
+- `data` must include stable IDs and a mention-ready field when relevant (example for channels: `channelId` and `channelMention` with `<#id>`).
+- Final user-facing confirmations should reuse these identifiers from tool output to avoid ambiguity.
+
 ## Message Evidence Rule
 
 Questions like "what did X say" or "what happened in channel Y" require message evidence from `retrieve_messages`. Live member or guild metadata alone is not enough.

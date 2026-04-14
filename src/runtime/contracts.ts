@@ -77,6 +77,29 @@ export interface TurnInput {
     replyContext?: ReplyContext | null;
     referencedMessage?: Message | null;
     conversation: ConversationContext;
+    approvalGate?: (request: ApprovalRequest) => Promise<ApprovalResult>;
+    activityIndicator?: {
+        startThinking(): Promise<void>;
+        startTyping(): Promise<void>;
+        stop(): Promise<void>;
+    } | null;
+}
+
+export type SideEffectLevel = "none" | "write" | "destructive";
+
+export interface ApprovalRequest {
+    requestId: string;
+    toolName: string;
+    toolArgs: ToolArguments;
+    description: string;
+    sideEffectLevel: SideEffectLevel;
+    requesterId: string;
+}
+
+export interface ApprovalResult {
+    approved: boolean;
+    decidedBy: string;
+    decidedAt: number;
 }
 
 export interface CapabilityManifest {
@@ -85,7 +108,7 @@ export interface CapabilityManifest {
     description: string;
     inputSchema: z.ZodTypeAny;
     outputSchema: z.ZodTypeAny;
-    sideEffectLevel: "none";
+    sideEffectLevel: SideEffectLevel;
     authRequirements: string[];
     costClass: "cheap" | "normal" | "expensive";
     latencyClass: "fast" | "medium" | "slow";

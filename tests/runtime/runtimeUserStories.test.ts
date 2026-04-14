@@ -298,7 +298,7 @@ describe("runtime user stories", () => {
     it("answers requester identity naturally after resolving the requester exactly", async () => {
         vi.spyOn(ModelGateway, "generateWithTools")
             .mockResolvedValueOnce(
-                makeToolCallResult([{ name: "resolve_member_identity", args: { query: "u-requester" } }])
+                makeToolCallResult([{ name: "resolve_member_identity", args: { queries: ["u-requester"] } }])
             )
             .mockResolvedValueOnce(
                 makeFinishResult("Tu és o Requester aqui no servidor.")
@@ -334,10 +334,10 @@ describe("runtime user stories", () => {
     it("combines member resolution, channel resolution, and message retrieval for a grounded explanation", async () => {
         vi.spyOn(ModelGateway, "generateWithTools")
             .mockResolvedValueOnce(
-                makeToolCallResult([{ name: "resolve_member_identity", args: { query: "One Person" } }])
+                makeToolCallResult([{ name: "resolve_member_identity", args: { queries: ["One Person"] } }])
             )
             .mockResolvedValueOnce(
-                makeToolCallResult([{ name: "resolve_channel_targets", args: { targetText: "reflexoes" } }])
+                makeToolCallResult([{ name: "resolve_channel_targets", args: { targets: ["reflexoes"] } }])
             )
             .mockResolvedValueOnce(
                 makeToolCallResult([{ name: "list_guild_structure", args: { targetText: "reflexoes" } }])
@@ -361,7 +361,7 @@ describe("runtime user stories", () => {
             confidence: "high",
             roles: [],
         });
-        vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargets").mockResolvedValue({
+        vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargetsBatch").mockResolvedValue([{
             query: "reflexoes",
             resolvedIds: ["c-reflexoes"],
             entries: [
@@ -381,7 +381,7 @@ describe("runtime user stories", () => {
             ],
             exactIdMatch: false,
             confidence: "high",
-        });
+        }]);
         vi.spyOn(DiscordGuildDiscoveryService, "listGuildStructure").mockResolvedValue([
             {
                 id: "cat-1",
@@ -516,7 +516,7 @@ describe("runtime user stories", () => {
     it("can combine channel target resolution with guild structure discovery to answer structure questions", async () => {
         vi.spyOn(ModelGateway, "generateWithTools")
             .mockResolvedValueOnce(
-                makeToolCallResult([{ name: "resolve_channel_targets", args: { targetText: "123456789012345678" } }])
+                makeToolCallResult([{ name: "resolve_channel_targets", args: { targets: ["123456789012345678"] } }])
             )
             .mockResolvedValueOnce(
                 makeToolCallResult([{ name: "list_guild_structure", args: {} }])
@@ -524,7 +524,7 @@ describe("runtime user stories", () => {
             .mockResolvedValueOnce(
                 makeFinishResult("Esse id corresponde ao canal #ideas, dentro da categoria Projects.")
             );
-        vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargets").mockResolvedValue({
+        vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargetsBatch").mockResolvedValue([{
             query: "123456789012345678",
             resolvedIds: ["123456789012345678"],
             entries: [
@@ -544,7 +544,7 @@ describe("runtime user stories", () => {
             ],
             exactIdMatch: true,
             confidence: "exact",
-        });
+        }]);
         vi.spyOn(DiscordGuildDiscoveryService, "listGuildStructure").mockResolvedValue([
             {
                 id: "cat-projects",
@@ -592,7 +592,7 @@ describe("runtime user stories", () => {
     it("inspects a matched category and then retrieves scoped messages before describing available services, even when one target channel is not indexed", async () => {
         vi.spyOn(ModelGateway, "generateWithTools")
             .mockResolvedValueOnce(
-                makeToolCallResult([{ name: "resolve_channel_targets", args: { targetText: "serviços" } }])
+                makeToolCallResult([{ name: "resolve_channel_targets", args: { targets: ["serviços"] } }])
             )
             .mockResolvedValueOnce(
                 makeToolCallResult([{ name: "list_guild_structure", args: { targetText: "serviços" } }])
@@ -603,7 +603,7 @@ describe("runtime user stories", () => {
             .mockResolvedValueOnce(
                 makeFinishResult("Na categoria Serviços, vocês têm pelo menos o #bot-commands para comandos e o #automation para automações e integrações.")
             );
-        vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargets").mockResolvedValue({
+        vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargetsBatch").mockResolvedValue([{
             query: "serviços",
             resolvedIds: ["c-bot-commands", "c-automation"],
             entries: [
@@ -623,7 +623,7 @@ describe("runtime user stories", () => {
             ],
             exactIdMatch: false,
             confidence: "high",
-        });
+        }]);
         vi.spyOn(DiscordGuildDiscoveryService, "listGuildStructure").mockResolvedValue([
             {
                 id: "cat-services",

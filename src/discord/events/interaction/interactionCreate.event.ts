@@ -1,6 +1,7 @@
 import type { BotClient } from "@/shared/appTypes";
 import { Interaction, MessageFlags } from "discord.js";
 import { handleAccessPanelInteraction } from "@/discord/commands/system/access/panelInteractions";
+import { handleApprovalInteraction } from "@/discord/approval/approvalInteractions";
 import { handleDebugLogsInteraction } from "@/discord/commands/system/debugLogsInteractions";
 import { handleDebugPanelInteraction } from "@/discord/debug/debugPanelInteractions";
 import { handleSettingsPanelInteraction } from "@/discord/commands/system/settings/settingsInteractions";
@@ -23,6 +24,12 @@ export = {
             interaction.isUserSelectMenu() ||
             interaction.isModalSubmit()
         ) {
+            if (interaction.isButton() || interaction.isModalSubmit()) {
+                if (await handleApprovalInteraction(interaction)) {
+                    return;
+                }
+            }
+
             if (interaction.isButton()) {
                 if (await handleDebugPanelInteraction(interaction)) {
                     return;

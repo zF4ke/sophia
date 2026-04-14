@@ -3,6 +3,7 @@ import {
     Message,
     ThreadChannel,
 } from "discord.js";
+import { createApprovalGate } from "@/discord/approval/ApprovalGate";
 import { buildConversationContext, buildReplyContext } from "@/discord/conversation/ConversationIdentity";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type { RuntimeAnswer, RuntimeDebugSession, TurnInput, TurnTrigger } from "@/runtime/contracts";
@@ -45,6 +46,9 @@ export class ConversationAdapter {
             trigger: "talk",
             replyContext: null,
             referencedMessage: null,
+            approvalGate: interaction.channel && "send" in interaction.channel
+                ? createApprovalGate(interaction.channel as import("discord.js").SendableChannels)
+                : undefined,
             conversation: await buildConversationContext({
                 guild: interaction.guild,
                 currentChannelId: interaction.channelId,
@@ -59,8 +63,13 @@ export class ConversationAdapter {
         trigger: TurnTrigger;
         question: string;
         debugSession?: RuntimeDebugSession | null;
+        activityIndicator?: {
+            startThinking(): Promise<void>;
+            startTyping(): Promise<void>;
+            stop(): Promise<void>;
+        } | null;
     }): Promise<TurnInput> {
-        const { message, trigger, question, debugSession } = options;
+        const { message, trigger, question, debugSession, activityIndicator } = options;
         const replyContext = trigger === "reply" ? await buildReplyContext(message) : null;
         const referencedMessage = trigger === "reply" ? await message.fetchReference().catch(() => null) : null;
         return {
@@ -75,6 +84,10 @@ export class ConversationAdapter {
             trigger,
             replyContext,
             referencedMessage,
+            approvalGate: message.channel && "send" in message.channel
+                ? createApprovalGate(message.channel as import("discord.js").SendableChannels)
+                : undefined,
+            activityIndicator: activityIndicator ?? null,
             conversation: await buildConversationContext({
                 guild: message.guild,
                 currentChannelId: message.channelId,

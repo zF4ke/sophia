@@ -23,6 +23,7 @@ export interface ModelProfile {
     temperature: number;
     maxOutputTokens: number;
     contextWindow: number;
+    parallelToolCalls?: boolean;
 }
 
 export type WebMode = "off" | "auto" | "required";

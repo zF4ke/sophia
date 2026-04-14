@@ -26,7 +26,8 @@ export type RuntimeSettingKey =
     | "interactiveCrawlLimit"
     | "escalationFetchLimit"
     | "retrievalHistoryLimit"
-    | "retrievalContextWindow";
+    | "retrievalContextWindow"
+    | "approvalTimeoutMs";
 
 type RuntimeSettingMeta = {
     label: string;
@@ -104,6 +105,12 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
         shortDescription: "Live refresh cap for scoped retrieval retries.",
         longDescription: "Maximum number of messages fetched during a scoped live refresh when retrieve_messages escalates beyond the cache.",
         presets: [50, 150, 250, 400],
+    },
+    approvalTimeoutMs: {
+        label: "Approval Timeout",
+        shortDescription: "How long to wait for admin approval on write/destructive actions.",
+        longDescription: "Maximum time in milliseconds the runtime will wait for an admin to approve or deny a write or destructive tool call before auto-denying.",
+        presets: [30000, 60000, 120000, 300000],
     },
 };
 

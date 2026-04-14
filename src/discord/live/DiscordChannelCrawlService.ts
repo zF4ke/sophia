@@ -145,6 +145,8 @@ function isCrawlableChannel(channel: unknown): channel is CrawlableChannel {
     const isSupportedType =
         type === ChannelType.GuildText ||
         String(type) === String(ChannelType.GuildText) ||
+        type === ChannelType.GuildVoice ||
+        String(type) === String(ChannelType.GuildVoice) ||
         isThreadLike(candidate as { type?: ChannelType | number | string });
 
     return Boolean(
@@ -522,16 +524,31 @@ function buildPreviewMessages(
         .map((term) => normalizeLookupValue(term))
         .filter((term) => term.length > 1);
 
+    /** Extract searchable content from a message, including embeds. */
+    function getEffectiveContent(message: any): string {
+        const parts: string[] = [];
+        if (message.content) parts.push(String(message.content));
+        if (message.embeds?.length) {
+            for (const embed of message.embeds) {
+                if (embed.title) parts.push(String(embed.title));
+                if (embed.description) parts.push(String(embed.description));
+            }
+        }
+        return parts.join(" ");
+    }
+
     const candidates = messages
-        .filter((message) => Boolean(message?.content?.trim()))
+        .filter((message) => Boolean(getEffectiveContent(message).trim()))
         .map((message) => {
-            const normalizedContent = normalizeLookupValue(String(message.content || ""));
+            const effectiveContent = getEffectiveContent(message);
+            const normalizedContent = normalizeLookupValue(effectiveContent);
             const score = normalizedTerms.reduce((total, term) => {
                 return total + (normalizedContent.includes(term) ? 1 : 0);
             }, 0);
 
             return {
                 message,
+                effectiveContent,
                 score,
             };
         });
@@ -556,7 +573,7 @@ function buildPreviewMessages(
               )
               .slice(0, PREVIEW_MESSAGE_LIMIT);
 
-    return effective.map(({ message }) => {
+    return effective.map(({ message, effectiveContent }) => {
         const authorIdentity = resolveMessageAuthorIdentity(message);
         return {
         messageId: String(message.id),
@@ -564,7 +581,7 @@ function buildPreviewMessages(
         authorName: authorIdentity.authorName,
         authorUsername: authorIdentity.authorUsername,
         authorNickname: authorIdentity.authorNickname,
-        content: String(message.content || ""),
+        content: effectiveContent || String(message.content || ""),
         createdTimestamp: Number(message.createdTimestamp || 0),
         jumpLink:
             typeof message.url === "string"

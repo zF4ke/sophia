@@ -1,5 +1,44 @@
-import type { Message } from "discord.js";
+import { MessageType, type Message } from "discord.js";
 import type { StoredMessage } from "@/memory/types";
+
+/** Map system message types to human-readable descriptions. */
+function describeSystemMessage(message: Message): string | null {
+    switch (message.type) {
+        case MessageType.UserJoin:
+            return `[System] ${message.author.username} joined the server.`;
+        case MessageType.ChannelPinnedMessage:
+            return `[System] ${message.author.username} pinned a message.`;
+        case MessageType.ThreadCreated:
+            return `[System] ${message.author.username} started a thread: ${message.content || "unknown"}.`;
+        case MessageType.GuildBoost:
+            return `[System] ${message.author.username} boosted the server.`;
+        case MessageType.GuildBoostTier1:
+        case MessageType.GuildBoostTier2:
+        case MessageType.GuildBoostTier3:
+            return `[System] ${message.author.username} boosted the server to a new level!`;
+        default:
+            return null;
+    }
+}
+
+/** Extract text content from embeds, if any. */
+function extractEmbedContent(message: Message): string {
+    if (!message.embeds?.length) return "";
+    return message.embeds
+        .map((embed) => {
+            const parts: string[] = [];
+            if (embed.title) parts.push(embed.title);
+            if (embed.description) parts.push(embed.description);
+            if (embed.fields?.length) {
+                for (const field of embed.fields) {
+                    parts.push(`${field.name}: ${field.value}`);
+                }
+            }
+            return parts.join(" — ");
+        })
+        .filter(Boolean)
+        .join("\n");
+}
 
 export class MessageNormalizer {
     public static toStoredMessage(message: Message): StoredMessage {
@@ -8,6 +47,16 @@ export class MessageNormalizer {
             guildMember?.displayName ||
             message.author.globalName ||
             message.author.username;
+
+        // Build content from text, system description, and embeds
+        const textContent = message.content.trim();
+        const systemDesc = describeSystemMessage(message);
+        const embedContent = extractEmbedContent(message);
+
+        const contentParts: string[] = [];
+        if (systemDesc) contentParts.push(systemDesc);
+        else if (textContent) contentParts.push(textContent);
+        if (embedContent) contentParts.push(embedContent);
 
         return {
             id: message.id,
@@ -19,7 +68,7 @@ export class MessageNormalizer {
             authorName: authorDisplayName,
             authorUsername: message.author.username,
             authorNickname: guildMember?.nickname || null,
-            content: message.content.trim(),
+            content: contentParts.join("\n") || textContent,
             attachmentsJson: JSON.stringify(
                 message.attachments.map((attachment) => ({
                     id: attachment.id,

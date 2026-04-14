@@ -12,6 +12,7 @@ import {
 import { PromptRegistry } from "@/runtime/PromptRegistry";
 import { TOOL_DEFINITIONS } from "@/runtime/toolSchemas";
 import type {
+    ApprovalRequest,
     ChannelContextMessage,
     ConversationTurnSummary,
     EvidenceItem,
@@ -23,7 +24,8 @@ import type {
     TurnInput,
 } from "@/runtime/contracts";
 import { getToolStrategy } from "@/runtime/tools";
-import { type DiscordToolName } from "@/shared/discordTools";
+import { type DiscordToolName, DISCORD_TOOL_NAMES, T } from "@/shared/discordTools";
+import { isMutatingTool, describeApproval } from "@/tools/registry";
 import type {
     DiscordToolResult,
     GroundedAnswerMode,
@@ -37,6 +39,7 @@ function argsSignature(tool: string, args: ToolArguments) {
 
 function getRetrievalSummary(run: DiscordToolResult) {
     if (run.tool === "finish") return null;
+    if (isMutatingTool(run.tool)) return null;
     const strategy = getToolStrategy(run.tool);
     return strategy.extractRetrievalSummary?.(run) ?? null;
 }
@@ -45,6 +48,7 @@ function extractEvidence(
     run: DiscordToolResult
 ): EvidenceItem[] {
     if (run.tool === "finish") return [];
+    if (isMutatingTool(run.tool)) return [];
     return getToolStrategy(run.tool).extractEvidence(run);
 }
 
@@ -139,20 +143,12 @@ interface RuntimeConstraints {
     maxEvidenceSlice: number;
 }
 
-// ── The Discord tool names the model can call (excludes "finish") ──
+// ── The tool names the model can call (excludes "finish") ──
 
-const DISCORD_TOOL_NAMES = new Set<string>([
-    "retrieve_messages",
-    "resolve_member_identity",
-    "list_guild_structure",
-    "resolve_channel_targets",
-    "get_member_profile",
-    "list_members",
-    "get_guild_context",
-]);
+const ALL_TOOL_NAMES = new Set<string>(DISCORD_TOOL_NAMES);
 
-function isDiscordTool(name: string): name is DiscordToolName {
-    return DISCORD_TOOL_NAMES.has(name);
+function isKnownTool(name: string): name is DiscordToolName {
+    return ALL_TOOL_NAMES.has(name);
 }
 
 // ── Max chars for a single tool result injected back into the conversation ──
@@ -318,17 +314,21 @@ export class Runtime {
             ];
 
             const startedAt = Date.now();
+            let pausedLatencyMs = 0;
             const repeated = new Map<string, number>();
             let answer = "";
             let totalToolCalls = 0;
             let cumulativePromptTokens = 0;
             let cumulativeCompletionTokens = 0;
 
+            const getActiveElapsedMs = () =>
+                Math.max(0, Date.now() - startedAt - pausedLatencyMs);
+
             await input.debugSession?.setClassification("discord_grounded");
 
             for (let iteration = 0; iteration < constraints.maxToolCalls + 1; iteration += 1) {
                 // Latency guard
-                if (Date.now() - startedAt >= constraints.maxLatencyBudgetMs) {
+                if (getActiveElapsedMs() >= constraints.maxLatencyBudgetMs) {
                     stopReason = "budget_exhausted";
                     trace("stop", "Reached the latency budget.");
                     break;
@@ -403,8 +403,8 @@ export class Runtime {
                         break;
                     }
 
-                    // ── Handle Discord tool calls ──
-                    if (!isDiscordTool(toolName)) {
+                    // ── Handle known tool calls ──
+                    if (!isKnownTool(toolName)) {
                         messages.push({
                             role: "tool",
                             tool_call_id: tc.id,
@@ -459,10 +459,76 @@ export class Runtime {
                         continue;
                     }
 
+                    // ── Approval gate for write/destructive tools ──
+                    const capability = CapabilityRegistry.get(toolName);
+                    if (capability.sideEffectLevel !== "none") {
+                        const approvalDescription = describeApproval(toolName, parsedArgs);
+                        const approvalRequest: ApprovalRequest = {
+                            requestId: `${requestId}:${toolName}:${totalToolCalls}`,
+                            toolName,
+                            toolArgs: parsedArgs,
+                            description: approvalDescription,
+                            sideEffectLevel: capability.sideEffectLevel,
+                            requesterId: actorId,
+                        };
+                        trace("approval_requested", `${toolName}: ${approvalDescription}`);
+                        await input.debugSession?.setToolRunning(toolName, ["⏳ Awaiting admin approval"]);
+
+                        if (!input.approvalGate) {
+                            const denyMsg = "Write operations require admin approval, but no approval channel is available.";
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: JSON.stringify({ error: denyMsg }),
+                            });
+                            trace("approval_denied", `${toolName}: auto-denied (no gate)`);
+                            continue;
+                        }
+
+                        // Stop typing while waiting for human approval
+                        await input.activityIndicator?.stop();
+
+                        const approvalWaitStartedAt = Date.now();
+                        const approvalResult = await input.approvalGate(approvalRequest);
+                        const approvalWaitMs = Math.max(
+                            0,
+                            Date.now() - approvalWaitStartedAt,
+                        );
+                        pausedLatencyMs += approvalWaitMs;
+                        trace(
+                            "approval_wait",
+                            `${toolName}: waited ${approvalWaitMs}ms for admin approval (excluded from latency budget).`,
+                        );
+                        if (!approvalResult.approved) {
+                            const denyMsg = `Action denied by ${approvalResult.decidedBy}.`;
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: JSON.stringify({ error: denyMsg }),
+                            });
+                            const deniedRecord: ToolInvocationRecord = {
+                                tool: toolName,
+                                arguments: parsedArgs,
+                                summary: `Denied by ${approvalResult.decidedBy}.`,
+                                learned: denyMsg,
+                                confidenceImproved: false,
+                                output: { tool: toolName, summary: denyMsg, data: null, errorMessage: denyMsg },
+                                durationMs: 0,
+                                blocked: true,
+                            };
+                            toolHistory.push(deniedRecord);
+                            trace("approval_denied", `${toolName}: denied by ${approvalResult.decidedBy}`);
+                            await input.activityIndicator?.startThinking();
+                            continue;
+                        }
+                        trace("approval_granted", `${toolName}: approved by ${approvalResult.decidedBy}`);
+                        await input.activityIndicator?.startThinking();
+                    }
+
                     // Execute the capability
                     await input.debugSession?.setToolRunning(toolName, []);
                     const toolStartedAt = Date.now();
-                    const output = await CapabilityRegistry.get(toolName).run(
+                    const output = await capability.run(
                         {
                             guild: input.guild || null,
                             question: input.question,
@@ -633,6 +699,28 @@ export class Runtime {
                 confidence,
             };
         } catch (error) {
+            const errorDetail = error instanceof Error
+                ? { message: error.message, stack: error.stack, ...(error as any) }
+                : error;
+            const safeErrorDetail = (() => {
+                try {
+                    return JSON.parse(JSON.stringify(errorDetail, (_k, v) => {
+                        if (v instanceof Headers) return Object.fromEntries(v.entries());
+                        return v;
+                    }));
+                } catch {
+                    return String(error);
+                }
+            })();
+            console.error("[Runtime] Unhandled error — returning conversational fallback.", {
+                requestId,
+                question: input.question,
+                actorId,
+                guildId,
+                channelId,
+                model: config.modelProfile.chatModel,
+                error: safeErrorDetail,
+            });
             await input.debugSession?.setTraceEvent?.(
                 "runtime_error_fallback",
                 "The runtime hit an internal error and returned a conversational fallback instead."
@@ -697,7 +785,7 @@ function deriveStopDetail(
 function collectCitations(toolHistory: ToolInvocationRecord[]) {
     const citations = new Map<string, { label: string; jumpLink: string }>();
     for (const item of toolHistory) {
-        if (item.tool !== "retrieve_messages" || !item.output.data || typeof item.output.data !== "object") {
+        if (item.tool !== T.retrieve_messages || !item.output.data || typeof item.output.data !== "object") {
             continue;
         }
         const rows =

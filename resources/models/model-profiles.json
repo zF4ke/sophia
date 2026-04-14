@@ -7,7 +7,8 @@
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
       "maxOutputTokens": 1200,
-      "contextWindow": 1000000
+      "contextWindow": 1000000,
+      "parallelToolCalls": false
     },
     "smarter": {
       "chatModel": "minimax/minimax-m2.7",
@@ -15,7 +16,8 @@
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
       "maxOutputTokens": 1400,
-      "contextWindow": 190000
+      "contextWindow": 190000,
+      "parallelToolCalls": false
     },
     "alt": {
       "chatModel": "deepseek/deepseek-v3.2",
@@ -23,7 +25,8 @@
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
       "maxOutputTokens": 1400,
-      "contextWindow": 160000
+      "contextWindow": 160000,
+      "parallelToolCalls": false
     }
   }
 }

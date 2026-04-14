@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { retrieveMessagesStrategy } from "@/runtime/tools/retrieveMessages";
+import { retrieveMessagesTool } from "@/tools/retrieveMessages";
 import type { DiscordToolResult } from "@/shared/appTypes";
+
+const retrieveMessagesStrategy = retrieveMessagesTool.strategy;
 
 function makeRetrieveRun(query: string, historyMessages: Array<Record<string, unknown>>): DiscordToolResult {
     return {

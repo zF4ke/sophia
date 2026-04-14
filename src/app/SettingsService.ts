@@ -19,6 +19,7 @@ export interface BotSettings {
         escalationFetchLimit: number;
         retrievalHistoryLimit: number;
         retrievalContextWindow: number;
+        approvalTimeoutMs: number;
     };
     debug: boolean;
 }
@@ -42,6 +43,7 @@ const DEFAULT_SETTINGS: BotSettings = {
         escalationFetchLimit: 150,
         retrievalHistoryLimit: 50,
         retrievalContextWindow: 15,
+        approvalTimeoutMs: 60_000,
     },
     debug: false,
 };
