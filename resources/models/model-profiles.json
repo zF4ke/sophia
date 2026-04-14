@@ -1,21 +1,29 @@
 {
-  "defaultProfile": "balanced",
+  "defaultProfile": "fast",
   "profiles": {
-    "balanced": {
+    "fast": {
       "chatModel": "google/gemini-3.1-flash-lite-preview",
       "analysisModel": "google/gemini-3.1-flash-lite-preview",
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
       "maxOutputTokens": 1200,
-      "webEnabled": false
+      "contextWindow": 1000000
     },
     "smarter": {
-      "chatModel": "qwen/qwen3.6-plus",
-      "analysisModel": "qwen/qwen3.6-plus",
+      "chatModel": "minimax/minimax-m2.7",
+      "analysisModel": "minimax/minimax-m2.7",
       "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.1,
+      "temperature": 0.5,
       "maxOutputTokens": 1400,
-      "webEnabled": false
+      "contextWindow": 190000
+    },
+    "alt": {
+      "chatModel": "deepseek/deepseek-v3.2",
+      "analysisModel": "deepseek/deepseek-v3.2",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.5,
+      "maxOutputTokens": 1400,
+      "contextWindow": 160000
     }
   }
 }

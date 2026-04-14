@@ -1,8 +1,7 @@
-import type { EvidenceItem, ToolArguments } from "@/runtime/contracts";
+import type { EvidenceItem } from "@/runtime/contracts";
 import type { DiscordToolResult, ResolvedMemberIdentity } from "@/shared/appTypes";
 import { DISCORD_TOOL_EVIDENCE_ROLES } from "@/shared/discordTools";
-import type { ArgumentEnrichmentContext, ToolEnrichmentResult, ToolStrategy } from "./types";
-import { sanitizeReason } from "./utils";
+import type { ToolStrategy } from "./types";
 
 export const resolveMemberIdentityStrategy: ToolStrategy = {
     id: "resolve_member_identity",
@@ -40,29 +39,6 @@ export const resolveMemberIdentityStrategy: ToolStrategy = {
                 authorName: item.displayName == null ? null : String(item.displayName),
             },
         ];
-    },
-
-    enrichArguments(
-        modelArgs: ToolArguments,
-        modelStep: { reason: string; learnedExpectation: string },
-        ctx: ArgumentEnrichmentContext
-    ): ToolEnrichmentResult {
-        return {
-            arguments: {
-                query:
-                    typeof modelArgs.query === "string" && (modelArgs.query as string).trim()
-                        ? (modelArgs.query as string).trim()
-                        : ctx.structuralMember || ctx.activeMember?.resolvedId || ctx.actorId,
-            },
-            reason: sanitizeReason(
-                modelStep.reason,
-                "Resolve the relevant member or bot before answering."
-            ),
-            learnedExpectation: sanitizeReason(
-                modelStep.learnedExpectation,
-                "Return the best current-guild identity match or historical author fallback."
-            ),
-        };
     },
 
     extractResolvedMember(run: DiscordToolResult): ResolvedMemberIdentity | null {

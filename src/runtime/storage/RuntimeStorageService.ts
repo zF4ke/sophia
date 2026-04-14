@@ -3,13 +3,8 @@ import path from "path";
 import { AppPaths } from "@/app/AppPaths";
 import { getAppConfig } from "@/app/AppConfig";
 import { FileSystemService } from "@/shared/storage/FileSystemService";
-import { CheckpointStore } from "@/runtime/storage/CheckpointStore";
 import { OperationalStore } from "@/runtime/storage/OperationalStore";
-import {
-    CHECKPOINT_SCHEMA_VERSION,
-    CHECKPOINT_VERSION_FILE,
-    OPERATIONAL_SCHEMA_VERSION,
-} from "@/runtime/storage/schema";
+import { OPERATIONAL_SCHEMA_VERSION } from "@/runtime/storage/schema";
 
 async function wait(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -63,14 +58,11 @@ export class RuntimeStorageService {
     public static getStatus() {
         const config = getAppConfig();
         const runtimeDir = path.dirname(config.runtime.operationalDbPath);
-        const checkpointVersionPath = path.join(runtimeDir, CHECKPOINT_VERSION_FILE);
 
         return {
             operationalDbPath: config.runtime.operationalDbPath,
             checkpointDbPath: config.runtime.checkpointDbPath,
             operationalSchemaVersion: OPERATIONAL_SCHEMA_VERSION,
-            checkpointSchemaVersion: CHECKPOINT_SCHEMA_VERSION,
-            checkpointVersionPath,
             runtimeDir,
             logsDir: path.join(AppPaths.storageRoot, "logs"),
         };
@@ -79,14 +71,9 @@ export class RuntimeStorageService {
     public static async resetAllRuntimeData(): Promise<void> {
         const status = this.getStatus();
         await OperationalStore.reset();
-        await CheckpointStore.reset();
 
         await deleteSqliteFamily(status.operationalDbPath);
         await deleteSqliteFamily(status.checkpointDbPath);
-
-        if (fs.existsSync(status.checkpointVersionPath)) {
-            fs.rmSync(status.checkpointVersionPath, { force: true });
-        }
 
         clearDirectoryContents(status.logsDir);
         clearDirectoryContents(path.join(AppPaths.storageRoot, "runtime"));

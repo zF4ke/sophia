@@ -21,21 +21,11 @@ function buildInitialState(question: string): DebugTraceState {
         runtimeMode: null,
         selectedCapabilities: [],
         toolCallCount: 0,
-        groundingSummary: null,
-        retrievalSummary: null,
-        groundedAnswerMode: null,
+        evidenceCount: 0,
+        confidence: null,
         stopReason: null,
         stopDetail: null,
-        checkpointThreadId: null,
-        conversationContext: {
-            threadId: null,
-            kind: null,
-            replyAnchorMessageId: null,
-            replyContext: null,
-        },
-        webStatus: null,
-        contextPreview: null,
-        recentEvents: ["Started"],
+        conversationThreadId: null,
         timeline: [
             {
                 label: "start",
@@ -44,9 +34,11 @@ function buildInitialState(question: string): DebugTraceState {
                 timestamp: Date.now(),
             },
         ],
-        collapsedSections: DebugSession.getDefaultCollapsedSections(),
         startedAt: Date.now(),
         failureMessage: null,
+        cumulativePromptTokens: 0,
+        cumulativeCompletionTokens: 0,
+        contextUsagePercent: null,
     };
 }
 

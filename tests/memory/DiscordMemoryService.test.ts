@@ -1,17 +1,18 @@
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SettingsService } from "@/app/SettingsService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { ModelGateway } from "@/ai/ModelGateway";
 
 describe("DiscordMemoryService", () => {
     beforeEach(async () => {
-        process.env.RUNTIME_OPERATIONAL_DB_PATH = path.join(
+        const operationalDbPath = path.join(
             process.cwd(),
             "storage",
             "test-memory",
             `memory-${Date.now()}-${Math.random()}.sqlite`
         );
-        process.env.RUNTIME_CHECKPOINT_DB_PATH = path.join(
+        const checkpointDbPath = path.join(
             process.cwd(),
             "storage",
             "test-memory",
@@ -21,6 +22,13 @@ describe("DiscordMemoryService", () => {
         process.env.OPENROUTER_API_KEY = "test-key";
         delete process.env.CLIENT_TOKEN;
         delete process.env.OPENAI_API_KEY;
+        SettingsService.update({
+            runtime: {
+                ...SettingsService.load().runtime,
+                operationalDbPath,
+                checkpointDbPath,
+            },
+        });
         await DiscordMemoryService.resetForTests();
     });
 

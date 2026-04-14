@@ -124,3 +124,8 @@ dist
 
 storage/*
 !storage/.gitkeep
+
+# research folders
+research/cline
+research/kilocode
+research/opencode

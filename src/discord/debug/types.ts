@@ -1,20 +1,10 @@
-import type { GroundedAnswerMode, WebStatus } from "@/shared/appTypes";
+import type { GroundedAnswerMode } from "@/shared/appTypes";
 import type {
-    ConversationContext,
-    ReplyContext,
-    RetrievalSummary,
     RuntimeDebugSession,
     RuntimeMode,
     StopReason,
     TurnTrigger,
 } from "@/runtime/contracts";
-
-export type DebugSectionKey =
-    | "request"
-    | "conversation"
-    | "retrieval"
-    | "context"
-    | "timeline";
 
 export interface DebugTimelineEntry {
     label: string;
@@ -33,33 +23,17 @@ export interface DebugTraceState {
     runtimeMode: RuntimeMode | null;
     selectedCapabilities: string[];
     toolCallCount: number;
-    groundingSummary: {
-        messageEvidenceCount: number;
-        liveEvidenceCount: number;
-        sufficient: boolean;
-    } | null;
-    retrievalSummary: RetrievalSummary | null;
-    groundedAnswerMode: GroundedAnswerMode | null;
+    evidenceCount: number;
+    confidence: GroundedAnswerMode | null;
     stopReason: StopReason | null;
     stopDetail: string | null;
-    checkpointThreadId: string | null;
-    conversationContext: {
-        threadId: string | null;
-        kind: ConversationContext["kind"] | null;
-        replyAnchorMessageId: string | null;
-        replyContext: ReplyContext | null;
-    };
-    webStatus: WebStatus | null;
-    contextPreview: {
-        recentChannelMessages: string[];
-        evidencePreview: string[];
-        recentTurns: string[];
-    } | null;
-    recentEvents: string[];
+    conversationThreadId: string | null;
     timeline: DebugTimelineEntry[];
-    collapsedSections: Record<DebugSectionKey, boolean>;
     startedAt: number;
     failureMessage: string | null;
+    cumulativePromptTokens: number;
+    cumulativeCompletionTokens: number;
+    contextUsagePercent: number | null;
 }
 
 export type DebugSessionReporter = RuntimeDebugSession;

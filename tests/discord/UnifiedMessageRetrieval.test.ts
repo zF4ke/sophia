@@ -1,5 +1,6 @@
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SettingsService } from "@/app/SettingsService";
 import { DiscordChannelCrawlService } from "@/discord/live/DiscordChannelCrawlService";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
@@ -31,13 +32,13 @@ async function ingestMessage(options: {
 describe("UnifiedMessageRetrieval", () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
-        process.env.RUNTIME_OPERATIONAL_DB_PATH = path.join(
+        const operationalDbPath = path.join(
             process.cwd(),
             "storage",
             "test-memory",
             `retrieval-${Date.now()}-${Math.random()}.sqlite`
         );
-        process.env.RUNTIME_CHECKPOINT_DB_PATH = path.join(
+        const checkpointDbPath = path.join(
             process.cwd(),
             "storage",
             "test-memory",
@@ -45,6 +46,13 @@ describe("UnifiedMessageRetrieval", () => {
         );
         process.env.DISCORD_TOKEN = "test-token";
         process.env.OPENROUTER_API_KEY = "test-key";
+        SettingsService.update({
+            runtime: {
+                ...SettingsService.load().runtime,
+                operationalDbPath,
+                checkpointDbPath,
+            },
+        });
         await DiscordMemoryService.resetForTests();
     });
 

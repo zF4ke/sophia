@@ -22,7 +22,7 @@ export interface ModelProfile {
     embeddingModel: string;
     temperature: number;
     maxOutputTokens: number;
-    webEnabled?: boolean;
+    contextWindow: number;
 }
 
 export type WebMode = "off" | "auto" | "required";
@@ -43,18 +43,12 @@ export interface AppConfig {
         operationalDbPath: string;
         checkpointDbPath: string;
         maxToolCalls: number;
-        maxResearchPasses: number;
         maxRepeatedCallSignature: number;
         maxLatencyBudgetMs: number;
         maxPriorTurns: number;
         maxChannelMessages: number;
         maxToolRunsContext: number;
         maxEvidenceSlice: number;
-        maxContextPreviewEvidenceItems: number;
-        maxResolveChannelTargetEvidenceItems: number;
-        maxRetrieveHistoryEvidenceItems: number;
-        maxRetrieveSemanticEvidenceItems: number;
-        maxRetrieveEvidenceContentChars: number;
         interactiveCrawlLimit: number;
         escalationFetchLimit: number;
         retrievalHistoryLimit: number;
@@ -187,6 +181,7 @@ export interface ModelTraceContext {
     questionPreview?: string;
     webMode?: WebMode;
     webContext?: string;
+    traceEvents?: Array<{ label: string; detail: string; timestamp: number }>;
 }
 
 export interface LiveMemberRecord {

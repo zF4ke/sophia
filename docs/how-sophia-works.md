@@ -2,12 +2,12 @@
 
 ## Overview
 
-Sophia is a conversational-first Discord assistant. She is not a loose prompt harness anymore. She runs as a bounded graph runtime with one conversation system and one Discord retrieval system.
+Sophia is a conversational-first Discord assistant. She uses a while-loop runtime with native function calling, one conversation system, and one Discord retrieval system.
 
 She currently does three main things:
 - keep casual conversation moving
 - retrieve Discord evidence when a turn depends on server state
-- preserve continuity through checkpoints and a local message cache
+- preserve continuity through conversation state and a local message cache
 
 She does not yet have autonomous long-term memory, a self-updating personality system, or write-side task execution.
 
@@ -15,13 +15,13 @@ She does not yet have autonomous long-term memory, a self-updating personality s
 
 1. A command, mention, or reply is normalized into one turn format.
 2. Sophia resolves a canonical conversation key.
-3. She loads checkpoint state for that conversation.
-4. She makes cached Discord memory available.
-5. She plans whether the turn is direct conversation or bounded retrieval.
-6. If retrieval is needed, she runs one capability at a time.
-7. She judges whether the evidence is enough.
-8. She writes the final answer or asks a targeted follow-up.
-9. She persists runtime and trace data.
+3. She loads memory: recent turns, channel context, and prior evidence reconstructed from persisted tool runs.
+4. She builds a unified system prompt (`runtime/agent_loop`) with all context injected.
+5. She enters a while-loop where the model receives the conversation and available tools via `generateWithTools`.
+6. The model calls Discord tools to gather evidence, and calls `finish` when it has an answer.
+7. She persists runtime and trace data.
+
+If the model never calls `finish` (or produces no output), the runtime builds a conversational fallback from whatever evidence was collected.
 
 ### Runtime Diagram
 
@@ -29,21 +29,24 @@ She does not yet have autonomous long-term memory, a self-updating personality s
 flowchart TD
     A[Discord trigger\n/talk mention reply] --> B[Normalize turn input]
     B --> C[Resolve conversation key]
-    C --> D[Load checkpoint]
-    D --> E[Load runtime memory]
-    E --> F[plan_turn]
-    F -->|conversation| G[synthesize_answer]
-    F -->|research| H[run_research_loop]
-    H --> G
-    G --> I[persist_run]
-    I --> J[Answer back to Discord]
+    C --> D[Load memory\nrecent turns + channel context + prior evidence]
+    D --> E[Build system prompt\nruntime/agent_loop]
+    E --> F[While-loop: generateWithTools]
+    F -->|tool call| G[Execute capability]
+    G --> H[Feed result back as tool message]
+    H --> F
+    F -->|finish call| I[Extract answer]
+    F -->|no output| J[Conversational fallback]
+    I --> K[Persist run + traces]
+    J --> K
+    K --> L[Answer back to Discord]
 ```
 
 ## How Conversation Continuity Works
 
 Sophia tracks continuity in two layers.
 
-### 1. Checkpoint continuity
+### 1. Conversation state continuity
 
 This is short-term execution continuity.
 
@@ -64,7 +67,7 @@ This is retrieval continuity.
 
 Sophia stores observed and fetched Discord messages locally so future searches can be answered faster without always hitting Discord first.
 
-`load_memory` now also reconstructs reusable evidence from recent persisted tool outputs.
+The runtime also reconstructs reusable evidence from recent persisted tool outputs.
 That lets follow-up turns answer immediately when the needed scoped message evidence was already retrieved in the same conversation.
 
 ## How She Knows Who Is Talking And Who Said What
@@ -93,160 +96,89 @@ That distinction matters for user stories like:
 
 ## How She Decides What To Do
 
-Sophia decides in stages.
+All decision-making happens inside one while-loop with native function calling. There is no separate planner, step selector, or evidence judge.
 
-### `plan_turn`
+### The Agent Loop
 
-The model first decides whether this is:
-- direct conversation
-- Discord retrieval
-
-The runtime does not hardcode a large phrase-classification tree anymore. The model sees:
-- the question
-- the trigger type
-- reply context
-- recent turns
-- recent channel context
-- the capability registry
-- whether a guild is available
-
-The runtime then applies only narrow guardrails:
-- exact-id structural shortcuts
-- capability validation (tool name must be in the registry)
-- budget limits (max tool calls, max passes, latency)
-- repeated-call guard (blocks exact-same-arguments duplicates)
-- refusal prevention for ordinary conversation
-- a generic fallback ladder if model output is invalid
-- short-lived resolved-target carry-over for the active conversation thread
-
-Goal shifting is model-led: when `plan_turn` returns `TurnIntent.continuation=false`, runtime clears active scoped targets and reconstructed carry-over evidence before research continues. This prevents stale scope from a previous objective leaking into the next objective inside the same thread.
-
-`candidateCapabilities` from `plan_turn` is surfaced to `select_next_step` as guidance, not a constraint. The model may freely choose any registered capability based on what it has discovered so far, and may call the same capability multiple times with different arguments when needed.
-
-### Planning And Execution Diagram
-
-```mermaid
-flowchart TD
-    A[plan_turn\nmodel-led] --> B{mode}
-    B -->|conversation| C[synthesize_answer]
-    B -->|research| D[planNextStep]
-    D --> E[validate capability + arguments]
-    E --> F[execute capability]
-    F --> G[extract evidence]
-    G --> H[update active targets]
-    H --> I[judge_evidence]
-    I -->|enough| C
-    I -->|not enough| D
-```
-
-### What The Planner Actually Sees
-
-The planner is not wired separately for each user phrasing. The model gets one prompt with:
+The model receives one unified system prompt (`runtime/agent_loop`) that includes:
 - the question
 - the trigger type
 - reply context
 - recent turns in the same conversation
 - recent ambient channel messages
-- current active resolved targets
-- the capability registry
-- whether guild context exists
+- prior evidence reconstructed from earlier tool runs
+- the capability registry (as native function-calling tools)
+- the guild and channel environment
 
-It then returns one plan:
-- `mode`
-- `reason`
-- `goal`
-- `successCriteria`
-- `candidateCapabilities` (initial guidance for the step planner — not a hard constraint)
-- `confidence`
+The model then decides on its own whether to call tools or answer directly by calling `finish`.
 
-### Intent Arbitration Diagram
+The runtime enforces only narrow guardrails:
+- capability validation (tool name must be in the registry)
+- repeated-call guard (blocks exact-same-arguments duplicates)
+- tool-call budget and latency budget
+- context overflow pruning (old tool outputs pruned when approaching the context window limit)
+- refusal prevention for ordinary conversation
+
+### Agent Loop Diagram
 
 ```mermaid
 flowchart TD
-    A[Question + active session] --> B[Deterministic intent extraction]
-    A --> C[Model intent block from plan_turn]
-    B --> D[mergeIntent arbitration]
-    C --> D
-    D --> E[TurnIntent]
-    E --> F[continuation true/false]
-    E --> G[retrievalMode history/semantic/mixed]
-    E --> H[before/after time bounds]
-    F --> I[planNextStep arguments]
-    G --> I
-    H --> I
+    A[System prompt + user question] --> B[generateWithTools]
+    B -->|tool calls| C[Validate + execute capabilities]
+    C --> D[Feed results back as tool messages]
+    D --> B
+    B -->|finish call| E[Extract answer]
+    B -->|no output| F[Conversational fallback]
+    E --> G[Persist + respond]
+    F --> G
 ```
 
-This is the main composition boundary now:
-- deterministic intent remains the reliability guardrail
-- model intent fills gaps and broad paraphrases
-- merged `TurnIntent` drives continuation, lane preference, and time bounds in step shaping
-- when merged continuation is `false`, runtime resets carry-over scope/evidence before research
+### Intent Extraction
 
-### `run_research_loop`
+There is no separate deterministic intent router in the active runtime anymore. The live loop is model-led: the unified system prompt, prior evidence, recent turns, and available tools are what guide tool choice and argument formation.
 
-If she needs Discord evidence, she runs a bounded loop with registry-driven capabilities.
+Retention is bounded instead of unbounded:
+- recent turns and ambient messages are loaded through runtime settings
+- prior evidence is reconstructed from a capped number of past tool runs and then sliced again before prompt injection
+- old tool outputs are pruned when prompt usage approaches the selected model profile context window
+- deep history stays in local storage and is revisited through more tool calls instead of being stuffed into one prompt
 
-Current planner-visible capabilities:
-- `retrieve_messages`
-- `resolve_member_identity`
-- `list_guild_structure`
-- `resolve_channel_targets`
-- `get_member_profile` — returns rich profile evidence: display name, username, nickname, roles, join date, account creation date, bot status, Nitro/premium, pending, and avatar URL
-- `list_members` — offset-based pagination (default page size 20); optional `filters` narrows by name/username fragment, omitting it returns all guild members in pages
-- `get_guild_context`
+### Capability Composition
 
-For category/channel questions, the common execution pattern is:
-1. resolve the target category/channel
-2. inspect the matched guild structure
-3. retrieve scoped messages from the resolved child channels
-
-This is a common pattern, not a hardcoded sequence. The model may adapt freely based on what it discovers — it can skip steps it doesn't need, call tools in a different order, or call the same tool more than once with different arguments (e.g. `get_member_profile` once per ambiguous member). The runtime provides argument enrichment to help the model execute well but does not redirect tool choices.
-
-The runtime defaults to enough research passes to complete multi-step compositions even when channels are not indexed yet.
-
-### Capability Composition Diagram
+The model can call any registered capability in any order, any number of times with different arguments. Common patterns emerge naturally:
 
 ```mermaid
 flowchart LR
-    Q[User question] --> P[plan_turn]
-    P --> C1[resolve_channel_targets]
-    P --> C2[resolve_member_identity]
-    P --> C3[list_guild_structure]
-    P --> C4[retrieve_messages]
-    P --> C5[get_member_profile]
-    P --> C6[list_members]
-    P --> C7[get_guild_context]
+    Q[User question] --> L[Agent loop]
+    L --> C1[resolve_channel_targets]
+    L --> C2[resolve_member_identity]
+    L --> C3[list_guild_structure]
+    L --> C4[retrieve_messages]
+    L --> C5[get_member_profile]
+    L --> C6[list_members]
+    L --> C7[get_guild_context]
+    L --> FN[finish]
 
     C1 --> C3
     C3 --> C4
     C2 --> C5
     C2 --> C4
 
-    C4 --> J[judge_evidence]
-    C5 --> J
-    C6 --> J
-    C7 --> J
-    C3 --> J
-
-    J -->|sufficient| S[synthesize_answer]
-    J -->|insufficient| P2[planNextStep]
-    P2 --> C1
-    P2 --> C2
-    P2 --> C3
-    P2 --> C4
-    P2 --> C5
-    P2 --> C6
-    P2 --> C7
+    C4 --> FN
+    C5 --> FN
+    C6 --> FN
+    C7 --> FN
+    C3 --> FN
 ```
 
 Read this as a capability composer, not a fixed script:
-- different questions activate different subgraphs
+- different questions activate different tool sequences
 - composition is bounded by budgets, loop guards, and capability validation
 - retrieval sessions let repeated turns continue composition statefully
 
-## How `retrieve_messages` Works Now
+## How `retrieve_messages` Works
 
-`retrieve_messages` is no longer a flat search-result tool. It is a scoped, history-first reader with multiple evidence lanes.
+`retrieve_messages` is a scoped, history-first reader with multiple evidence lanes.
 
 It can return:
 - ordered scoped history messages
@@ -267,12 +199,12 @@ Default behavior:
 - semantic matches are supplemental when the user is asking for a specific concept inside that same scope
 - continuation reuses the same scoped retrieval session instead of restarting from scratch
 
-Cross-turn continuation is now explicit:
+Cross-turn continuation is explicit:
 - cursor and seen-id exclusion inputs are reused only when the turn intent is continuation-style (`continue`, `de novo`, `again`, etc.)
 - fresh follow-up questions in the same scope do not automatically inherit prior exclusions
 - this prevents follow-up turns from hiding messages that were just found in the previous turn
 
-For strict scoped retrieval (author and/or time bounded), the retrieval lane now has a guarded recovery path:
+For strict scoped retrieval (author and/or time bounded), the retrieval lane has a guarded recovery path:
 - if continuation inputs return an empty page, retry once without exclusions
 - if still empty and a cursor was applied, retry once without cursor
 - emit retrieval diagnostics so debug traces show when a retry recovered evidence
@@ -301,35 +233,8 @@ flowchart TD
     E --> F[User says continue / de novo / until yesterday]
     F --> G[reuse scoped retrieval session]
     G --> H[pull older non-duplicate page]
-    D -->|no| I[synthesize answer]
+    D -->|no| I[finish with answer]
 ```
-
-### Research Stop Conditions Diagram
-
-```mermaid
-flowchart TD
-    A[run_research_loop pass] --> B[judge_evidence]
-    B -->|sufficient| C[evidence_sufficient]
-    B -->|insufficient| D[planNextStep]
-    D --> E{next capability valid?}
-    E -->|no| F[no_useful_next_step]
-    E -->|yes| G[execute capability]
-    G --> H{budget/latency/repeat guard hit?}
-    H -->|yes| I[budget_exhausted or confidence_plateau]
-    H -->|no| A
-    C --> Z[synthesize_answer]
-    F --> Z
-    I --> Z
-```
-
-This is why Sophia can compose reliably without becoming an uncontrolled agent loop:
-- she can chain capabilities adaptively
-- she always exits through explicit stop reasons
-- synthesis gets those stop signals and can disclose partial coverage when continuation remains available
-
-Synthesis now has an additional guard:
-- when confidence is `insufficient` and there is no strong message evidence, Sophia must avoid speculative factual/entity guesses
-- she should ask a targeted follow-up or propose a concrete next retrieval step instead
 
 ### Category And Channel Questions
 
@@ -359,20 +264,12 @@ That separation matters because a category name alone is not enough to explain w
 - message evidence from the resolved channels, or
 - a clearly-limited answer that says it is based only on server structure
 
-### `judge_evidence`
-
-After each step, Sophia checks whether she has enough evidence to stop.
-
-### `synthesize_answer`
-
-She then turns the result into the final reply or a best-effort conversational follow-up.
-
 ## What She Can Do Today
 
-- answer conversational questions directly
+- answer conversational questions directly (model calls `finish` without using tools)
 - answer server questions with cached or live Discord evidence
 - continue reply-chain conversations across participants
-- remember prior turns within the same checkpointed conversation
+- remember prior turns within the same conversation
 - search cached Discord messages
 - automatically fetch more live Discord history when cached evidence is weak
 - continue scoped channel history across turns without rereading duplicate messages
@@ -390,45 +287,45 @@ She then turns the result into the final reply or a best-effort conversational f
 ### 1. Casual conversation
 
 ```text
-mention/reply -> plan_turn(conversation) -> synthesize_answer
+mention/reply -> agent loop -> finish (no tools called)
 ```
 
 ### 2. Exact identity question
 
 ```text
-plan_turn(research) -> resolve_member_identity -> judge_evidence -> synthesize_answer
+agent loop -> resolve_member_identity -> finish
 ```
 
 ### 3. Category or channel explanation
 
 ```text
-plan_turn(research)
+agent loop
 -> resolve_channel_targets
 -> list_guild_structure
--> retrieve_messages(scoped channel ids)
--> synthesize_answer
+-> retrieve_messages (scoped channel ids)
+-> finish
 ```
 
 ### 4. Unindexed channel search
 
 ```text
-resolve target -> scoped retrieve_messages
--> cache search miss
--> automatic live Discord fetch
+agent loop -> resolve target -> retrieve_messages
+-> cache miss -> automatic live Discord fetch
 -> ingest local cache
 -> retry scoped retrieval
--> answer
+-> finish
 ```
 
 ### 5. Whole-channel or time-bounded reads
 
 ```text
-resolve target
--> retrieve_messages(history or mixed, optional before/after bounds)
--> store continuation anchors + seen ids
--> user says continue / until yesterday / all of them
--> retrieve_messages(reuse same scoped session)
+agent loop -> resolve target
+-> retrieve_messages (history or mixed, optional before/after bounds)
+-> continuation anchors stored
+-> user says continue / until yesterday
+-> retrieve_messages (reuse same scoped session)
 -> continue until exhaustion or budget stop
+-> finish
 ```
 
 ## Limitations

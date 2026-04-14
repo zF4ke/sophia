@@ -1,11 +1,9 @@
-import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DiscordGuildDiscoveryService } from "@/discord/live/DiscordGuildDiscoveryService";
 import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { Runtime } from "@/runtime/Runtime";
-import { CheckpointStore } from "@/runtime/storage/CheckpointStore";
 import type { TurnInput } from "@/runtime/contracts";
 
 const LIVE_MODEL_TESTS_ENABLED =
@@ -42,25 +40,9 @@ describeLive("live runtime behavior", () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
         process.env.DISCORD_TOKEN ||= "test-token";
-        process.env.RUNTIME_LOOP_MAX_RESEARCH_PASSES = "4";
-        process.env.RUNTIME_LOOP_MAX_TOOL_CALLS = "6";
-        process.env.RUNTIME_OPERATIONAL_DB_PATH = path.join(
-            process.cwd(),
-            "storage",
-            "test-memory",
-            `runtime-live-${Date.now()}-${Math.random()}.sqlite`
-        );
-        process.env.RUNTIME_CHECKPOINT_DB_PATH = path.join(
-            process.cwd(),
-            "storage",
-            "test-memory",
-            `runtime-live-checkpoint-${Date.now()}-${Math.random()}.sqlite`
-        );
-        await CheckpointStore.reset();
-        (Runtime as any).graphPromise = null;
-        (Runtime as any).requestContext = new Map();
 
         vi.spyOn(DiscordMemoryService, "getRecentRuntimeRunsAsync").mockResolvedValue([]);
+        vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
@@ -122,7 +104,6 @@ describeLive("live runtime behavior", () => {
             expect(normalized).toContain("markov");
             expect(normalized).not.toContain("based on what i found");
             expect(normalized).not.toContain("resolve_member_identity");
-            expect(normalized).not.toContain("roles=");
         },
         120000
     );

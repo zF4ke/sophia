@@ -133,7 +133,7 @@ Current runtime capabilities and workflows:
 - Exact IDs should be first-class inputs for members, bots, channels, and categories.
 - Same-guild historical fallbacks must be labeled as historical, not current membership or live structure.
 - Tool composition should stay bounded by runtime budgets and repeated-call guards.
-- The model may call any registered capability, in any order, as many times as needed — `candidateCapabilities` is planning guidance, not a constraint.
+- The model may call any registered capability, in any order, as many times as needed within the tool-call budget.
 - If multiple guild members share the same display name, Sophia should fetch a profile for each before answering so she can compare and recommend the right one.
 - Category or channel existence alone is not enough to claim what a service does; Sophia should prefer scoped messages when those channels are readable.
 - Sophia should not say a category is empty unless the evidence explicitly shows zero visible child channels.

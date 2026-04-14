@@ -7,7 +7,7 @@ export = {
     async execute(client: BotClient) {
         if (!client.user) return;
 
-        console.log(`${client.user.username} está online.`);
+        console.log(`${client.user.username} is online.`);
         await SecurityService.initialize();
     },
 };

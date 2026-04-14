@@ -1,16 +1,16 @@
 {
   "name": "sophia",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "main": "index.js",
   "scripts": {
-    "devold": "tsx watch ./src/index.ts",
     "dev": "nodemon --watch \"src/**/*\" --watch \"resources/**/*\" --ext ts,js,json,md --exec \"tsx src/index.ts\"",
     "start": "tsx ./src/index.ts",
     "check": "npm run typecheck && npm run test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run -c vitest.config.ts",
     "test:live": "vitest run -c vitest.live.config.ts",
-    "test:all": "npm run test && npm run test:live"
+    "test:all": "npm run test && npm run test:live",
+    "clean": "node -e \"const fs=require('fs');const p=require('path');const dirs=['storage/runtime','storage/memory','storage/test-memory','storage/test-runtime-store','storage/logs','storage/security'];dirs.forEach(d=>{const full=p.resolve(d);try{if(fs.existsSync(full)){fs.rmSync(full,{recursive:true,force:true});fs.mkdirSync(full,{recursive:true});console.log('Cleaned '+d)}}catch(e){console.log('SKIP '+d+': '+e.code)}});const settings=p.resolve('storage/settings.json');try{if(fs.existsSync(settings)){fs.unlinkSync(settings);console.log('Removed settings.json')}}catch(e){console.log('SKIP settings.json: '+e.code)}\""
   },
   "keywords": [],
   "author": "",
@@ -18,17 +18,10 @@
   "type": "commonjs",
   "description": "",
   "dependencies": {
-    "@langchain/core": "^1.1.39",
-    "@langchain/langgraph": "^1.2.8",
-    "@langchain/langgraph-checkpoint-sqlite": "^1.0.1",
-    "@leodog896/vigenere-cipher": "^0.0.1",
     "@libsql/client": "^0.17.2",
-    "ascii-table": "^0.0.9",
-    "dedent": "^1.5.3",
     "discord.js": "^14.26.2",
     "dotenv": "^17.4.1",
     "openai": "^6.34.0",
-    "vigenere": "^1.0.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {

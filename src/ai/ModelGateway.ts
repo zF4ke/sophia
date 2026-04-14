@@ -14,6 +14,38 @@ type ChatMessage = {
     content: string;
 };
 
+export type ToolCallMessage = {
+    role: "assistant";
+    content: string | null;
+    tool_calls: ToolCall[];
+};
+
+export type ToolResultMessage = {
+    role: "tool";
+    tool_call_id: string;
+    content: string;
+};
+
+export type ToolCall = {
+    id: string;
+    type: "function";
+    function: {
+        name: string;
+        arguments: string;
+    };
+};
+
+export type ToolChatMessage = ChatMessage | ToolCallMessage | ToolResultMessage;
+
+type NativeToolDef = {
+    type: "function";
+    function: {
+        name: string;
+        description: string;
+        parameters: Record<string, unknown>;
+    };
+};
+
 type ChatOptions = {
     profile?: ModelProfile;
     temperature?: number;
@@ -24,6 +56,25 @@ type ChatOptions = {
         webStatus: WebStatus;
         webSearchRequests: number;
     }) => void | Promise<void>;
+};
+
+export type ToolChatOptions = Omit<ChatOptions, "webMode"> & {
+    tools: NativeToolDef[];
+};
+
+export type TokenUsage = {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+};
+
+export type ToolChatResult = {
+    content: string | null;
+    toolCalls: ToolCall[];
+    finishReason: string;
+    model: string;
+    durationMs: number;
+    usage: TokenUsage | null;
 };
 
 export class ModelGateway {
@@ -69,6 +120,7 @@ export class ModelGateway {
             rawOutput,
             normalizedOutput,
             blankOutput: !normalizedOutput,
+            traceEvents: options.traceContext?.traceEvents,
         });
 
         await options.onComplete?.({
@@ -137,6 +189,71 @@ export class ModelGateway {
         }
 
         return fallback;
+    }
+
+    public static async generateWithTools(
+        messages: ToolChatMessage[],
+        options: ToolChatOptions
+    ): Promise<ToolChatResult> {
+        const config = getAppConfig();
+        const profile = options.profile || config.modelProfile;
+        const client = this.getClient();
+        const startedAt = Date.now();
+        const traceLabel = options.traceContext?.traceLabel || "unlabeled_tool_chat";
+
+        const request: Record<string, unknown> = {
+            model: profile.chatModel,
+            temperature: options.temperature ?? profile.temperature,
+            max_tokens: options.maxOutputTokens ?? profile.maxOutputTokens,
+            messages,
+            tools: options.tools,
+        };
+
+        const completion = await client.chat.completions.create(request as any);
+        const durationMs = Math.max(0, Date.now() - startedAt);
+        const choice = completion.choices[0];
+        const content = choice?.message?.content || null;
+        const toolCalls: ToolCall[] = (choice?.message?.tool_calls ?? []).map((tc: any) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: {
+                name: tc.function.name,
+                arguments: tc.function.arguments,
+            },
+        }));
+        const finishReason = choice?.finish_reason || "stop";
+
+        ModelTraceLogger.log({
+            timestamp: new Date().toISOString(),
+            callKind: "tool_chat",
+            model: profile.chatModel,
+            traceLabel,
+            questionPreview: this.getQuestionPreview(
+                messages.filter((m): m is ChatMessage => m.role !== "tool") as ChatMessage[],
+                options.traceContext
+            ),
+            durationMs,
+            webMode: "off",
+            webStatus: "off",
+            webSearchRequests: 0,
+            messages,
+            rawOutput: content || "",
+            normalizedOutput: content?.trim() || "",
+            blankOutput: !content?.trim() && toolCalls.length === 0,
+            toolCalls,
+            finishReason,
+            traceEvents: options.traceContext?.traceEvents,
+        });
+
+        const usage: TokenUsage | null = completion.usage
+            ? {
+                promptTokens: completion.usage.prompt_tokens ?? 0,
+                completionTokens: completion.usage.completion_tokens ?? 0,
+                totalTokens: completion.usage.total_tokens ?? 0,
+            }
+            : null;
+
+        return { content, toolCalls, finishReason, model: profile.chatModel, durationMs, usage };
     }
 
     public static async embedTexts(texts: string[]): Promise<number[][]> {

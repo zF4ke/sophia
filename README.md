@@ -17,12 +17,11 @@ Operator surfaces:
 - `/index`
 - `/debug`
 - `/access`
-
-`/ask` and `/context` are retired. Sophia now treats `/talk`, mentions, and replies as one conversation surface.
+- `/settings`
 
 ## What Sophia Does
 
-Sophia is conversational first. When a turn does not need Discord evidence, she should keep the conversation moving instead of shutting it down.
+Sophia is conversational first. When a turn does not need Discord evidence, she keeps the conversation moving instead of shutting it down.
 
 When a turn does depend on Discord, she uses a cache-first retrieval pipeline:
 1. search local indexed Discord messages
@@ -32,7 +31,20 @@ When a turn does depend on Discord, she uses a cache-first retrieval pipeline:
 
 That local storage is a Discord retrieval cache plus runtime state. It is not a separate memory-search product.
 
-Runtime budget defaults such as tool-call limits, research-pass count, and latency budget are documented in [.env.example](.env.example).
+Runtime budget defaults such as tool-call limits and latency budget are configurable through `/settings` or `.env` overrides.
+
+## Runtime Architecture
+
+Sophia uses a while-loop with native function calling. One unified system prompt (`runtime/agent_loop`) gives the model the question, context, and available tools. The model calls tools iteratively and calls `finish` when it has an answer.
+
+There is no separate planner, step selector, or evidence judge. The model handles all decisions inside the tool-calling loop. The runtime enforces:
+- capability validation (tool name must be registered)
+- repeated-call protection (same arguments blocked)
+- tool-call budget and latency budget
+- context overflow pruning
+- refusal prevention for ordinary conversation
+
+If the model never calls `finish`, the runtime produces a conversational fallback.
 
 ## Conversation Continuity
 
@@ -64,46 +76,9 @@ The current stable capability ids are:
 - `list_members`
 - `get_guild_context`
 
+These are exposed to the model as native function-calling tools via `src/runtime/toolSchemas.ts`.
+
 `retrieve_messages` is the main Discord evidence path. `resolve_member_identity`, `list_guild_structure`, and `resolve_channel_targets` are the current-guild discovery layer. The remaining capabilities are live metadata lookups.
-
-## Planning Model
-
-Sophia is model-led by default.
-
-The planner and next-step selector get:
-- the question
-- trigger type
-- reply context
-- recent turns
-- recent channel context
-- active resolved member/channel targets
-- the capability registry
-
-The runtime still enforces:
-- capability validation
-- exact-id structural shortcuts
-- repeated-call protection
-- tool and latency budgets
-- refusal prevention for ordinary conversation
-
-Goal shifting is model-led. If `plan_turn` marks a turn as `continuation=false`, Sophia resets active scoped targets and carried evidence before the research loop. This prevents stale scope leakage from prior tasks when the user changes objective mid-thread.
-
-If model planning fails, Sophia falls back to a small generic current-guild recovery ladder instead of brittle language-specific routing.
-
-## Runtime Tuning
-
-You can tune context and evidence carry-over behavior from env values:
-- `RUNTIME_CONTEXT_MAX_CARRIED_EVIDENCE_ITEMS`: max reconstructed evidence items carried from recent tool runs.
-- `DEBUG_CONTEXT_PREVIEW_MAX_EVIDENCE_ITEMS`: max evidence items rendered in debug context preview.
-- `TOOL_RESOLVE_CHANNEL_TARGETS_MAX_EVIDENCE_ITEMS`: max channel/category metadata evidence items emitted by `resolve_channel_targets`.
-- `TOOL_RETRIEVE_MESSAGES_MAX_HISTORY_EVIDENCE_ITEMS`: max history rows converted into evidence per `retrieve_messages` run.
-- `TOOL_RETRIEVE_MESSAGES_MAX_SEMANTIC_EVIDENCE_ITEMS`: max semantic rows converted into evidence per `retrieve_messages` run.
-- `TOOL_RETRIEVE_MESSAGES_MAX_EVIDENCE_CONTENT_CHARS`: max characters kept per retrieved evidence snippet.
-
-For category and channel questions, the runtime now prefers:
-1. resolve the likely target
-2. inspect the matched structure
-3. retrieve scoped messages from the resolved child channels
 
 ## Storage
 
@@ -112,9 +87,9 @@ Active runtime storage lives under `storage/runtime/` and is disposable local st
 Current storage roles:
 - operational runtime state and traces
 - local message cache and indexing state
-- LangGraph checkpoints
+- conversation state (SQLite)
 
-Legacy cache and storage artifacts are not part of the active runtime path.
+Bot settings are stored in `storage/settings.json` and managed through `/settings` or `SettingsService`.
 
 ## Documentation
 

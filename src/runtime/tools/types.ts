@@ -2,9 +2,6 @@ import type {
     ActiveRetrievalSession,
     EvidenceItem,
     RetrievalSummary,
-    ToolArguments,
-    ToolInvocationRecord,
-    TurnIntent,
 } from "@/runtime/contracts";
 import type {
     DiscordToolResult,
@@ -17,31 +14,11 @@ import type { DiscordToolName } from "@/shared/discordTools";
 
 // ── Strategy Interface ──────────────────────────────────────────────
 
-export interface ToolEnrichmentResult {
-    arguments: ToolArguments;
-    reason: string;
-    learnedExpectation: string;
-}
-
-export interface EvidenceExtractionLimits {
-    maxResolveChannelTargetEvidenceItems: number;
-    maxRetrieveHistoryEvidenceItems: number;
-    maxRetrieveSemanticEvidenceItems: number;
-    maxRetrieveEvidenceContentChars: number;
-}
-
 export interface ToolStrategy {
     readonly id: DiscordToolName;
 
-    /** Convert raw tool output into evidence items for the judge and synthesizer. */
-    extractEvidence(run: DiscordToolResult, limits?: EvidenceExtractionLimits): EvidenceItem[];
-
-    /** Enrich/normalize the model-provided arguments using resolved state. */
-    enrichArguments(
-        modelArgs: ToolArguments,
-        modelStep: { reason: string; learnedExpectation: string },
-        context: ArgumentEnrichmentContext
-    ): ToolEnrichmentResult;
+    /** Convert raw tool output into evidence items. */
+    extractEvidence(run: DiscordToolResult): EvidenceItem[];
 
     /** Extract a resolved member identity from this tool's output, if applicable. */
     extractResolvedMember?(run: DiscordToolResult): ResolvedMemberIdentity | null;
@@ -58,36 +35,10 @@ export interface ToolStrategy {
 
 // ── Shared Context ──────────────────────────────────────────────────
 
-export interface ArgumentEnrichmentContext {
-    question: string;
-    actorId: string;
-
-    resolvedMember: { resolvedId: string | null; isCurrentGuildMember: boolean } | null;
-    resolvedChannelIds: string[];
-    structuralMember: string | null;
-    structuralChannel: string | null;
-    activeMember: ResolvedMemberIdentity | null;
-    activeChannelTarget: { query: string; resolvedIds: string[] } | null;
-    activeRetrievalSession: ActiveRetrievalSession | null;
-
-    timeBounds: { beforeTimestamp?: number; afterTimestamp?: number };
-    explicitBeforeTimestamp?: number;
-    explicitAfterTimestamp?: number;
-
-    shouldContinueSession: boolean;
-    shouldAutoInjectCursor: boolean;
-
-    turnIntent: TurnIntent | null;
-
-    ambiguousMemberCandidate: { displayName: string; identifiers: string[] } | null;
-    profiledMemberIdentifiers: Set<string> | null;
-
-    channelMentionIds: string[];
-}
-
 // ── Payload Types ───────────────────────────────────────────────────
 
 export type RetrievalPayload = {
+    query?: string;
     mode?: RetrievalMode;
     historyMessages?: Array<Record<string, unknown>>;
     semanticMatches?: Array<Record<string, unknown>>;

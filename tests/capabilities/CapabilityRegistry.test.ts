@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CapabilityRegistry } from "@/discord/capabilities/CapabilityRegistry";
+import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 import { DiscordGuildDiscoveryService } from "@/discord/live/DiscordGuildDiscoveryService";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
@@ -7,6 +7,8 @@ import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
 describe("CapabilityRegistry", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        process.env.DISCORD_TOKEN = "test-token";
+        process.env.OPENROUTER_API_KEY = "test-key";
     });
 
     it("executes retrieve_messages through the unified retrieval pipeline", async () => {

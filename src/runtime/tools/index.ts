@@ -26,4 +26,4 @@ export function getToolStrategy(id: DiscordToolName): ToolStrategy {
     return strategy;
 }
 
-export { type ToolStrategy, type ArgumentEnrichmentContext, type ToolEnrichmentResult } from "./types";
+export { type ToolStrategy } from "./types";

@@ -1,6 +1,7 @@
 import path from "path";
 import { ChannelType, Collection } from "discord.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SettingsService } from "@/app/SettingsService";
 import { DiscordChannelCrawlService } from "@/discord/live/DiscordChannelCrawlService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 
@@ -24,13 +25,13 @@ function createChannel(
 describe("DiscordChannelCrawlService", () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
-        process.env.RUNTIME_OPERATIONAL_DB_PATH = path.join(
+        const operationalDbPath = path.join(
             process.cwd(),
             "storage",
             "test-memory",
             `crawl-${Date.now()}-${Math.random()}.sqlite`
         );
-        process.env.RUNTIME_CHECKPOINT_DB_PATH = path.join(
+        const checkpointDbPath = path.join(
             process.cwd(),
             "storage",
             "test-memory",
@@ -38,6 +39,13 @@ describe("DiscordChannelCrawlService", () => {
         );
         process.env.DISCORD_TOKEN = "test-token";
         process.env.OPENROUTER_API_KEY = "test-key";
+        SettingsService.update({
+            runtime: {
+                ...SettingsService.load().runtime,
+                operationalDbPath,
+                checkpointDbPath,
+            },
+        });
         await DiscordMemoryService.resetForTests();
     });
 
@@ -282,6 +290,43 @@ describe("DiscordChannelCrawlService", () => {
                 authorNickname: "openrosen",
             }),
         ]);
+    });
+
+    it("uses precise snowflake conversion for targeted timestamp crawls", async () => {
+        const beforeTimestamp = Date.parse("2025-02-10T00:00:00Z");
+        const fetchSpy = vi
+            .fn()
+            .mockResolvedValueOnce(new Collection())
+            .mockResolvedValueOnce(new Collection());
+        const channel = createChannel("c1", "comandos", {
+            messages: {
+                fetch: fetchSpy,
+            },
+        });
+        const guild = {
+            id: "g1",
+            channels: {
+                cache: new Collection([["c1", channel]]),
+            },
+        } as any;
+
+        await DiscordChannelCrawlService.crawlChannelMessagesAtTime(
+            guild,
+            "c1",
+            beforeTimestamp,
+            100,
+            "youtube"
+        );
+
+        const discordEpoch = BigInt(1420070400000);
+        const discordSnowflakeIncrement = BigInt(4194304);
+        const expectedBefore =
+            ((BigInt(beforeTimestamp) - discordEpoch) * discordSnowflakeIncrement).toString();
+
+        expect(fetchSpy).toHaveBeenCalledWith({
+            limit: 100,
+            before: expectedBefore,
+        });
     });
 });
 

@@ -1,12 +1,10 @@
-import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ModelGateway } from "@/ai/ModelGateway";
+import { ModelGateway, type ToolChatResult } from "@/ai/ModelGateway";
 import { DiscordGuildDiscoveryService } from "@/discord/live/DiscordGuildDiscoveryService";
 import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { Runtime } from "@/runtime/Runtime";
-import { CheckpointStore } from "@/runtime/storage/CheckpointStore";
 import type { TurnInput } from "@/runtime/contracts";
 
 function createInput(overrides: Partial<TurnInput> = {}): TurnInput {
@@ -32,28 +30,44 @@ function createInput(overrides: Partial<TurnInput> = {}): TurnInput {
     };
 }
 
+let toolCallCounter = 0;
+
+function makeToolCallResult(calls: Array<{ name: string; args: Record<string, unknown> }>): ToolChatResult {
+    return {
+        content: null,
+        toolCalls: calls.map((c) => ({
+            id: `tc-${++toolCallCounter}`,
+            type: "function" as const,
+            function: { name: c.name, arguments: JSON.stringify(c.args) },
+        })),
+        finishReason: "tool_calls",
+        model: "test-model",
+        durationMs: 10,
+        usage: null,
+    };
+}
+
+function makeFinishResult(answer: string): ToolChatResult {
+    return {
+        content: null,
+        toolCalls: [{
+            id: `tc-${++toolCallCounter}`,
+            type: "function" as const,
+            function: { name: "finish", arguments: JSON.stringify({ answer }) },
+        }],
+        finishReason: "tool_calls",
+        model: "test-model",
+        durationMs: 10,
+        usage: null,
+    };
+}
+
 describe("runtime user stories", () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
+        toolCallCounter = 0;
         process.env.DISCORD_TOKEN = "test-token";
         process.env.OPENROUTER_API_KEY = "test-key";
-        process.env.RUNTIME_LOOP_MAX_RESEARCH_PASSES = "4";
-        process.env.RUNTIME_LOOP_MAX_TOOL_CALLS = "6";
-        process.env.RUNTIME_OPERATIONAL_DB_PATH = path.join(
-            process.cwd(),
-            "storage",
-            "test-memory",
-            `runtime-story-${Date.now()}-${Math.random()}.sqlite`
-        );
-        process.env.RUNTIME_CHECKPOINT_DB_PATH = path.join(
-            process.cwd(),
-            "storage",
-            "test-memory",
-            `runtime-story-checkpoint-${Date.now()}-${Math.random()}.sqlite`
-        );
-        await CheckpointStore.reset();
-        (Runtime as any).graphPromise = null;
-        (Runtime as any).requestContext = new Map();
 
         vi.spyOn(DiscordMemoryService, "getRecentRuntimeRunsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([]);
@@ -136,45 +150,9 @@ describe("runtime user stories", () => {
             followUpToolRun as any,
         ]);
 
-        vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
-            const traceLabel = options?.traceContext?.traceLabel;
-            if (traceLabel === "runtime_plan_turn") {
-                return {
-                    mode: "research",
-                    reason: "Use prior scoped evidence if available.",
-                    goal: "Answer the follow-up from grounded context.",
-                    successCriteria: "Avoid redundant retrieval when evidence already covers the question.",
-                    candidateCapabilities: ["retrieve_messages"],
-                    confidence: "best_effort",
-                    intent: {
-                        continuation: true,
-                        retrievalMode: null,
-                        beforeTimestamp: null,
-                        afterTimestamp: null,
-                        source: {
-                            continuation: "deterministic",
-                            retrievalMode: "none",
-                            timeBounds: "none",
-                        },
-                    },
-                } as any;
-            }
-            if (traceLabel === "runtime_judge_evidence") {
-                const prompt = String((_messages?.[1] as any)?.content || "");
-                if (prompt.includes("M4rkim") && prompt.includes("Openrosen")) {
-                    return {
-                        sufficient: true,
-                        confidence: "confident",
-                        reason: "Prior message evidence already answers the follow-up.",
-                    } as any;
-                }
-                return fallback as any;
-            }
-            return fallback as any;
-        });
-
-        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
-            "Sim, ele comparou a foto com o M4rkim."
+        // Model sees prior evidence in the system prompt and answers directly via finish
+        vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValue(
+            makeFinishResult("Sim, ele comparou a foto com o M4rkim.")
         );
 
         const result = await Runtime.answer(
@@ -287,24 +265,10 @@ describe("runtime user stories", () => {
 
         const previewSpy = vi.fn().mockResolvedValue(undefined);
 
-        vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
-            const traceLabel = options?.traceContext?.traceLabel;
-            if (traceLabel === "runtime_plan_turn") {
-                return {
-                    mode: "research",
-                    reason: "New topic about Serviços channels.",
-                    goal: "Summarize services channels.",
-                    successCriteria: "Describe each channel under Serviços.",
-                    candidateCapabilities: ["resolve_channel_targets", "retrieve_messages"],
-                    confidence: "best_effort",
-                    continuation: false,
-                    retrievalMode: null,
-                    beforeTimestamp: null,
-                    afterTimestamp: null,
-                } as any;
-            }
-            return fallback as any;
-        });
+        // Model sees stale evidence but decides to answer directly about a new topic
+        vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValue(
+            makeFinishResult("Os canais de Serviços incluem bot-commands e automation.")
+        );
 
         const result = await Runtime.answer(
             createInput({
@@ -317,58 +281,28 @@ describe("runtime user stories", () => {
                     setPlanning: vi.fn().mockResolvedValue(undefined),
                     setToolRunning: vi.fn().mockResolvedValue(undefined),
                     setToolResult: vi.fn().mockResolvedValue(undefined),
-                    setGroundingSummary: vi.fn().mockResolvedValue(undefined),
+                    setEvidenceSummary: vi.fn().mockResolvedValue(undefined),
                     setGenerating: vi.fn().mockResolvedValue(undefined),
                     finishSuccess: vi.fn().mockResolvedValue(undefined),
                     finishError: vi.fn().mockResolvedValue(undefined),
-                    setContextPreview: previewSpy,
+                    setTraceEvent: previewSpy,
                 },
             })
         );
 
         expect(result.answer.length).toBeGreaterThan(0);
-        // After plan_turn with continuation=false, scope is reset.
-        // The research loop starts fresh — no stale tools are reused.
+        // Model answered directly via finish — no tools were called
         expect(result.toolRuns).toEqual([]);
     });
 
     it("answers requester identity naturally after resolving the requester exactly", async () => {
-        vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
-            const traceLabel = options?.traceContext?.traceLabel;
-            if (traceLabel === "runtime_plan_turn") {
-                return {
-                    mode: "research",
-                    reason: "Resolve the requester exactly.",
-                    goal: "Answer who the requester is.",
-                    successCriteria: "Resolve the requester and answer naturally.",
-                    candidateCapabilities: ["resolve_member_identity"],
-                    confidence: "best_effort",
-                } as any;
-            }
-            if (traceLabel === "runtime_judge_evidence") {
-                const prompt = String((_messages?.[1] as any)?.content || "");
-                if (prompt.includes("resolve_member_identity")) {
-                    return {
-                        sufficient: true,
-                        confidence: "confident",
-                        reason: "The requester identity is grounded.",
-                    } as any;
-                }
-                return fallback as any;
-            }
-            if (traceLabel === "runtime_select_next_step") {
-                return {
-                    nextCapability: "resolve_member_identity",
-                    arguments: { query: "u-requester" },
-                    reason: "Resolve the requester directly.",
-                    learnedExpectation: "Return the requester identity.",
-                } as any;
-            }
-            return fallback as any;
-        });
-        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
-            "Tu és o Requester aqui no servidor."
-        );
+        vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "resolve_member_identity", args: { query: "u-requester" } }])
+            )
+            .mockResolvedValueOnce(
+                makeFinishResult("Tu és o Requester aqui no servidor.")
+            );
         vi.spyOn(DiscordLiveService, "resolveMemberIdentity").mockResolvedValue({
             query: "u-requester",
             resolvedId: "u-requester",
@@ -398,84 +332,22 @@ describe("runtime user stories", () => {
     });
 
     it("combines member resolution, channel resolution, and message retrieval for a grounded explanation", async () => {
-        const selectStepCalls: string[] = [];
-
-        vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
-            const traceLabel = options?.traceContext?.traceLabel;
-            if (traceLabel === "runtime_plan_turn") {
-                return {
-                    mode: "research",
-                    reason: "Need to resolve the speaker, scope, and then retrieve messages.",
-                    goal: "Explain what One Person was saying in #reflexoes.",
-                    successCriteria: "Use exact scoped Discord evidence and answer naturally.",
-                    candidateCapabilities: [
-                        "resolve_member_identity",
-                        "resolve_channel_targets",
-                        "retrieve_messages",
-                    ],
-                    confidence: "best_effort",
-                } as any;
-            }
-            if (traceLabel === "runtime_select_next_step") {
-                const next = selectStepCalls.length === 0
-                    ? "resolve_member_identity"
-                    : selectStepCalls.length === 1
-                      ? "resolve_channel_targets"
-                      : selectStepCalls.length === 2
-                        ? "list_guild_structure"
-                        : "retrieve_messages";
-                selectStepCalls.push(next);
-                if (next === "resolve_member_identity") {
-                    return {
-                        nextCapability: next,
-                        arguments: { query: "One Person" },
-                        reason: "Resolve the speaker first.",
-                        learnedExpectation: "Identify the target member.",
-                    } as any;
-                }
-                if (next === "resolve_channel_targets") {
-                    return {
-                        nextCapability: next,
-                        arguments: { targetText: "reflexoes" },
-                        reason: "Resolve the target channel.",
-                        learnedExpectation: "Identify the target channel ids.",
-                    } as any;
-                }
-                if (next === "list_guild_structure") {
-                    return {
-                        nextCapability: next,
-                        arguments: { targetText: "reflexoes" },
-                        reason: "Inspect the matched channel structure before scoped retrieval.",
-                        learnedExpectation: "Confirm the matched channel and its visibility before reading messages.",
-                    } as any;
-                }
-                return {
-                    nextCapability: next,
-                    arguments: { query: "do que o One Person está falando?" },
-                    reason: "Retrieve scoped message evidence.",
-                    learnedExpectation: "Return the relevant messages.",
-                } as any;
-            }
-            if (traceLabel === "runtime_judge_evidence") {
-                const prompt = String((_messages?.[1] as any)?.content || "");
-                if (prompt.includes("One Person estava falando sobre") || prompt.includes("retrieve_messages")) {
-                    return {
-                        sufficient: true,
-                        confidence: "confident",
-                        reason: "Scoped message evidence is available.",
-                    } as any;
-                }
-                return {
-                    sufficient: false,
-                    confidence: "best_effort",
-                    reason: "Need more current-guild evidence first.",
-                } as any;
-            }
-            return fallback as any;
-        });
-        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
-            "O One Person estava falando sobre a imagem e dizendo que ela era mais simbólica do que literal."
-        );
+        vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "resolve_member_identity", args: { query: "One Person" } }])
+            )
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "resolve_channel_targets", args: { targetText: "reflexoes" } }])
+            )
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "list_guild_structure", args: { targetText: "reflexoes" } }])
+            )
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "retrieve_messages", args: { query: "do que o One Person está falando?", authorId: "u-one", channelIds: ["c-reflexoes"] } }])
+            )
+            .mockResolvedValueOnce(
+                makeFinishResult("O One Person estava falando sobre a imagem e dizendo que ela era mais simbólica do que literal.")
+            );
         vi.spyOn(DiscordLiveService, "resolveMemberIdentity").mockResolvedValue({
             query: "One Person",
             resolvedId: "u-one",
@@ -642,59 +514,16 @@ describe("runtime user stories", () => {
     });
 
     it("can combine channel target resolution with guild structure discovery to answer structure questions", async () => {
-        let selectCall = 0;
-
-        vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
-            const traceLabel = options?.traceContext?.traceLabel;
-            if (traceLabel === "runtime_plan_turn") {
-                return {
-                    mode: "research",
-                    reason: "Resolve the target and inspect the guild structure.",
-                    goal: "Explain what channel/category an id belongs to.",
-                    successCriteria: "Use guild discovery tools and answer naturally.",
-                    candidateCapabilities: [
-                        "resolve_channel_targets",
-                        "list_guild_structure",
-                    ],
-                    confidence: "best_effort",
-                } as any;
-            }
-            if (traceLabel === "runtime_select_next_step") {
-                selectCall += 1;
-                return selectCall === 1
-                    ? {
-                          nextCapability: "resolve_channel_targets",
-                          arguments: { targetText: "123456789012345678" },
-                          reason: "Resolve the explicit id first.",
-                          learnedExpectation: "Find the exact channel target.",
-                      }
-                    : {
-                          nextCapability: "list_guild_structure",
-                          arguments: {},
-                          reason: "Load the current guild structure.",
-                          learnedExpectation: "Confirm category and visibility.",
-                      };
-            }
-            if (traceLabel === "runtime_judge_evidence") {
-                const prompt = String((_messages?.[1] as any)?.content || "");
-                if (prompt.includes("ideas") && prompt.includes("Projects")) {
-                    return {
-                        sufficient: true,
-                        confidence: "confident",
-                        reason: "Guild structure evidence is available.",
-                    } as any;
-                }
-                return {
-                    sufficient: false,
-                    confidence: "best_effort",
-                    reason: "Need target resolution and guild structure first.",
-                } as any;
-            }
-            return fallback as any;
-        });
-        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
-            "Esse id corresponde ao canal #ideas, dentro da categoria Projects."
-        );
+        vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "resolve_channel_targets", args: { targetText: "123456789012345678" } }])
+            )
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "list_guild_structure", args: {} }])
+            )
+            .mockResolvedValueOnce(
+                makeFinishResult("Esse id corresponde ao canal #ideas, dentro da categoria Projects.")
+            );
         vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargets").mockResolvedValue({
             query: "123456789012345678",
             resolvedIds: ["123456789012345678"],
@@ -761,67 +590,19 @@ describe("runtime user stories", () => {
     });
 
     it("inspects a matched category and then retrieves scoped messages before describing available services, even when one target channel is not indexed", async () => {
-        let selectCall = 0;
-
-        vi.spyOn(ModelGateway, "generateJson").mockImplementation(async (_messages, fallback, options) => {
-            const traceLabel = options?.traceContext?.traceLabel;
-            if (traceLabel === "runtime_plan_turn") {
-                return {
-                    mode: "research",
-                    reason: "Resolve the service category, inspect it, and then retrieve scoped evidence.",
-                    goal: "Describe what services are available in the matched service area.",
-                    successCriteria: "Use structure plus scoped messages and answer naturally.",
-                    candidateCapabilities: [
-                        "resolve_channel_targets",
-                        "list_guild_structure",
-                        "retrieve_messages",
-                    ],
-                    confidence: "best_effort",
-                } as any;
-            }
-            if (traceLabel === "runtime_select_next_step") {
-                selectCall += 1;
-                return selectCall === 1
-                    ? {
-                          nextCapability: "resolve_channel_targets",
-                          arguments: { targetText: "serviços" },
-                          reason: "Resolve the service category first.",
-                          learnedExpectation: "Identify the service category and its child channels.",
-                      }
-                    : selectCall === 2
-                      ? {
-                            nextCapability: "list_guild_structure",
-                            arguments: { targetText: "serviços" },
-                            reason: "Inspect the matched category structure.",
-                            learnedExpectation: "Confirm the visible channels inside Serviços.",
-                        }
-                      : {
-                            nextCapability: "retrieve_messages",
-                            arguments: { query: "que serviços estão disponíveis nesse servidor?" },
-                            reason: "Read scoped message evidence from the resolved service channels.",
-                            learnedExpectation: "Return messages that explain what the services do.",
-                        };
-            }
-            if (traceLabel === "runtime_judge_evidence") {
-                const prompt = String((_messages?.[1] as any)?.content || "");
-                if (prompt.includes("#bot-commands") && prompt.includes("#automation")) {
-                    return {
-                        sufficient: true,
-                        confidence: "confident",
-                        reason: "The service category and scoped message evidence are available.",
-                    } as any;
-                }
-                return {
-                    sufficient: false,
-                    confidence: "best_effort",
-                    reason: "Need the service category plus scoped messages first.",
-                } as any;
-            }
-            return fallback as any;
-        });
-        vi.spyOn(ModelGateway, "generateText").mockResolvedValue(
-            "Na categoria Serviços, vocês têm pelo menos o #bot-commands para comandos e o #automation para automações e integrações."
-        );
+        vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "resolve_channel_targets", args: { targetText: "serviços" } }])
+            )
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "list_guild_structure", args: { targetText: "serviços" } }])
+            )
+            .mockResolvedValueOnce(
+                makeToolCallResult([{ name: "retrieve_messages", args: { query: "que serviços estão disponíveis nesse servidor?", channelIds: ["c-bot-commands", "c-automation"] } }])
+            )
+            .mockResolvedValueOnce(
+                makeFinishResult("Na categoria Serviços, vocês têm pelo menos o #bot-commands para comandos e o #automation para automações e integrações.")
+            );
         vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargets").mockResolvedValue({
             query: "serviços",
             resolvedIds: ["c-bot-commands", "c-automation"],

@@ -1,68 +1,39 @@
 import { Message, MessageFlags } from "discord.js";
 import { renderDebugTrace } from "@/discord/debug/renderDebugTrace";
 import type {
-    DebugSectionKey,
     DebugSessionReporter,
     DebugTimelineEntry,
     DebugTraceState,
 } from "@/discord/debug/types";
-import type { GroundedAnswerMode, WebStatus } from "@/shared/appTypes";
+import type { GroundedAnswerMode } from "@/shared/appTypes";
 import type { RetrievalSummary, RuntimeMode, StopReason, TurnTrigger } from "@/runtime/contracts";
 
-const MAX_EVENTS = 8;
 const MAX_PREVIEW_LENGTH = 140;
-const MAX_TIMELINE = 25;
-const DEFAULT_COLLAPSED_SECTIONS: Record<DebugSectionKey, boolean> = {
-    request: false,
-    conversation: false,
-    retrieval: false,
-    context: false,
-    timeline: false,
-};
+const MAX_TIMELINE = 30;
 
 function normalizePreview(question: string): string {
     const compact = question.replace(/\s+/g, " ").trim();
-    if (!compact) {
-        return "No text.";
-    }
-
+    if (!compact) return "No text.";
     return compact.length > MAX_PREVIEW_LENGTH
         ? `${compact.slice(0, MAX_PREVIEW_LENGTH - 3)}...`
         : compact;
 }
 
 function normalizeError(error: unknown): string {
-    if (error instanceof Error && error.message) {
-        return error.message;
-    }
-
+    if (error instanceof Error && error.message) return error.message;
     return "Unknown error";
 }
 
 function inferTone(event: string): DebugTimelineEntry["tone"] {
     const normalized = event.toLowerCase();
-    if (normalized.includes("error") || normalized.includes("failed")) {
-        return "error";
-    }
-    if (
-        normalized.includes("insufficient") ||
-        normalized.includes("weak") ||
-        normalized.includes("fallback") ||
-        normalized.includes("plateau")
-    ) {
-        return "warning";
-    }
-    if (normalized.includes("sufficient") || normalized.includes("completed")) {
-        return "success";
-    }
+    if (normalized.includes("error") || normalized.includes("failed")) return "error";
+    if (normalized.includes("insufficient") || normalized.includes("hits=0") || normalized.includes("fallback")) return "warning";
+    if (normalized.includes("sufficient") || normalized.includes("completed")) return "success";
     return "info";
 }
 
 export class DebugSession implements DebugSessionReporter {
     private static readonly sessions = new Map<string, DebugSession>();
-    private static defaultCollapsedSections: Record<DebugSectionKey, boolean> = {
-        ...DEFAULT_COLLAPSED_SECTIONS,
-    };
     private readonly state: DebugTraceState;
     private updateQueue: Promise<void> = Promise.resolve();
 
@@ -77,32 +48,24 @@ export class DebugSession implements DebugSessionReporter {
             runtimeMode: null,
             selectedCapabilities: [],
             toolCallCount: 0,
-            groundingSummary: null,
-            retrievalSummary: null,
-            groundedAnswerMode: null,
+            evidenceCount: 0,
+            confidence: null,
             stopReason: null,
             stopDetail: null,
-            checkpointThreadId: null,
-            conversationContext: {
-                threadId: null,
-                kind: null,
-                replyAnchorMessageId: null,
-                replyContext: null,
-            },
-            webStatus: null,
-            contextPreview: null,
-            recentEvents: ["Started"],
+            conversationThreadId: null,
             timeline: [
                 {
-                    label: "start",
+                    label: "Setup",
                     detail: "Debug session started.",
                     tone: "info",
                     timestamp: Date.now(),
                 },
             ],
-            collapsedSections: DebugSession.getDefaultCollapsedSections(),
             startedAt: Date.now(),
             failureMessage: null,
+            cumulativePromptTokens: 0,
+            cumulativeCompletionTokens: 0,
+            contextUsagePercent: null,
         };
         DebugSession.sessions.set(message.id, this);
     }
@@ -111,128 +74,62 @@ export class DebugSession implements DebugSessionReporter {
         return this.sessions.get(messageId) || null;
     }
 
-    public static getDefaultCollapsedSections(): Record<DebugSectionKey, boolean> {
-        return { ...this.defaultCollapsedSections };
-    }
-
-    private static persistDefaultCollapsedSections(
-        collapsedSections: Record<DebugSectionKey, boolean>
-    ): void {
-        this.defaultCollapsedSections = { ...collapsedSections };
-    }
-
-    public async toggleSection(section: DebugSectionKey): Promise<void> {
-        await this.mutate(
-            "Toggling debug section",
-            `Toggled ${section} section`,
-            (state) => {
-                state.collapsedSections[section] = !state.collapsedSections[section];
-                DebugSession.persistDefaultCollapsedSections(state.collapsedSections);
-            }
-        );
-    }
-
-    public async setAllSectionsCollapsed(collapsed: boolean): Promise<void> {
-        await this.mutate(
-            collapsed ? "Collapsing debug sections" : "Expanding debug sections",
-            collapsed ? "Collapsed all debug sections" : "Expanded all debug sections",
-            (state) => {
-                for (const key of Object.keys(state.collapsedSections) as DebugSectionKey[]) {
-                    state.collapsedSections[key] = collapsed;
-                }
-                DebugSession.persistDefaultCollapsedSections(state.collapsedSections);
-            }
-        );
-    }
-
     public buildComponents() {
         return renderDebugTrace(this.state);
     }
 
     public async setClassifying(): Promise<void> {
-        await this.mutate("Classifying request", "Classifying the turn");
+        await this.mutate("Setup", "Ingesting turn");
     }
 
-    public async setClassification(
-        mode: "direct_answer" | "discord_grounded"
-    ): Promise<void> {
-        await this.mutate(
-            "Classification ready",
-            `Classification selected: ${mode}`,
-            (state) => {
-                state.classificationMode = mode;
-            }
-        );
+    public async setClassification(mode: "direct_answer" | "discord_grounded"): Promise<void> {
+        await this.mutate("Agent loop", `Starting loop: ${mode}`, (state) => {
+            state.classificationMode = mode;
+        });
     }
 
     public async setRequesterContext(requesterLabel: string, trigger: TurnTrigger): Promise<void> {
-        await this.mutate(
-            "Loading requester context",
-            `Requester: ${requesterLabel} via ${trigger}`,
-            (state) => {
-                state.requesterLabel = requesterLabel;
-                state.trigger = trigger;
-            }
-        );
+        await this.mutate("Setup", `Requester: ${requesterLabel} via ${trigger}`, (state) => {
+            state.requesterLabel = requesterLabel;
+            state.trigger = trigger;
+        });
     }
 
     public async setConversationContext(context: {
         threadId: string;
-        kind: DebugTraceState["conversationContext"]["kind"];
+        kind: string | null;
         replyAnchorMessageId?: string | null;
-        replyContext?: DebugTraceState["conversationContext"]["replyContext"];
+        replyContext?: unknown;
     }): Promise<void> {
-        await this.mutate(
-            "Resolving conversation identity",
-            `Conversation key: ${context.threadId}`,
-            (state) => {
-                state.checkpointThreadId = context.threadId;
-                state.conversationContext = {
-                    threadId: context.threadId,
-                    kind: context.kind ?? null,
-                    replyAnchorMessageId: context.replyAnchorMessageId || null,
-                    replyContext: context.replyContext || null,
-                };
-            }
-        );
+        await this.mutate("Setup", `Thread: ${context.threadId}`, (state) => {
+            state.conversationThreadId = context.threadId;
+        });
     }
 
     public async setRuntimeMode(mode: RuntimeMode): Promise<void> {
-        await this.mutate("Routing runtime", `Runtime mode: ${mode}`, (state) => {
+        await this.mutate("Evaluate", `Runtime mode: ${mode}`, (state) => {
             state.runtimeMode = mode;
         });
     }
 
     public async setCheckpointThread(threadId: string): Promise<void> {
-        await this.mutate("Loading checkpoint", `Checkpoint thread: ${threadId}`, (state) => {
-            state.checkpointThreadId = threadId;
+        await this.mutate("Setup", `Thread: ${threadId}`, (state) => {
+            state.conversationThreadId = threadId;
         });
     }
 
     public async setPlanning(step: number): Promise<void> {
-        await this.mutate("Planning next action", `Planning step ${step}`);
-    }
-
-    public async setWebStatus(status: WebStatus): Promise<void> {
-        await this.mutate("Updating web policy", `Web mode: ${status}`, (state) => {
-            state.webStatus = status;
-        });
+        await this.mutate("Agent loop", `Loop iteration ${step}`);
     }
 
     public async setToolRunning(toolName: string, details: string[] = []): Promise<void> {
-        await this.mutate(`Running ${toolName}`, `Running ${toolName}`, undefined, details);
+        await this.mutate(`Tool call`, `Running ${toolName}`, undefined, details);
     }
 
-    public async setToolResult(
-        toolName: string,
-        summary: string,
-        itemCount?: number
-    ): Promise<void> {
+    public async setToolResult(toolName: string, summary: string, itemCount?: number): Promise<void> {
         await this.mutate(
-            `Tool result: ${toolName}`,
-            itemCount === undefined
-                ? `${toolName}: ${summary}`
-                : `${toolName}: ${summary} (${itemCount})`,
+            `Tool result`,
+            itemCount === undefined ? `${toolName}: ${summary}` : `${toolName}: ${summary} (${itemCount})`,
             (state) => {
                 state.toolCallCount += 1;
                 if (!state.selectedCapabilities.includes(toolName)) {
@@ -243,40 +140,42 @@ export class DebugSession implements DebugSessionReporter {
     }
 
     public async setToolProgress(toolName: string, summary: string): Promise<void> {
-        await this.mutate(`Tool progress: ${toolName}`, `${toolName}: ${summary}`);
+        await this.mutate(`Tool call`, `${toolName}: ${summary}`);
     }
 
     public async setRetrievalSummary(summary: RetrievalSummary): Promise<void> {
+        const hits = summary.strongResultCount + summary.weakResultCount;
         await this.mutate(
-            "Updating retrieval summary",
-            `Retrieval origin=${summary.sourceOrigin}; strong=${summary.strongResultCount}; weak=${summary.weakResultCount}`,
+            "Tool result",
+            `origin=${summary.sourceOrigin}; hits=${hits}`,
             (state) => {
-                state.retrievalSummary = summary;
+                state.evidenceCount = summary.accumulatedUniqueCount;
             }
         );
     }
 
-    public async setGroundingSummary(
+    public async setEvidenceSummary(
         summary: { messageEvidenceCount: number; liveEvidenceCount: number; sufficient: boolean },
         _decisionMode?: string,
         answerMode?: GroundedAnswerMode
     ): Promise<void> {
+        const total = summary.messageEvidenceCount + summary.liveEvidenceCount;
         await this.mutate(
-            "Judging evidence",
+            "Evaluate",
             summary.sufficient
-                ? `Evidence sufficient: messages ${summary.messageEvidenceCount}, live ${summary.liveEvidenceCount}`
-                : `Evidence still weak: messages ${summary.messageEvidenceCount}, live ${summary.liveEvidenceCount}`,
+                ? `Evidence sufficient (${total} items)`
+                : `Evidence insufficient (${total} items)`,
             (state) => {
-                state.groundingSummary = summary;
-                state.groundedAnswerMode = answerMode || null;
+                state.evidenceCount = total;
+                state.confidence = answerMode || null;
             }
         );
     }
 
     public async setStopReason(reason: StopReason, detail?: string | null): Promise<void> {
         await this.mutate(
-            "Evaluating stop condition",
-            detail ? `Stop reason: ${reason} (${detail})` : `Stop reason: ${reason}`,
+            "Evaluate",
+            detail ? `Stop: ${reason} — ${detail}` : `Stop: ${reason}`,
             (state) => {
                 state.stopReason = reason;
                 state.stopDetail = detail || null;
@@ -285,40 +184,39 @@ export class DebugSession implements DebugSessionReporter {
     }
 
     public async setConfidence(confidence: GroundedAnswerMode): Promise<void> {
-        await this.mutate("Updating confidence", `Confidence: ${confidence}`, (state) => {
-            state.groundedAnswerMode = confidence;
+        await this.mutate("Confidence update", `Confidence: ${confidence}`, (state) => {
+            state.confidence = confidence;
         });
     }
 
-    public async setTraceEvent(label: string, detail: string): Promise<void> {
-        await this.mutate(label, detail);
+    public async setTraceEvent(label: string, detail: string, timestamp?: number): Promise<void> {
+        await this.mutate(label, detail, undefined, [], timestamp);
     }
 
-    public async setContextPreview(preview: {
-        recentChannelMessages: string[];
-        evidencePreview: string[];
-        recentTurns: string[];
-    }): Promise<void> {
+    public async setGenerating(): Promise<void> {
+        await this.mutate("Generate", "Producing the final answer");
+    }
+
+    public async setTokenUsage(promptTokens: number, completionTokens: number, contextUsagePercent: number | null): Promise<void> {
+        const pct = contextUsagePercent != null ? ` (${contextUsagePercent.toFixed(1)}% context)` : "";
         await this.mutate(
-            "Loading context preview",
-            `Channel: ${preview.recentChannelMessages.length} msgs, Evidence: ${preview.evidencePreview.length}, Turns: ${preview.recentTurns.length}`,
+            "Token usage",
+            `${promptTokens.toLocaleString()} prompt + ${completionTokens.toLocaleString()} completion${pct}`,
             (state) => {
-                state.contextPreview = preview;
+                state.cumulativePromptTokens = promptTokens;
+                state.cumulativeCompletionTokens = completionTokens;
+                state.contextUsagePercent = contextUsagePercent;
             }
         );
     }
 
-    public async setGenerating(): Promise<void> {
-        await this.mutate("Generating answer", "Generating the final user-facing answer");
-    }
-
     public async finishSuccess(summary = "Response completed"): Promise<void> {
         await this.mutate(
-            "Completed",
+            "Done",
             summary,
             (state) => {
                 state.status = "completed";
-                state.stage = "Completed";
+                state.stage = "Done";
             }
         );
     }
@@ -326,11 +224,11 @@ export class DebugSession implements DebugSessionReporter {
     public async finishError(error: unknown): Promise<void> {
         const message = normalizeError(error);
         await this.mutate(
-            "Failed",
+            "Error",
             `Error: ${message}`,
             (state) => {
                 state.status = "failed";
-                state.stage = "Failed";
+                state.stage = "Error";
                 state.failureMessage = message;
             }
         );
@@ -340,7 +238,8 @@ export class DebugSession implements DebugSessionReporter {
         stage: string,
         event: string,
         mutateState?: (state: DebugTraceState) => void,
-        extraEvents: string[] = []
+        extraEvents: string[] = [],
+        timestampOverride?: number
     ): Promise<void> {
         this.updateQueue = this.updateQueue
             .then(async () => {
@@ -348,27 +247,25 @@ export class DebugSession implements DebugSessionReporter {
                 const normalizedExtraEvents = extraEvents
                     .map((item) => item.trim())
                     .filter(Boolean);
-                this.state.recentEvents = [
-                    event,
-                    ...normalizedExtraEvents,
-                    ...this.state.recentEvents,
-                ].slice(0, MAX_EVENTS);
+                const eventTimestamp = timestampOverride ?? Date.now();
 
                 this.state.timeline = [
+                    ...this.state.timeline,
                     {
                         label: stage,
                         detail: event,
                         tone: inferTone(event),
-                        timestamp: Date.now(),
+                        timestamp: eventTimestamp,
                     },
                     ...normalizedExtraEvents.map((detail) => ({
                         label: stage,
                         detail,
                         tone: inferTone(detail),
-                        timestamp: Date.now(),
+                        timestamp: eventTimestamp,
                     })),
-                    ...this.state.timeline,
-                ].slice(0, MAX_TIMELINE);
+                ]
+                    .sort((left, right) => left.timestamp - right.timestamp)
+                    .slice(-MAX_TIMELINE);
 
                 mutateState?.(this.state);
 

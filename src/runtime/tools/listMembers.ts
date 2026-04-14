@@ -1,8 +1,7 @@
-import type { EvidenceItem, ToolArguments } from "@/runtime/contracts";
+import type { EvidenceItem } from "@/runtime/contracts";
 import type { DiscordToolResult } from "@/shared/appTypes";
 import { DISCORD_TOOL_EVIDENCE_ROLES } from "@/shared/discordTools";
-import type { ArgumentEnrichmentContext, ToolEnrichmentResult, ToolStrategy } from "./types";
-import { sanitizeReason } from "./utils";
+import type { ToolStrategy } from "./types";
 
 export const listMembersStrategy: ToolStrategy = {
     id: "list_members",
@@ -57,30 +56,5 @@ export const listMembersStrategy: ToolStrategy = {
         }
 
         return evidence;
-    },
-
-    enrichArguments(
-        modelArgs: ToolArguments,
-        modelStep: { reason: string; learnedExpectation: string },
-        _ctx: ArgumentEnrichmentContext
-    ): ToolEnrichmentResult {
-        return {
-            arguments: {
-                filters:
-                    typeof modelArgs.filters === "string" ? modelArgs.filters : undefined,
-                limit:
-                    typeof modelArgs.limit === "number" ? modelArgs.limit : 20,
-                offset:
-                    typeof modelArgs.offset === "number" ? modelArgs.offset : 0,
-            },
-            reason: sanitizeReason(
-                modelStep.reason,
-                "List guild members when broader identity context may help."
-            ),
-            learnedExpectation: sanitizeReason(
-                modelStep.learnedExpectation,
-                "Return the relevant current-guild members."
-            ),
-        };
     },
 };

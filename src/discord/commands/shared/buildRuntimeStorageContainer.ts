@@ -4,8 +4,6 @@ interface RuntimeStorageStatus {
     operationalDbPath: string;
     checkpointDbPath: string;
     operationalSchemaVersion: string;
-    checkpointSchemaVersion: string;
-    checkpointVersionPath: string;
     runtimeDir: string;
     logsDir: string;
 }
@@ -20,8 +18,6 @@ export function buildRuntimeStorageContainer(status: RuntimeStorageStatus): Cont
                     `**Operational DB:** ${status.operationalDbPath}`,
                     `**Checkpoint DB:** ${status.checkpointDbPath}`,
                     `**Operational schema:** ${status.operationalSchemaVersion}`,
-                    `**Checkpoint schema:** ${status.checkpointSchemaVersion}`,
-                    `**Checkpoint version file:** ${status.checkpointVersionPath}`,
                     `**Runtime dir:** ${status.runtimeDir}`,
                     `**Logs dir:** ${status.logsDir}`,
                 ].join("\n")
