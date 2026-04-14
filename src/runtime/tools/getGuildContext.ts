@@ -1,8 +1,7 @@
-import type { EvidenceItem, ToolArguments } from "@/runtime/contracts";
+import type { EvidenceItem } from "@/runtime/contracts";
 import type { DiscordToolResult } from "@/shared/appTypes";
 import { DISCORD_TOOL_EVIDENCE_ROLES } from "@/shared/discordTools";
-import type { ArgumentEnrichmentContext, ToolEnrichmentResult, ToolStrategy } from "./types";
-import { sanitizeReason } from "./utils";
+import type { ToolStrategy } from "./types";
 
 export const getGuildContextStrategy: ToolStrategy = {
     id: "get_guild_context",
@@ -23,20 +22,5 @@ export const getGuildContextStrategy: ToolStrategy = {
                 sourceOrigin: "none",
             },
         ];
-    },
-
-    enrichArguments(
-        modelArgs: ToolArguments,
-        modelStep: { reason: string; learnedExpectation: string },
-        _ctx: ArgumentEnrichmentContext
-    ): ToolEnrichmentResult {
-        return {
-            arguments: modelArgs,
-            reason: sanitizeReason(modelStep.reason, "Use the selected capability."),
-            learnedExpectation: sanitizeReason(
-                modelStep.learnedExpectation,
-                "Use the capability output to improve the answer."
-            ),
-        };
     },
 };

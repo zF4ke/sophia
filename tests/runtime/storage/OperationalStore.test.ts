@@ -3,6 +3,7 @@ import path from "path";
 import { pathToFileURL } from "url";
 import { createClient } from "@libsql/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SettingsService } from "@/app/SettingsService";
 import { OperationalStore } from "@/runtime/storage/OperationalStore";
 import { OPERATIONAL_SCHEMA_VERSION } from "@/runtime/storage/schema";
 
@@ -24,10 +25,15 @@ describe("OperationalStore", () => {
         runtimeDir = uniqueRuntimeDir();
         operationalDbPath = path.join(runtimeDir, "operational.sqlite");
         checkpointDbPath = path.join(runtimeDir, "checkpoints.sqlite");
-        process.env.RUNTIME_OPERATIONAL_DB_PATH = operationalDbPath;
-        process.env.RUNTIME_CHECKPOINT_DB_PATH = checkpointDbPath;
         process.env.DISCORD_TOKEN = "test-token";
         process.env.OPENROUTER_API_KEY = "test-key";
+        SettingsService.update({
+            runtime: {
+                ...SettingsService.load().runtime,
+                operationalDbPath,
+                checkpointDbPath,
+            },
+        });
     });
 
     afterEach(async () => {

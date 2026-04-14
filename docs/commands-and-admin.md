@@ -21,19 +21,14 @@ These all route to the same conversation runtime.
 
 ## Operator Commands
 
-- `/nth`
-- `/index`
-- `/debug`
-- `/access`
+- `/nth` — read indexed historical messages
+- `/index` — manage backfill and repair; `/index status` shows local retrieval state
+- `/debug toggle` — enable or disable the debug panel for the current guild
+- `/debug logs` — view recent model-output log entries with optional `count` and `date` filters
+- `/access` — manage admin and moderator access
+- `/settings` — configure runtime parameters through an interactive panel with explanations for context retention, paging, live crawl limits, and loop guardrails
 
 `/index status` is the single status surface for local retrieval state. It exposes:
 - local message/index status
 - current-guild completeness data such as readable live channels/categories and cached-only remembered channels
 - runtime storage status
-
-## Retired Surfaces
-
-- `/ask`
-- `/context`
-
-Those entrypoints are removed in favor of one shared conversation system.

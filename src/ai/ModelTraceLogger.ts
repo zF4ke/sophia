@@ -8,9 +8,22 @@ type ChatMessage = {
     content: string;
 };
 
+type ToolTraceMessage =
+    | ChatMessage
+    | {
+          role: "assistant";
+          content: string | null;
+          tool_calls: unknown;
+      }
+    | {
+          role: "tool";
+          tool_call_id: string;
+          content: string;
+      };
+
 type ModelTraceEntry = {
     timestamp: string;
-    callKind: "text" | "json";
+    callKind: "text" | "json" | "tool_chat";
     model: string;
     traceLabel: string;
     questionPreview: string | null;
@@ -19,12 +32,15 @@ type ModelTraceEntry = {
     webContext?: string;
     webStatus?: string;
     webSearchRequests?: number;
-    messages: ChatMessage[];
+    messages: ToolTraceMessage[];
     rawOutput: string;
     normalizedOutput?: string;
     blankOutput?: boolean;
+    toolCalls?: unknown;
+    finishReason?: string;
     parsedJson?: unknown;
     parseError?: string;
+    traceEvents?: Array<{ label: string; detail: string; timestamp: number }>;
 };
 
 const LOGS_DIR = path.join(AppPaths.storageRoot, "logs");

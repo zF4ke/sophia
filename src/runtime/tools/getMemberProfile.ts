@@ -1,9 +1,7 @@
-import type { EvidenceItem, ToolArguments } from "@/runtime/contracts";
-import { normalize } from "@/runtime/intentExtraction";
+import type { EvidenceItem } from "@/runtime/contracts";
 import type { DiscordToolResult, ResolvedMemberIdentity } from "@/shared/appTypes";
 import { DISCORD_TOOL_EVIDENCE_ROLES } from "@/shared/discordTools";
-import type { ArgumentEnrichmentContext, ToolEnrichmentResult, ToolStrategy } from "./types";
-import { sanitizeReason } from "./utils";
+import type { ToolStrategy } from "./types";
 
 export const getMemberProfileStrategy: ToolStrategy = {
     id: "get_member_profile",
@@ -39,48 +37,6 @@ export const getMemberProfileStrategy: ToolStrategy = {
                 authorName: item.displayName == null ? null : String(item.displayName),
             },
         ];
-    },
-
-    enrichArguments(
-        modelArgs: ToolArguments,
-        modelStep: { reason: string; learnedExpectation: string },
-        ctx: ArgumentEnrichmentContext
-    ): ToolEnrichmentResult {
-        const nextUnprofiled = ctx.ambiguousMemberCandidate?.identifiers.find(
-            (id) =>
-                ctx.profiledMemberIdentifiers &&
-                !ctx.profiledMemberIdentifiers.has(normalize(id)) &&
-                !ctx.profiledMemberIdentifiers.has(id)
-        );
-
-        const modelProvided =
-            typeof modelArgs.nameOrId === "string" && (modelArgs.nameOrId as string).trim()
-                ? (modelArgs.nameOrId as string).trim()
-                : null;
-
-        // When there are unprofiled ambiguous members, prefer the specific identifier
-        // over the model's argument — the model often passes the shared display name
-        // which resolves to the already-profiled member again.
-        const nameOrId =
-            nextUnprofiled ||
-            modelProvided ||
-            ctx.ambiguousMemberCandidate?.displayName ||
-            ctx.resolvedMember?.resolvedId ||
-            ctx.activeMember?.resolvedId ||
-            ctx.structuralMember ||
-            ctx.question;
-
-        return {
-            arguments: { nameOrId },
-            reason: sanitizeReason(
-                modelStep.reason,
-                "Fetch member profile details after identity resolution."
-            ),
-            learnedExpectation: sanitizeReason(
-                modelStep.learnedExpectation,
-                "Return the current guild member profile when available."
-            ),
-        };
     },
 
     extractResolvedMember(run: DiscordToolResult): ResolvedMemberIdentity | null {

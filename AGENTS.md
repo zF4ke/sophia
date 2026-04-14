@@ -21,36 +21,27 @@ This file is the engineering handoff for the current runtime.
 
 Sophia is conversational first.
 
+The runtime uses a while-loop with native function calling. One unified system prompt (`runtime/agent_loop`) gives the model the question, context, and available tools. The model calls tools iteratively and calls `finish` when it has an answer.
+
 The active flow is:
 1. Normalize the incoming turn.
 2. Resolve the canonical conversation key.
-3. Load checkpoint state and recent local runtime state.
-4. Let the model plan direct conversation vs current-guild retrieval.
-5. Retrieve cached Discord evidence first.
-6. Escalate to live Discord history when cache evidence is weak.
-7. Judge whether the evidence is enough to continue, answer, or ask a targeted follow-up.
-8. Synthesize the final response.
-9. Persist runtime and trace data locally.
+3. Load memory: recent turns, channel context, and prior evidence from persisted tool runs.
+4. Build the unified system prompt.
+5. Enter while-loop: model calls tools via `generateWithTools`, runtime executes and feeds results back.
+6. Model calls `finish` with the answer, or runtime produces a conversational fallback.
+7. Persist runtime and trace data locally.
 
-The runtime is model-led by default and keeps only narrow guardrails:
-- exact-id structural shortcuts
+The runtime keeps only narrow guardrails:
 - capability validation
 - repeated-call protection
-- budget limits
+- tool-call and latency budgets
+- context overflow pruning
 - refusal prevention for ordinary conversation
 
-Intent parsing policy:
-- Keep business-critical language intent logic out of `src/runtime/planning.ts`.
-- Use `src/runtime/intentExtraction.ts` for deterministic lexicon parsing plus model-intent merge.
-- Add or tune phrase support by updating lexicon groups in `intentExtraction.ts`, not by scattering regex heuristics through planner logic.
-
-Planning policy:
-- `candidateCapabilities` from `plan_turn` is surfaced to `select_next_step` as initial guidance only. It is not a hard gate.
-- `select_next_step` may choose any registered capability regardless of the initial candidate list.
-- The same capability may be called multiple times with different arguments (e.g. `get_member_profile` per each ambiguous member).
-- The runtime provides argument enrichment (resolved IDs, cursors, time bounds) but does not redirect the model's tool choice with pre-flight overrides.
-- If `plan_turn` marks `intent.continuation=false`, runtime resets active scoped targets and reconstructed carry-over evidence before research starts.
-- `fallbackStepDecision` is a safety net for model failures and is also no longer gated on `candidateCapabilities`.
+Intent policy:
+- The active runtime is model-led inside `runtime/agent_loop`.
+- Do not reintroduce a separate deterministic intent router or argument-enrichment layer unless there is a clear, measured need.
 
 ## Stable Tool Contract
 
@@ -64,6 +55,8 @@ These capability ids are prompt- and runtime-stable:
 - `list_members`
 - `get_guild_context`
 
+Tool schemas are defined in `src/runtime/toolSchemas.ts`.
+
 The stable code catalog is:
 
 - `src/shared/discordTools.ts`
@@ -71,11 +64,9 @@ The stable code catalog is:
 If a capability id changes, update:
 
 - `src/shared/discordTools.ts`
+- `src/runtime/toolSchemas.ts`
 - `src/capabilities/CapabilityRegistry.ts`
-- `resources/prompts/runtime/plan_turn.md`
-- `resources/prompts/runtime/select_next_step.md`
-- `resources/prompts/runtime/judge_evidence.md`
-- `resources/prompts/runtime/synthesize_answer.md`
+- `resources/prompts/runtime/agent_loop.md`
 - the affected tests
 
 ## Prompt Ownership
@@ -83,12 +74,8 @@ If a capability id changes, update:
 Runtime prompts live under `resources/prompts/` and stay external to code:
 
 - `resources/prompts/system/base.md`
-- `resources/prompts/runtime/plan_turn.md`
-- `resources/prompts/runtime/select_next_step.md`
-- `resources/prompts/runtime/judge_evidence.md`
-- `resources/prompts/runtime/synthesize_answer.md`
-- `resources/prompts/runtime/debug_summary.md`
-- `resources/prompts/guards/insufficient_evidence.md`
+- `resources/prompts/system/personality.md`
+- `resources/prompts/runtime/agent_loop.md`
 
 The stable prompt catalog is:
 
@@ -107,8 +94,11 @@ If a prompt contract changes, update:
 Editable runtime config lives in:
 
 - `resources/models/model-profiles.json`
-- `.env`
+- `storage/settings.json` (managed by `SettingsService`)
+- `.env` (secrets only: `DISCORD_TOKEN`, `OPENROUTER_API_KEY`)
 - `src/app/AppConfig.ts`
+
+All runtime tuning knobs (tool calls, latency budget, retrieval limits, etc.) live in `SettingsService` defaults and `storage/settings.json`. Do not use environment variables for runtime config.
 
 OpenRouter remains the only model-provider surface. Do not hardcode models in source.
 
@@ -119,7 +109,7 @@ Local libSQL storage is the source of truth for Discord retrieval state and runt
 - New messages are ingested from `src/discord/events/message/messageCreate.event.ts`
 - Backfill and repair flows are exposed through `src/discord/commands/system/index.command.ts`
 - Operational storage is local and disposable
-- LangGraph checkpoints are kept in a separate local SQLite file
+- Bot settings are persisted in `storage/settings.json`
 
 Do not reintroduce reusable grounded-context caches or tool-result caches into the active runtime path.
 
@@ -132,9 +122,10 @@ Core supported commands and entrypoints:
 - replies
 - `/find`
 - `/nth`
-- `/debug`
+- `/debug toggle` / `/debug logs`
 - `/index`
 - `/access`
+- `/settings`
 
 Interaction entrypoint:
 

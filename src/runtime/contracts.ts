@@ -2,15 +2,11 @@ import type { Guild, Message, User } from "discord.js";
 import type { z } from "zod";
 import type {
     DiscordToolResult,
-    GuildStructureEntry,
     GroundedAnswerMode,
     RetrievalMode,
     SemanticContinuationCursor,
     RequestClassification,
-    ResolvedChannelTarget,
-    ResolvedMemberIdentity,
     WebMode,
-    WebStatus,
 } from "@/shared/appTypes";
 import type { DiscordToolEvidenceRole, DiscordToolName } from "@/shared/discordTools";
 
@@ -177,66 +173,6 @@ export interface RuntimeTraceEvent {
     timestamp: number;
 }
 
-export interface GraphState {
-    requestId: string;
-    threadId: string;
-    guildId: string | null;
-    channelId: string | null;
-    actorId: string;
-    requesterDisplayName: string;
-    trigger: TurnTrigger;
-    conversationKind: ConversationContext["kind"];
-    question: string;
-    replyContext: ReplyContext | null;
-    recentTurns: ConversationTurnSummary[];
-    channelContext: ChannelContextMessage[];
-    permissionContext: {
-        isAdmin: boolean;
-        canReadChannel: boolean;
-        canReadHistory: boolean;
-        canSendMessages: boolean;
-    };
-    requestedWebMode: WebMode;
-    mode: RuntimeMode | null;
-    classification: RequestClassification | null;
-    goal: string;
-    successCriteria: string;
-    candidateCapabilities: DiscordToolName[];
-    activeMemberTarget: ResolvedMemberIdentity | null;
-    activeChannelTarget: ResolvedChannelTarget | null;
-    activeResolvedChannelIds: string[];
-    activeRetrievalSession: ActiveRetrievalSession | null;
-    toolHistory: ToolInvocationRecord[];
-    evidence: EvidenceItem[];
-    retrievalSummary: RetrievalSummary | null;
-    turnIntent: TurnIntent | null;
-    stopReason: StopReason | null;
-    confidence: GroundedAnswerMode;
-    responseDraft: string | null;
-    traceEvents: RuntimeTraceEvent[];
-    constraints: {
-        maxToolCalls: number;
-        maxResearchPasses: number;
-        maxRepeatedCallSignature: number;
-        maxLatencyBudgetMs: number;
-        maxPriorTurns: number;
-        maxChannelMessages: number;
-        maxToolRunsContext: number;
-        maxEvidenceSlice: number;
-        maxContextPreviewEvidenceItems: number;
-        maxResolveChannelTargetEvidenceItems: number;
-        maxRetrieveHistoryEvidenceItems: number;
-        maxRetrieveSemanticEvidenceItems: number;
-        maxRetrieveEvidenceContentChars: number;
-    };
-}
-
-export interface GuildStructureFocusSummary {
-    query: string | null;
-    focusedEntries: GuildStructureEntry[];
-    focusedResolvedIds: string[];
-}
-
 export interface TurnIntent {
     continuation: boolean;
     retrievalMode: RetrievalMode | null;
@@ -247,29 +183,6 @@ export interface TurnIntent {
         retrievalMode: "deterministic" | "model" | "session" | "none";
         timeBounds: "deterministic" | "model" | "none";
     };
-}
-
-export interface PlanDecision {
-    mode: RuntimeMode;
-    reason: string;
-    goal: string;
-    successCriteria: string;
-    candidateCapabilities: DiscordToolName[];
-    confidence: GroundedAnswerMode;
-    intent: TurnIntent;
-}
-
-export interface EvidenceDecision {
-    sufficient: boolean;
-    confidence: GroundedAnswerMode;
-    reason: string;
-}
-
-export interface StepDecision {
-    nextCapability: DiscordToolName | null;
-    arguments: ToolArguments;
-    reason: string;
-    learnedExpectation: string;
 }
 
 export interface RuntimeAnswer {
@@ -299,7 +212,7 @@ export interface RuntimeDebugSession {
     setToolProgress?(toolName: string, summary: string): Promise<void>;
     setToolResult(toolName: string, summary: string, itemCount?: number): Promise<void>;
     setRetrievalSummary?(summary: RetrievalSummary): Promise<void>;
-    setGroundingSummary(
+    setEvidenceSummary(
         summary: {
             messageEvidenceCount: number;
             liveEvidenceCount: number;
@@ -310,13 +223,8 @@ export interface RuntimeDebugSession {
     ): Promise<void>;
     setStopReason?(reason: StopReason, detail?: string | null): Promise<void>;
     setConfidence?(confidence: GroundedAnswerMode): Promise<void>;
-    setWebStatus?(status: WebStatus): Promise<void>;
-    setContextPreview?(preview: {
-        recentChannelMessages: string[];
-        evidencePreview: string[];
-        recentTurns: string[];
-    }): Promise<void>;
-    setTraceEvent?(label: string, detail: string): Promise<void>;
+    setTraceEvent?(label: string, detail: string, timestamp?: number): Promise<void>;
+    setTokenUsage?(promptTokens: number, completionTokens: number, contextUsagePercent: number | null): Promise<void>;
     setGenerating(): Promise<void>;
     finishSuccess(summary?: string): Promise<void>;
     finishError(error: unknown): Promise<void>;

@@ -45,15 +45,15 @@ describe("documentation integrity", () => {
             path.join(projectRoot, "docs/prompt-catalog.md"),
             "utf8"
         );
-        const runtimePlannerPrompt = fs.readFileSync(
-            path.join(projectRoot, "resources/prompts/runtime/plan_turn.md"),
+        const agentLoopPrompt = fs.readFileSync(
+            path.join(projectRoot, "resources/prompts/runtime/agent_loop.md"),
             "utf8"
         );
 
         for (const toolName of DISCORD_TOOL_NAMES) {
             expect(agents).toContain(toolName);
             expect(promptCatalog).toContain(toolName);
-            expect(runtimePlannerPrompt).toContain(toolName);
+            expect(agentLoopPrompt).toContain(toolName);
         }
     });
 });

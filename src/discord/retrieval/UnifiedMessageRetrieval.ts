@@ -1,7 +1,8 @@
 import type { Guild } from "discord.js";
+import { getAppConfig } from "@/app/AppConfig";
 import {
     DiscordChannelCrawlService,
-    INTERACTIVE_CRAWL_LIMIT,
+    getInteractiveCrawlLimit,
 } from "@/discord/live/DiscordChannelCrawlService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type {
@@ -13,10 +14,13 @@ import type {
 } from "@/shared/appTypes";
 
 const MAX_CHANNEL_ESCALATIONS = 2;
-const ESCALATION_FETCH_LIMIT = Math.min(
-    Number(process.env.TOOL_RETRIEVE_MESSAGES_MAX_ESCALATION_FETCH_MESSAGES || 150),
-    INTERACTIVE_CRAWL_LIMIT
-);
+
+function getEscalationFetchLimit(): number {
+    return Math.min(
+        getAppConfig().runtime.escalationFetchLimit,
+        getInteractiveCrawlLimit()
+    );
+}
 
 function dedupeChunks(rows: RetrievedChunk[]): RetrievedChunk[] {
     const seen = new Set<string>();
@@ -221,9 +225,7 @@ export class UnifiedMessageRetrieval {
     }): Promise<MultiLaneRetrievalResult> {
         // --- Around-message shortcut: fetch context around a known message ---
         if (options.aroundMessageId) {
-            const contextWindow = Number(
-                process.env.TOOL_RETRIEVE_MESSAGES_AROUND_CONTEXT_WINDOW || 15
-            );
+            const contextWindow = getAppConfig().runtime.retrievalContextWindow;
             let contextMessages = await DiscordMemoryService.getMessageThreadAsync(
                 options.aroundMessageId,
                 contextWindow
@@ -241,7 +243,7 @@ export class UnifiedMessageRetrieval {
                     const crawl = await DiscordChannelCrawlService.crawlChannelMessages(
                         options.guild,
                         channelId,
-                        ESCALATION_FETCH_LIMIT,
+                        getEscalationFetchLimit(),
                         options.question,
                         options.onProgress
                     );
@@ -437,7 +439,7 @@ export class UnifiedMessageRetrieval {
                 const crawl = await DiscordChannelCrawlService.crawlChannelMessages(
                     options.guild,
                     channel.channelId,
-                    ESCALATION_FETCH_LIMIT,
+                    getEscalationFetchLimit(),
                     options.question,
                     options.onProgress
                 );
@@ -565,7 +567,7 @@ export class UnifiedMessageRetrieval {
                         const deepCrawl = await DiscordChannelCrawlService.crawlChannelMessages(
                             options.guild,
                             channelId,
-                            ESCALATION_FETCH_LIMIT,
+                            getEscalationFetchLimit(),
                             options.question,
                             options.onProgress
                         );

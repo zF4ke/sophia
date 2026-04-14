@@ -1,23 +1,21 @@
-import type { EvidenceItem, ToolArguments } from "@/runtime/contracts";
+import type { EvidenceItem } from "@/runtime/contracts";
 import type { DiscordToolResult, ResolvedChannelTarget } from "@/shared/appTypes";
 import { DISCORD_TOOL_EVIDENCE_ROLES } from "@/shared/discordTools";
 import { asGuildStructureEntries, isCategoryStructureEntry } from "./guildStructure";
-import type { ArgumentEnrichmentContext, GuildStructurePayload, ToolEnrichmentResult, ToolStrategy } from "./types";
-import { sanitizeReason } from "./utils";
+import type { GuildStructurePayload, ToolStrategy } from "./types";
 
 export const resolveChannelTargetsStrategy: ToolStrategy = {
     id: "resolve_channel_targets",
 
-    extractEvidence(run: DiscordToolResult, limits): EvidenceItem[] {
+    extractEvidence(run: DiscordToolResult): EvidenceItem[] {
         if (!run.data) {
             return [];
         }
 
         const item = run.data as { entries?: Array<Record<string, unknown>>; resolvedIds?: string[] };
         const entries = asGuildStructureEntries(item.entries);
-        const maxItems = limits?.maxResolveChannelTargetEvidenceItems ?? 6;
 
-        return entries.slice(0, maxItems).map((entry) => ({
+        return entries.map((entry) => ({
             tool: "resolve_channel_targets" as const,
             summary: run.summary,
             content: isCategoryStructureEntry(entry)
@@ -29,29 +27,6 @@ export const resolveChannelTargetsStrategy: ToolStrategy = {
             channelId: entry.id,
             channelName: entry.name,
         }));
-    },
-
-    enrichArguments(
-        modelArgs: ToolArguments,
-        modelStep: { reason: string; learnedExpectation: string },
-        ctx: ArgumentEnrichmentContext
-    ): ToolEnrichmentResult {
-        return {
-            arguments: {
-                targetText:
-                    typeof modelArgs.targetText === "string" && (modelArgs.targetText as string).trim()
-                        ? (modelArgs.targetText as string).trim()
-                        : ctx.structuralChannel || ctx.activeChannelTarget?.query || ctx.question,
-            },
-            reason: sanitizeReason(
-                modelStep.reason,
-                "Resolve the referenced channel or category before answering."
-            ),
-            learnedExpectation: sanitizeReason(
-                modelStep.learnedExpectation,
-                "Return exact message-channel ids for the current guild target."
-            ),
-        };
     },
 
     extractResolvedChannel(run: DiscordToolResult): ResolvedChannelTarget | null {

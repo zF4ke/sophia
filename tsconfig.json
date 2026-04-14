@@ -110,5 +110,9 @@
         "@/*": ["./src/*"]
       }
     },
+    "exclude": [
+      "research",
+      "storage"
+    ]
   }
   

@@ -1,35 +1,21 @@
 import { randomUUID } from "crypto";
-import { Annotation, END, START, StateGraph, task } from "@langchain/langgraph";
 import { getAppConfig } from "@/app/AppConfig";
-import { ModelGateway } from "@/ai/ModelGateway";
-import { CapabilityRegistry } from "@/discord/capabilities/CapabilityRegistry";
+import { ModelGateway, type ToolChatMessage } from "@/ai/ModelGateway";
+import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import {
     answerConfidenceForInsufficient,
     classify,
     countEvidence,
     formatChannelContext,
-    judgeEvidence,
-    planNextStep,
-    planWithModel,
-    summarizeEvidence,
 } from "@/runtime/planning";
-import {
-    buildConversationalRecovery,
-    buildDirectConversationFallback,
-    sanitizeConversationalAnswer,
-} from "@/runtime/conversationRecovery";
 import { PromptRegistry } from "@/runtime/PromptRegistry";
-import { CheckpointStore } from "@/runtime/storage/CheckpointStore";
-import type { EvidenceExtractionLimits } from "@/runtime/tools/types";
-import { decideConversationWebMode } from "@/runtime/webFallback";
+import { TOOL_DEFINITIONS } from "@/runtime/toolSchemas";
 import type {
-    ActiveRetrievalSession,
+    ChannelContextMessage,
+    ConversationTurnSummary,
     EvidenceItem,
-    GraphState,
-    RetrievalSummary,
     RuntimeAnswer,
-    RuntimeMode,
     RuntimeTraceEvent,
     StopReason,
     ToolArguments,
@@ -41,176 +27,40 @@ import { type DiscordToolName } from "@/shared/discordTools";
 import type {
     DiscordToolResult,
     GroundedAnswerMode,
-    ResolvedChannelTarget,
-    ResolvedMemberIdentity,
 } from "@/shared/appTypes";
 
-const State = Annotation.Root({
-    requestId: Annotation<string>,
-    threadId: Annotation<string>,
-    guildId: Annotation<string | null>,
-    channelId: Annotation<string | null>,
-    actorId: Annotation<string>,
-    requesterDisplayName: Annotation<string>,
-    trigger: Annotation<TurnInput["trigger"]>,
-    conversationKind: Annotation<TurnInput["conversation"]["kind"]>,
-    question: Annotation<string>,
-    replyContext: Annotation<GraphState["replyContext"]>,
-    recentTurns: Annotation<GraphState["recentTurns"]>,
-    channelContext: Annotation<GraphState["channelContext"]>,
-    permissionContext: Annotation<GraphState["permissionContext"]>,
-    requestedWebMode: Annotation<GraphState["requestedWebMode"]>,
-    mode: Annotation<RuntimeMode | null>,
-    classification: Annotation<GraphState["classification"]>,
-    goal: Annotation<string>,
-    successCriteria: Annotation<string>,
-    candidateCapabilities: Annotation<GraphState["candidateCapabilities"]>,
-    activeMemberTarget: Annotation<GraphState["activeMemberTarget"]>,
-    activeChannelTarget: Annotation<GraphState["activeChannelTarget"]>,
-    activeResolvedChannelIds: Annotation<GraphState["activeResolvedChannelIds"]>,
-    activeRetrievalSession: Annotation<GraphState["activeRetrievalSession"]>,
-    toolHistory: Annotation<ToolInvocationRecord[]>,
-    evidence: Annotation<GraphState["evidence"]>,
-    retrievalSummary: Annotation<GraphState["retrievalSummary"]>,
-    turnIntent: Annotation<GraphState["turnIntent"]>,
-    stopReason: Annotation<StopReason | null>,
-    confidence: Annotation<GroundedAnswerMode>,
-    responseDraft: Annotation<string | null>,
-    traceEvents: Annotation<GraphState["traceEvents"]>,
-    constraints: Annotation<GraphState["constraints"]>,
-});
+// ── Helpers: evidence extraction, identity formatting, retrieval session ──
 
-type RuntimeState = typeof State.State;
-
-// ── Payload types and guild structure helpers are in src/runtime/tools/ ──
-// ── Dispatcher functions delegate to per-tool strategies ──
-
-function extractResolvedMemberTarget(run: DiscordToolResult): ResolvedMemberIdentity | null {
-    if (run.tool === "finish") return null;
-    const strategy = getToolStrategy(run.tool);
-    return strategy.extractResolvedMember?.(run) ?? null;
-}
-
-function extractResolvedChannelTarget(run: DiscordToolResult): ResolvedChannelTarget | null {
-    if (run.tool === "finish") return null;
-    const strategy = getToolStrategy(run.tool);
-    return strategy.extractResolvedChannel?.(run) ?? null;
-}
-
-function appendTrace(state: RuntimeState, label: string, detail: string): RuntimeTraceEvent[] {
-    return state.traceEvents.concat({
-        label,
-        detail,
-        timestamp: Date.now(),
-    });
-}
-
-function formatAuthorIdentity(value: {
-    authorId?: string | null;
-    authorName?: string | null;
-    authorUsername?: string | null;
-    authorNickname?: string | null;
-}): string {
-    const authorName = value.authorName == null ? null : String(value.authorName);
-    const authorUsername = value.authorUsername == null ? null : String(value.authorUsername);
-    const authorNickname = value.authorNickname == null ? null : String(value.authorNickname);
-    const authorId = value.authorId == null ? null : String(value.authorId);
-
-    if (!authorName) {
-        return authorId ? `[id=${authorId}]` : "?";
-    }
-
-    return `[${authorName}${authorUsername ? ` (@${authorUsername})` : ""}${authorNickname ? ` nick=${authorNickname}` : ""}${authorId ? ` id=${authorId}` : ""}]`;
-}
-
-function argsSignature(tool: DiscordToolName, args: ToolArguments) {
+function argsSignature(tool: string, args: ToolArguments) {
     return `${tool}:${JSON.stringify(args)}`;
 }
 
-function getRetrievalSummary(run: DiscordToolResult): RetrievalSummary | null {
+function getRetrievalSummary(run: DiscordToolResult) {
     if (run.tool === "finish") return null;
     const strategy = getToolStrategy(run.tool);
     return strategy.extractRetrievalSummary?.(run) ?? null;
 }
 
-function extractActiveRetrievalSession(run: DiscordToolResult): ActiveRetrievalSession | null {
-    if (run.tool === "finish") return null;
-    const strategy = getToolStrategy(run.tool);
-    return strategy.extractRetrievalSession?.(run) ?? null;
+function extractEvidence(
+    run: DiscordToolResult
+): EvidenceItem[] {
+    if (run.tool === "finish") return [];
+    return getToolStrategy(run.tool).extractEvidence(run);
 }
 
-function sameRetrievalScope(
-    left: ActiveRetrievalSession | null,
-    right: ActiveRetrievalSession | null
-): boolean {
-    if (!left || !right) {
-        return false;
-    }
-
+function isReusablePromptEvidence(item: EvidenceItem): boolean {
     return (
-        left.mode === right.mode &&
-        left.authorId === right.authorId &&
-        left.beforeTimestamp === right.beforeTimestamp &&
-        left.afterTimestamp === right.afterTimestamp &&
-        left.channelIds.length === right.channelIds.length &&
-        left.channelIds.every((channelId, index) => channelId === right.channelIds[index])
+        item.evidenceRole === "message_evidence" ||
+        item.evidenceRole === "semantic_evidence"
     );
 }
 
-export function mergeActiveRetrievalSession(
-    previous: ActiveRetrievalSession | null,
-    next: ActiveRetrievalSession | null
-): ActiveRetrievalSession | null {
-    if (!next) {
-        return previous;
-    }
-    if (!previous || !sameRetrievalScope(previous, next)) {
-        return next;
-    }
-
-    const seenMessageIds = [...new Set([...previous.seenMessageIds, ...next.seenMessageIds])];
-    return {
-        ...next,
-        historyCursorByChannel: {
-            ...previous.historyCursorByChannel,
-            ...next.historyCursorByChannel,
-        },
-        semanticCursor: next.semanticCursor || previous.semanticCursor,
-        seenMessageIds,
-        accumulatedUniqueCount: Math.max(
-            previous.accumulatedUniqueCount,
-            next.accumulatedUniqueCount,
-            seenMessageIds.length
-        ),
-        exhaustedChannelIds: [...new Set([...previous.exhaustedChannelIds, ...next.exhaustedChannelIds])],
-        historyExhausted: previous.historyExhausted || next.historyExhausted,
-        semanticExhausted: previous.semanticExhausted || next.semanticExhausted,
-        continuationAvailable:
-            next.continuationAvailable ||
-            previous.continuationAvailable,
-    };
+function formatRecentToolRuns(runs: Array<{ toolName: string; summary: string }>): string {
+    if (!runs.length) return "None.";
+    return runs.map((r) => `- ${r.toolName}: ${r.summary}`).join("\n");
 }
 
-function extractEvidence(
-    run: DiscordToolResult,
-    limits?: EvidenceExtractionLimits
-): EvidenceItem[] {
-    if (run.tool === "finish") return [];
-    return getToolStrategy(run.tool).extractEvidence(run, limits);
-}
-
-function toEvidenceExtractionLimits(
-    constraints: RuntimeState["constraints"]
-): EvidenceExtractionLimits {
-    return {
-        maxResolveChannelTargetEvidenceItems: constraints.maxResolveChannelTargetEvidenceItems,
-        maxRetrieveHistoryEvidenceItems: constraints.maxRetrieveHistoryEvidenceItems,
-        maxRetrieveSemanticEvidenceItems: constraints.maxRetrieveSemanticEvidenceItems,
-        maxRetrieveEvidenceContentChars: constraints.maxRetrieveEvidenceContentChars,
-    };
-}
-
-function summarizeRecentTurns(turns: GraphState["recentTurns"]): string {
+function summarizeRecentTurns(turns: ConversationTurnSummary[]): string {
     if (!turns.length) {
         return "No recent conversation turns.";
     }
@@ -218,504 +68,465 @@ function summarizeRecentTurns(turns: GraphState["recentTurns"]): string {
     return turns
         .map(
             (turn, index) =>
-                `${index + 1}. user=${turn.question} | sophia=${turn.answer} | mode=${turn.runtimeMode} | confidence=${turn.confidence} | stop=${turn.stopReason}`
+                `${index + 1}. user=${turn.question} | sophia=${turn.answer}`
         )
         .join("\n");
 }
 
-function looksLikeResearchQuestion(question: string): boolean {
-    const compact = question.toLowerCase();
-    return (
-        /\b(mandou|enviou|postou|disse|falou|citou|mencionou|sent|posted|said)\b/.test(compact) ||
-        /\b(canal|channel|servidor|server)\b/.test(compact) ||
-        /\b(fevereiro|janeiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/.test(compact) ||
-        /\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/.test(compact) ||
-        /\b(yesterday|ontem|hoje|today|last week|ultima semana)\b/.test(compact) ||
-        /\b\d{1,2}\s*(?:de\s+)?\w+eiro\b/.test(compact)
-    );
+function sanitizeAnswer(answer: string | null | undefined): string {
+    const normalized = (answer || "").trim();
+    const banned = new Set([
+        "I couldn't ground that in Discord evidence.",
+        "I don't have enough Discord evidence to answer that yet.",
+    ]);
+    return banned.has(normalized) ? "" : normalized;
 }
 
-function buildFallbackAnswer(
-    state: Pick<
-        RuntimeState,
-        "question" | "mode" | "confidence" | "evidence" | "replyContext" | "recentTurns" | "stopReason"
-    >
-): string {
-    const fallbackConfidence =
-        state.confidence === "insufficient" ? answerConfidenceForInsufficient(state) : state.confidence;
+async function synthesizeAnswer(
+    systemPrompt: string,
+    question: string,
+    toolHistory: ToolInvocationRecord[],
+    evidence: EvidenceItem[],
+    traceEvents?: RuntimeTraceEvent[]
+): Promise<string> {
+    const findingLines = toolHistory
+        .filter((r) => !r.blocked && r.summary)
+        .map((r) => `${r.tool}: ${r.summary}`)
+        .join("\n");
 
-    if (
-        state.mode === "conversation" &&
-        !state.replyContext &&
-        state.recentTurns.length === 0 &&
-        state.evidence.length === 0 &&
-        !looksLikeResearchQuestion(state.question)
-    ) {
-        return buildDirectConversationFallback(state.question);
-    }
+    const evidenceLines = evidence
+        .filter(isReusablePromptEvidence)
+        .slice(0, 12)
+        .map((e) => `${e.authorName || "unknown"}: ${e.content}`)
+        .join("\n");
 
-    return buildConversationalRecovery({
-        question: state.question,
-        confidence: fallbackConfidence,
-        evidence: state.evidence,
-        replyContext: state.replyContext,
-        priorTurns: state.recentTurns,
-        stopReason: state.stopReason,
-    });
-}
+    const contextBlock = [
+        findingLines ? `Tool findings:\n${findingLines}` : null,
+        evidenceLines ? `Relevant messages:\n${evidenceLines}` : null,
+    ].filter(Boolean).join("\n\n");
 
-const executeCapability = task(
-    "execute_capability",
-    async (
-        tool: DiscordToolName,
-        context: {
-            guild: TurnInput["guild"];
-            question: string;
-            currentChannelId?: string | null;
-            onProgress?: (toolName: string, summary: string) => Promise<void> | void;
+    const messages = [
+        { role: "system" as const, content: systemPrompt },
+        { role: "user" as const, content: question },
+        ...(contextBlock
+            ? [{ role: "assistant" as const, content: `Here is what I found:\n${contextBlock}` }]
+            : []),
+        {
+            role: "user" as const,
+            content: "Based on that research, answer the original question as concisely as possible. If you truly could not find it, say so in one sentence — do not ask for clarification or more details.",
         },
-        args: ToolArguments
-    ) => CapabilityRegistry.get(tool).run(context, args)
-);
+    ];
+
+    try {
+        const result = await ModelGateway.generateText(messages, {
+            traceContext: { traceLabel: "synthesis_fallback", questionPreview: question, traceEvents: traceEvents ? [...traceEvents] : undefined },
+        });
+        return sanitizeAnswer(result);
+    } catch {
+        return "";
+    }
+}
+
+// ── Constraints type (extracted from AppConfig.runtime) ──
+
+interface RuntimeConstraints {
+    maxToolCalls: number;
+    maxLatencyBudgetMs: number;
+    maxRepeatedCallSignature: number;
+    maxPriorTurns: number;
+    maxChannelMessages: number;
+    maxToolRunsContext: number;
+    maxEvidenceSlice: number;
+}
+
+// ── The Discord tool names the model can call (excludes "finish") ──
+
+const DISCORD_TOOL_NAMES = new Set<string>([
+    "retrieve_messages",
+    "resolve_member_identity",
+    "list_guild_structure",
+    "resolve_channel_targets",
+    "get_member_profile",
+    "list_members",
+    "get_guild_context",
+]);
+
+function isDiscordTool(name: string): name is DiscordToolName {
+    return DISCORD_TOOL_NAMES.has(name);
+}
+
+// ── Max chars for a single tool result injected back into the conversation ──
+const MAX_TOOL_RESULT_CHARS = 150_000;
+
+function truncateToolResult(json: string): string {
+    if (json.length <= MAX_TOOL_RESULT_CHARS) return json;
+    return json.slice(0, MAX_TOOL_RESULT_CHARS) + "\n...[truncated]";
+}
+
+// ── Context overflow detection and pruning ──
+const CONTEXT_HEADROOM_RATIO = 0.80;
+
+function isContextOverflow(promptTokens: number, contextWindow: number): boolean {
+    return promptTokens >= contextWindow * CONTEXT_HEADROOM_RATIO;
+}
+
+function pruneOldToolOutputs(messages: ToolChatMessage[]): number {
+    let pruned = 0;
+    // Keep the system prompt (index 0), the user message (index 1),
+    // and the last 4 messages (latest tool interaction). Prune everything in between.
+    const protectedTail = 4;
+    const lastPrunableIndex = messages.length - protectedTail;
+
+    for (let i = 2; i < lastPrunableIndex; i++) {
+        const msg = messages[i];
+        if (msg.role === "tool" && msg.content.length > 200) {
+            (msg as { content: string }).content = JSON.stringify({ pruned: true, note: "Earlier tool output pruned to save context space." });
+            pruned += 1;
+        }
+    }
+    return pruned;
+}
+
+// ── Runtime ──
 
 export class Runtime {
-    private static graphPromise: Promise<any> | null = null;
-    private static requestContext = new Map<string, TurnInput>();
+    public static async answer(input: TurnInput): Promise<RuntimeAnswer> {
+        const config = getAppConfig();
+        const requestId = randomUUID();
+        const threadId = input.conversation.key;
+        const guildId = input.guild?.id || null;
+        const channelId = input.currentChannelId || null;
+        const actorId = input.user.id;
 
-    private static async getGraph() {
-        if (!this.graphPromise) {
-            this.graphPromise = this.buildGraph();
-        }
-        return this.graphPromise;
-    }
+        const constraints: RuntimeConstraints = {
+            maxToolCalls: config.runtime.maxToolCalls,
+            maxLatencyBudgetMs: config.runtime.maxLatencyBudgetMs,
+            maxRepeatedCallSignature: config.runtime.maxRepeatedCallSignature,
+            maxPriorTurns: config.runtime.maxPriorTurns,
+            maxChannelMessages: config.runtime.maxChannelMessages,
+            maxToolRunsContext: config.runtime.maxToolRunsContext,
+            maxEvidenceSlice: config.runtime.maxEvidenceSlice,
+        };
 
-    private static async buildGraph() {
-        const checkpointer = CheckpointStore.getSaver();
+        const traceEvents: RuntimeTraceEvent[] = [];
+        const toolHistory: ToolInvocationRecord[] = [];
+        const evidence: EvidenceItem[] = [];
+        let confidence: GroundedAnswerMode = "insufficient";
+        let stopReason: StopReason | null = null;
 
-        return new StateGraph(State)
-            .addNode("ingest_turn", async (state: RuntimeState) => ({
-                traceEvents: appendTrace(
-                    state,
-                    "ingest_turn",
-                    `trigger=${state.trigger}; conversation=${state.conversationKind}; requester=${state.requesterDisplayName}`
-                ),
-            }))
-            .addNode("load_context", async (state: RuntimeState) => ({
-                traceEvents: appendTrace(
-                    state,
-                    "load_context",
-                    `guild=${state.guildId || "dm"} channel=${state.channelId || "none"}`
-                ),
-            }))
-            .addNode("load_checkpoint", async (state: RuntimeState) => ({
-                traceEvents: appendTrace(state, "load_checkpoint", `thread=${state.threadId}`),
-            }))
-            .addNode("load_memory", async (state: RuntimeState) => {
-                const recentTurns = await DiscordMemoryService.getRecentRuntimeRunsAsync(
-                    state.threadId,
-                    state.constraints.maxPriorTurns
-                );
-                const recentToolRuns = await DiscordMemoryService.getRecentToolRunsAsync(
-                    state.threadId,
-                    state.constraints.maxToolRunsContext
-                );
-                const channelMessages = state.channelId
-                    ? await DiscordMemoryService.getRecentChannelMessagesAsync(state.channelId, state.constraints.maxChannelMessages)
-                    : [];
-                const channelContext = channelMessages.map((msg) => ({
-                    authorName: msg.authorName,
-                    content: msg.content.slice(0, 150),
-                    createdTimestamp: msg.createdTimestamp,
-                }));
-                let activeMemberTarget = state.activeMemberTarget;
-                let activeChannelTarget = state.activeChannelTarget;
-                let activeResolvedChannelIds = [...state.activeResolvedChannelIds];
-                let activeRetrievalSession = state.activeRetrievalSession;
-                const reconstructedEvidence: EvidenceItem[] = [];
-                const seenEvidence = new Set<string>();
+        const trace = (label: string, detail: string) => {
+            traceEvents.push({ label, detail, timestamp: Date.now() });
+        };
 
-                for (const run of [...recentToolRuns].reverse()) {
-                    try {
-                        const parsedOutput = JSON.parse(run.outputJson) as DiscordToolResult;
-                        const resolvedMember = extractResolvedMemberTarget(parsedOutput);
-                        const resolvedChannel = extractResolvedChannelTarget(parsedOutput);
-                        const retrieval = getRetrievalSummary(parsedOutput);
-                        const retrievalSession = extractActiveRetrievalSession(parsedOutput);
-                        const evidenceItems = extractEvidence(
-                            parsedOutput,
-                            toEvidenceExtractionLimits(state.constraints)
-                        );
+        try {
+            // ── 1. Debug session setup ──
+            await input.debugSession?.setClassifying();
+            await input.debugSession?.setRequesterContext?.(input.requesterDisplayName, input.trigger);
+            await input.debugSession?.setConversationContext?.({
+                threadId,
+                kind: input.conversation.kind,
+                replyAnchorMessageId: input.conversation.replyAnchorMessageId,
+                replyContext: input.replyContext,
+            });
 
-                        if (resolvedMember) {
-                            activeMemberTarget = resolvedMember;
-                        }
-                        if (resolvedChannel) {
-                            activeChannelTarget = resolvedChannel;
-                            activeResolvedChannelIds = resolvedChannel.resolvedIds;
-                        } else if (retrieval?.searchedChannelIds?.length) {
-                            activeResolvedChannelIds = retrieval.searchedChannelIds;
-                        }
-                        if (retrievalSession) {
-                            activeRetrievalSession = mergeActiveRetrievalSession(
-                                activeRetrievalSession,
-                                retrievalSession
-                            );
-                        }
+            trace("ingest_turn", `trigger=${input.trigger}; conversation=${input.conversation.kind}; requester=${input.requesterDisplayName}`);
 
-                        for (const item of evidenceItems) {
-                            const key = [
-                                item.tool,
-                                item.jumpLink || "",
-                                item.channelId || "",
-                                item.authorId || "",
-                                item.createdTimestamp || "",
-                                item.content,
-                            ].join("::");
-                            if (seenEvidence.has(key)) {
-                                continue;
-                            }
+            // ── 2. Load memory (recent turns, channel context, prior evidence) ──
+            const recentTurns = await DiscordMemoryService.getRecentRuntimeRunsAsync(
+                threadId,
+                constraints.maxPriorTurns
+            );
+            const recentToolRuns = await DiscordMemoryService.getRecentToolRunsAsync(
+                threadId,
+                constraints.maxToolRunsContext
+            );
+            const channelMessages = channelId
+                ? await DiscordMemoryService.getRecentChannelMessagesAsync(channelId, constraints.maxChannelMessages)
+                : [];
+            const channelContext: ChannelContextMessage[] = channelMessages.map((msg) => ({
+                authorName: msg.authorName,
+                content: msg.content.slice(0, 150),
+                createdTimestamp: msg.createdTimestamp,
+            }));
+
+            // Reconstruct prior evidence from recent tool runs
+            const seenEvidence = new Set<string>();
+            for (const run of [...recentToolRuns].reverse()) {
+                try {
+                    const parsedOutput = JSON.parse(run.outputJson) as DiscordToolResult;
+                    const evidenceItems = extractEvidence(
+                        parsedOutput
+                    );
+                    for (const item of evidenceItems) {
+                        const key = [
+                            item.tool,
+                            item.jumpLink || "",
+                            item.channelId || "",
+                            item.authorId || "",
+                            item.createdTimestamp || "",
+                            item.content,
+                        ].join("::");
+                        if (!seenEvidence.has(key)) {
                             seenEvidence.add(key);
-                            reconstructedEvidence.push(item);
+                            evidence.push(item);
                         }
-                    } catch {
-                        continue;
+                    }
+                } catch {
+                    continue;
+                }
+            }
+            // Trim to budget
+            while (evidence.length > constraints.maxEvidenceSlice) {
+                evidence.shift();
+            }
+
+            trace("load_memory", `Loaded ${recentTurns.length} prior turn(s), ${channelContext.length} channel msg(s), reused ${evidence.length} evidence item(s).`);
+
+            // ── 3. Build system prompt ──
+            const promptEvidence = evidence.filter(isReusablePromptEvidence);
+            const priorEvidenceSummary = promptEvidence.length
+                ? promptEvidence.map((e) => {
+                      const who = e.authorName || "?";
+                      const where = e.channelName ? `#${e.channelName}` : "";
+                      return `${who}${where ? ` in ${where}` : ""}: ${e.content}`;
+                  }).join("\n")
+                : "None.";
+
+            const systemPrompt = PromptRegistry.render("runtime/agent_loop", {
+                guild_name: input.guild?.name || "DM",
+                guild_id: guildId || "none",
+                channel_name: channelId ? `<#${channelId}>` : "DM",
+                channel_id: channelId || "none",
+                requester_display_name: input.requesterDisplayName,
+                actor_id: actorId,
+                current_date: new Date().toISOString().slice(0, 10),
+                trigger: input.trigger,
+                recent_turns: summarizeRecentTurns(recentTurns),
+                channel_context: formatChannelContext(channelContext),
+                prior_evidence: priorEvidenceSummary,
+                tool_context: formatRecentToolRuns(recentToolRuns),
+                reply_context: input.replyContext
+                    ? `Replying to ${input.replyContext.authorDisplayName}: "${input.replyContext.content}"`
+                    : "Not a reply.",
+                max_tool_calls: String(constraints.maxToolCalls),
+            });
+
+            // ── 4. Agent loop ──
+            const messages: ToolChatMessage[] = [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: input.question },
+            ];
+
+            const startedAt = Date.now();
+            const repeated = new Map<string, number>();
+            let answer = "";
+            let totalToolCalls = 0;
+            let cumulativePromptTokens = 0;
+            let cumulativeCompletionTokens = 0;
+
+            await input.debugSession?.setClassification("discord_grounded");
+
+            for (let iteration = 0; iteration < constraints.maxToolCalls + 1; iteration += 1) {
+                // Latency guard
+                if (Date.now() - startedAt >= constraints.maxLatencyBudgetMs) {
+                    stopReason = "budget_exhausted";
+                    trace("stop", "Reached the latency budget.");
+                    break;
+                }
+
+                await input.debugSession?.setPlanning(iteration + 1);
+                const result = await ModelGateway.generateWithTools(messages, {
+                    tools: TOOL_DEFINITIONS,
+                    traceContext: {
+                        traceLabel: `agent_loop_iter_${iteration}`,
+                        questionPreview: input.question,
+                        traceEvents: [...traceEvents],
+                    },
+                });
+
+                // Track token usage
+                if (result.usage) {
+                    cumulativePromptTokens += result.usage.promptTokens;
+                    cumulativeCompletionTokens += result.usage.completionTokens;
+                }
+
+                // Context overflow guard — prune old tool outputs if approaching limit
+                if (result.usage && isContextOverflow(result.usage.promptTokens, config.modelProfile.contextWindow)) {
+                    const pruned = pruneOldToolOutputs(messages);
+                    if (pruned > 0) {
+                        trace("context_prune", `Pruned ${pruned} old tool outputs (prompt tokens: ${result.usage.promptTokens}/${config.modelProfile.contextWindow}).`);
                     }
                 }
-                const evidence = reconstructedEvidence.slice(-state.constraints.maxEvidenceSlice);
-                const input = this.requestContext.get(state.requestId);
-                await input?.debugSession?.setContextPreview?.({
-                    recentChannelMessages: channelContext.map((m) => `${m.authorName}: ${m.content}`),
-                    evidencePreview: evidence
-                        .slice(0, state.constraints.maxContextPreviewEvidenceItems)
-                        .map((item) => {
-                        const channelLabel = item.channelName ? `#${item.channelName}` : "?";
-                        const authorLabel = formatAuthorIdentity(item);
-                        return `[${item.tool}] ${channelLabel} · ${authorLabel}: ${item.content}`;
-                    }),
-                    recentTurns: recentTurns.map((t) => `Q: ${t.question} | A: ${t.answer}`),
-                });
-                return {
-                    recentTurns,
-                    channelContext,
-                    evidence,
-                    activeMemberTarget,
-                    activeChannelTarget,
-                    activeResolvedChannelIds,
-                    activeRetrievalSession,
-                    traceEvents: appendTrace(
-                        state,
-                        "load_memory",
-                        `Loaded ${recentTurns.length} prior conversation turn(s), ${channelContext.length} recent channel message(s), ${recentToolRuns.length} recent tool run(s), reused ${evidence.length} evidence item(s).`
-                    ),
-                };
-            })
-            .addNode("plan_turn", async (state: RuntimeState) => {
-                const input = this.requestContext.get(state.requestId);
-                const plan = await planWithModel(
-                    input || {
-                        question: state.question,
-                        user: { id: state.actorId } as TurnInput["user"],
-                        requesterDisplayName: state.requesterDisplayName,
-                        guild: null,
-                        currentChannelId: state.channelId,
-                        trigger: state.trigger,
-                        requestedWebMode: state.requestedWebMode,
-                        replyContext: state.replyContext,
-                        conversation: {
-                            key: state.threadId,
-                            kind: state.conversationKind,
-                            trigger: state.trigger,
-                        },
-                    },
-                    state.channelContext,
-                    state.recentTurns,
-                    {
-                        activeMemberTarget: state.activeMemberTarget,
-                        activeChannelTarget: state.activeChannelTarget,
-                        activeResolvedChannelIds: state.activeResolvedChannelIds,
-                        activeRetrievalSession: state.activeRetrievalSession,
-                    }
-                );
 
-                // When the model decides this is NOT a continuation of the
-                // prior turn, discard stale active targets and evidence so the
-                // research loop starts with a clean slate.
-                const scopeReset = !plan.intent.continuation;
-
-                return {
-                    mode: plan.mode,
-                    classification: classify(plan.mode),
-                    goal: plan.goal,
-                    successCriteria: plan.successCriteria,
-                    candidateCapabilities: plan.candidateCapabilities,
-                    confidence: plan.confidence,
-                    turnIntent: plan.intent,
-                    ...(scopeReset
-                        ? {
-                              activeMemberTarget: null,
-                              activeChannelTarget: null,
-                              activeResolvedChannelIds: [],
-                              activeRetrievalSession: null,
-                              evidence: [],
-                          }
-                        : {}),
-                    traceEvents: appendTrace(
-                        state,
-                        "plan_turn",
-                        `${plan.reason}${scopeReset ? " [scope reset: not a continuation]" : ""}`
-                    ),
-                };
-            })
-            .addNode("route_mode", async (state: RuntimeState) => ({
-                traceEvents: appendTrace(state, "route_mode", `mode=${state.mode || "conversation"}`),
-            }))
-            .addNode("run_research_loop", async (state: RuntimeState) => {
-                const startedAt = Date.now();
-                const toolHistory = [...state.toolHistory];
-                const evidence = [...state.evidence];
-                const traceEvents = [...state.traceEvents];
-                let activeMemberTarget = state.activeMemberTarget;
-                let activeChannelTarget = state.activeChannelTarget;
-                let activeResolvedChannelIds = [...state.activeResolvedChannelIds];
-                let activeRetrievalSession = state.activeRetrievalSession;
-                let retrievalSummary = state.retrievalSummary;
-                let confidence = state.confidence;
-                let stopReason: StopReason = "insufficient_evidence";
-                const repeated = new Map<string, number>();
-
-                for (let pass = 0; pass < state.constraints.maxResearchPasses; pass += 1) {
-                    const evidenceDecision = await judgeEvidence({
-                        question: state.question,
-                        goal: state.goal,
-                        successCriteria: state.successCriteria,
-                        toolHistory,
-                        evidence,
-                        actorId: state.actorId,
-                        candidateCapabilities: state.candidateCapabilities,
-                    });
-                    traceEvents.push({
-                        label: "judge_evidence",
-                        detail: evidenceDecision.reason,
-                        timestamp: Date.now(),
-                    });
-
-                    const evidenceCounts = countEvidence({ evidence });
-                    const hasReusableMessageEvidence = evidenceCounts.messageEvidenceCount > 0;
-
-                    // When no tool has been called this turn yet, do not let
-                    // stale evidence from prior turns satisfy the judge when
-                    // the planner thinks retrieval is needed AND the turn is
-                    // not a continuation.  Continuations legitimately reuse
-                    // prior evidence for follow-up questions on the same topic.
-                    const needsFreshRetrieval =
-                        toolHistory.length === 0 &&
-                        state.candidateCapabilities.includes("retrieve_messages") &&
-                        !state.turnIntent?.continuation;
-
-                    if (
-                        evidenceDecision.sufficient &&
-                        !needsFreshRetrieval &&
-                        (toolHistory.length > 0 || hasReusableMessageEvidence)
-                    ) {
-                        confidence = evidenceDecision.confidence;
-                        stopReason = "evidence_sufficient";
-                        break;
-                    }
-
-                    if (toolHistory.length >= state.constraints.maxToolCalls) {
-                        stopReason = "budget_exhausted";
-                        traceEvents.push({
-                            label: "stop",
-                            detail: "Reached the tool-call budget.",
-                            timestamp: Date.now(),
-                        });
-                        break;
-                    }
-
-                    if (Date.now() - startedAt >= state.constraints.maxLatencyBudgetMs) {
-                        stopReason = "budget_exhausted";
-                        traceEvents.push({
-                            label: "stop",
-                            detail: "Reached the latency budget.",
-                            timestamp: Date.now(),
-                        });
-                        break;
-                    }
-
-                    const step = await planNextStep({
-                        question: state.question,
-                        goal: state.goal,
-                        successCriteria: state.successCriteria,
-                        confidence,
-                        toolHistory,
-                        candidateCapabilities: state.candidateCapabilities,
-                        actorId: state.actorId,
-                        replyContext: state.replyContext,
-                        activeMemberTarget,
-                        activeChannelTarget,
-                        activeResolvedChannelIds,
-                        activeRetrievalSession,
-                        turnIntent: state.turnIntent,
-                    });
-
-                    if (!step.nextCapability) {
+                // No tool calls → model produced a text response (shouldn't happen with finish tool, but handle it)
+                if (result.toolCalls.length === 0) {
+                    if (result.content) {
+                        answer = result.content;
+                        stopReason = totalToolCalls > 0 ? "evidence_sufficient" : "direct_answer";
+                    } else {
                         stopReason = "no_useful_next_step";
-                        traceEvents.push({
-                            label: "step",
-                            detail: step.reason,
-                            timestamp: Date.now(),
+                    }
+                    trace("model_response", `No tool calls. finishReason=${result.finishReason}`);
+                    break;
+                }
+
+                // Process each tool call in the response
+                const assistantMessage: ToolChatMessage = {
+                    role: "assistant",
+                    content: result.content,
+                    tool_calls: result.toolCalls,
+                };
+                messages.push(assistantMessage);
+
+                let loopDone = false;
+
+                for (const tc of result.toolCalls) {
+                    const toolName = tc.function.name;
+                    let parsedArgs: ToolArguments;
+                    try {
+                        parsedArgs = JSON.parse(tc.function.arguments || "{}") as ToolArguments;
+                    } catch {
+                        parsedArgs = {};
+                    }
+
+                    // ── Handle "finish" tool ──
+                    if (toolName === "finish") {
+                        answer = (parsedArgs.answer as string) || result.content || "";
+                        stopReason = totalToolCalls > 0 ? "evidence_sufficient" : "direct_answer";
+                        trace("finish", `Model called finish.`);
+                        messages.push({
+                            role: "tool",
+                            tool_call_id: tc.id,
+                            content: JSON.stringify({ ok: true }),
                         });
+                        loopDone = true;
                         break;
                     }
 
-                    const tool = step.nextCapability;
-                    const signature = argsSignature(tool, step.arguments);
+                    // ── Handle Discord tool calls ──
+                    if (!isDiscordTool(toolName)) {
+                        messages.push({
+                            role: "tool",
+                            tool_call_id: tc.id,
+                            content: JSON.stringify({ error: `Unknown tool: ${toolName}` }),
+                        });
+                        trace("tool_error", `Unknown tool ${toolName}`);
+                        continue;
+                    }
+
+                    // Budget guard
+                    if (totalToolCalls >= constraints.maxToolCalls) {
+                        messages.push({
+                            role: "tool",
+                            tool_call_id: tc.id,
+                            content: JSON.stringify({ error: "Tool call budget exhausted. Call finish now." }),
+                        });
+                        stopReason = "budget_exhausted";
+                        trace("stop", "Tool-call budget exhausted.");
+                        continue;
+                    }
+
+                    // Repeated-call guard
+                    const signature = argsSignature(toolName, parsedArgs);
                     const seen = (repeated.get(signature) || 0) + 1;
                     repeated.set(signature, seen);
-                    if (seen > state.constraints.maxRepeatedCallSignature) {
+                    if (seen > constraints.maxRepeatedCallSignature) {
+                        const blockMsg = `You already called ${toolName} with these exact arguments. Use different arguments or a different tool.`;
+                        messages.push({
+                            role: "tool",
+                            tool_call_id: tc.id,
+                            content: JSON.stringify({ error: blockMsg }),
+                        });
                         const warningRecord: ToolInvocationRecord = {
-                            tool,
-                            arguments: step.arguments,
-                            summary: `Blocked: identical call already made. Try different arguments or a different capability.`,
-                            learned: `This exact call (${signature}) was already made and blocked. You must use different arguments or choose a different capability.`,
+                            tool: toolName,
+                            arguments: parsedArgs,
+                            summary: "Blocked: repeated call.",
+                            learned: blockMsg,
                             confidenceImproved: false,
-                            output: {
-                                tool,
-                                summary: `Repeated call blocked.`,
-                                data: null,
-                                errorMessage: `You already called ${tool} with these exact arguments. Change the arguments or choose a different capability.`,
-                            },
+                            output: { tool: toolName, summary: "Repeated call blocked.", data: null, errorMessage: blockMsg },
                             durationMs: 0,
                             blocked: true,
                         };
                         toolHistory.push(warningRecord);
-                        traceEvents.push({
-                            label: "step",
-                            detail: `Blocked repeated call ${signature}. Model warned to try different args.`,
-                            timestamp: Date.now(),
-                        });
-                        const repeatedViolations = [...repeated.values()].filter((v) => v > state.constraints.maxRepeatedCallSignature).length;
+                        trace("step", `Blocked repeated call ${signature}.`);
+
+                        const repeatedViolations = [...repeated.values()].filter((v) => v > constraints.maxRepeatedCallSignature).length;
                         if (repeatedViolations >= 2) {
                             stopReason = "confidence_plateau";
+                            loopDone = true;
                             break;
                         }
                         continue;
                     }
 
-                    const input = this.requestContext.get(state.requestId);
-                    await input?.debugSession?.setPlanning(pass + 1);
-                    await input?.debugSession?.setToolRunning(tool, [step.reason, step.learnedExpectation]);
+                    // Execute the capability
+                    await input.debugSession?.setToolRunning(toolName, []);
                     const toolStartedAt = Date.now();
-                    const output = await executeCapability(
-                        tool,
+                    const output = await CapabilityRegistry.get(toolName).run(
                         {
-                            guild: input?.guild || null,
-                            question: state.question,
-                            currentChannelId: state.channelId,
-                            onProgress: async (toolName, summary) => {
-                                traceEvents.push({
-                                    label: "tool_progress",
-                                    detail: `${toolName}: ${summary}`,
-                                    timestamp: Date.now(),
-                                });
-                                await input?.debugSession?.setToolProgress?.(toolName, summary);
+                            guild: input.guild || null,
+                            question: input.question,
+                            currentChannelId: channelId,
+                            onProgress: async (tn, summary) => {
+                                trace("tool_progress", `${tn}: ${summary}`);
+                                await input.debugSession?.setToolProgress?.(tn, summary);
                             },
                         },
-                        step.arguments
+                        parsedArgs
                     );
+                    const toolDurationMs = Date.now() - toolStartedAt;
+                    totalToolCalls += 1;
 
+                    // Extract evidence
                     const evidenceItems = extractEvidence(
-                        output,
-                        toEvidenceExtractionLimits(state.constraints)
+                        output
                     );
                     const learned = evidenceItems.map((item) => item.content).join(" | ") || output.summary;
                     const retrieval = getRetrievalSummary(output);
-                    const resolvedMemberTarget = extractResolvedMemberTarget(output);
-                    const resolvedChannelTarget = extractResolvedChannelTarget(output);
-                    const retrievalSession = extractActiveRetrievalSession(output);
+
                     const record: ToolInvocationRecord = {
-                        tool,
-                        arguments: step.arguments,
+                        tool: toolName,
+                        arguments: parsedArgs,
                         summary: output.summary,
                         learned,
                         confidenceImproved: evidenceItems.some((item) => item.strength !== "weak"),
                         output,
-                        durationMs: Date.now() - toolStartedAt,
+                        durationMs: toolDurationMs,
                         retrievalSummary: retrieval,
                     };
-
                     toolHistory.push(record);
                     evidence.push(...evidenceItems);
-                    if (retrieval) {
-                        retrievalSummary = retrieval;
-                    }
-                    if (resolvedMemberTarget) {
-                        activeMemberTarget = resolvedMemberTarget;
-                    }
-                    if (resolvedChannelTarget) {
-                        activeChannelTarget = resolvedChannelTarget;
-                        activeResolvedChannelIds = resolvedChannelTarget.resolvedIds;
-                    } else if (retrieval?.searchedChannelIds?.length) {
-                        activeResolvedChannelIds = retrieval.searchedChannelIds;
-                    }
-                    if (retrievalSession) {
-                        activeRetrievalSession = mergeActiveRetrievalSession(
-                            activeRetrievalSession,
-                            retrievalSession
-                        );
-                    }
-                    traceEvents.push(
-                        { label: "step", detail: step.reason, timestamp: Date.now() },
-                        {
-                            label: "tool_result",
-                            detail: `${tool}: ${output.summary}`,
-                            timestamp: Date.now(),
-                        }
-                    );
-                    if (tool === "retrieve_messages") {
-                        const diagnostics =
-                            output.data && typeof output.data === "object"
-                                ? (output.data as Record<string, unknown>).retrievalDiagnostics
-                                : null;
-                        if (diagnostics && typeof diagnostics === "object") {
-                            const scopedEmptyRetryAttempted = Boolean(
-                                (diagnostics as Record<string, unknown>).scopedEmptyRetryAttempted
-                            );
-                            const scopedEmptyRetryRecovered = Boolean(
-                                (diagnostics as Record<string, unknown>).scopedEmptyRetryRecovered
-                            );
-                            const retryStrategy = String(
-                                (diagnostics as Record<string, unknown>).retryStrategy || "none"
-                            );
-                            traceEvents.push({
-                                label: "retrieval_diagnostics",
-                                detail:
-                                    `continuationInput=${
-                                        step.arguments.cursor || step.arguments.excludedMessageIds
-                                            ? "yes"
-                                            : "no"
-                                    }; retryAttempted=${scopedEmptyRetryAttempted ? "yes" : "no"}; ` +
-                                    `retryRecovered=${scopedEmptyRetryRecovered ? "yes" : "no"}; strategy=${retryStrategy}`,
-                                timestamp: Date.now(),
-                            });
-                        }
-                    }
 
+                    trace("tool_result", `${toolName}: ${output.summary}`);
+
+                    // Inject tool result back into conversation
+                    const resultPayload = output.errorMessage
+                        ? JSON.stringify({ error: output.errorMessage })
+                        : JSON.stringify({ summary: output.summary, data: output.data });
+                    messages.push({
+                        role: "tool",
+                        tool_call_id: tc.id,
+                        content: truncateToolResult(resultPayload),
+                    });
+
+                    // Record in memory
                     await DiscordMemoryService.recordToolRun(
-                        state.requestId,
-                        state.guildId,
-                        state.channelId,
-                        state.actorId,
-                        state.question,
-                        tool,
-                        JSON.stringify(step.arguments),
+                        requestId,
+                        guildId,
+                        channelId,
+                        actorId,
+                        input.question,
+                        toolName,
+                        JSON.stringify(parsedArgs),
                         output.summary,
                         learned,
                         JSON.stringify(output),
                         record.confidenceImproved,
-                        record.durationMs
+                        toolDurationMs
                     );
-                    await input?.debugSession?.setRetrievalSummary?.(retrieval || {
+
+                    await input.debugSession?.setToolResult(toolName, output.summary);
+                    await input.debugSession?.setRetrievalSummary?.(retrieval || {
                         mode: "history",
                         cacheHit: false,
                         liveEscalated: false,
@@ -743,364 +554,83 @@ export class Runtime {
                     });
                 }
 
-                const finalEvidenceDecision = await judgeEvidence({
-                    question: state.question,
-                    goal: state.goal,
-                    successCriteria: state.successCriteria,
-                    toolHistory,
-                    evidence,
-                    actorId: state.actorId,
-                    candidateCapabilities: state.candidateCapabilities,
-                });
-                if (finalEvidenceDecision.sufficient) {
-                    stopReason = "evidence_sufficient";
-                } else if (stopReason === "evidence_sufficient") {
-                    stopReason = "insufficient_evidence";
-                }
-                confidence = finalEvidenceDecision.confidence;
-                traceEvents.push({
-                    label: "judge_evidence",
-                    detail: finalEvidenceDecision.reason,
-                    timestamp: Date.now(),
-                });
-
-                const researchInput = this.requestContext.get(state.requestId);
-                await researchInput?.debugSession?.setContextPreview?.({
-                    recentChannelMessages: state.channelContext.map((m) => `${m.authorName}: ${m.content}`),
-                    evidencePreview: evidence.slice(0, 6).map((e) => {
-                        const channelLabel = e.channelName ? `#${e.channelName}` : "?";
-                        const authorLabel = formatAuthorIdentity(e);
-                        return `[${e.tool}] ${channelLabel} · ${authorLabel}: ${e.content}`;
-                    }),
-                    recentTurns: state.recentTurns.map((t) => `Q: ${t.question} | A: ${t.answer}`),
-                });
-
-                return {
-                    toolHistory,
-                    evidence,
-                    activeMemberTarget,
-                    activeChannelTarget,
-                    activeResolvedChannelIds,
-                    activeRetrievalSession,
-                    retrievalSummary,
-                    stopReason,
-                    confidence,
-                    traceEvents,
-                };
-            })
-            .addNode("synthesize_answer", async (state: RuntimeState) => {
-                const evidenceCounts = countEvidence(state);
-                const shouldForceInsufficientGuard =
-                    state.mode === "research" &&
-                    state.confidence === "insufficient" &&
-                    evidenceCounts.strongMessageEvidenceCount === 0 &&
-                    evidenceCounts.liveEvidenceCount < 2;
-
-                if (shouldForceInsufficientGuard) {
-                    const responseDraft = buildConversationalRecovery({
-                        question: state.question,
-                        confidence: "insufficient",
-                        evidence: state.evidence,
-                        replyContext: state.replyContext,
-                        priorTurns: state.recentTurns,
-                        stopReason: state.stopReason,
-                    });
-
-                    return {
-                        responseDraft,
-                        confidence: "insufficient" as GroundedAnswerMode,
-                        stopReason: state.stopReason || "insufficient_evidence",
-                        traceEvents: appendTrace(
-                            state,
-                            "synthesize_answer",
-                            "confidence=insufficient; web=off; enforced=no-guess guard"
-                        ),
-                    };
-                }
-
-                const effectiveConfidence =
-                    state.mode === "research" && state.confidence === "insufficient"
-                        ? answerConfidenceForInsufficient(state)
-                        : state.confidence;
-                const webDecision = decideConversationWebMode({
-                    question: state.question,
-                    classification: state.classification || classify(state.mode || "conversation"),
-                    trigger: state.trigger,
-                    conversationWebMode: state.requestedWebMode,
-                    groundedAnswerMode: effectiveConfidence,
-                });
-                const webMode = state.mode === "conversation" ? webDecision.webMode : "off";
-                let responseDraft = "";
-
-                try {
-                    const generated = await ModelGateway.generateText(
-                        [
-                            { role: "system", content: `${PromptRegistry.load("system/base")}\n\n${PromptRegistry.load("system/personality")}` },
-                            {
-                                role: "user",
-                                content: PromptRegistry.render("runtime/synthesize_answer", {
-                                    question: state.question,
-                                    mode: state.mode || "conversation",
-                                    confidence: effectiveConfidence,
-                                    requester_display_name: state.requesterDisplayName,
-                                    reply_context: state.replyContext?.content || "",
-                                    recent_turns: summarizeRecentTurns(state.recentTurns),
-                                    channel_context: formatChannelContext(state.channelContext),
-                                    evidence: summarizeEvidence(state),
-                                    stop_reason: state.stopReason || "",
-                                    stop_detail:
-                                        deriveStopDetail(state.stopReason, state.traceEvents || []) || "",
-                                    continuation_available:
-                                        state.activeRetrievalSession?.continuationAvailable
-                                            ? "yes"
-                                            : "no",
-                                    active_retrieval_session: state.activeRetrievalSession
-                                        ? `${state.activeRetrievalSession.mode} :: ${state.activeRetrievalSession.channelIds.join(", ")} :: unique=${state.activeRetrievalSession.accumulatedUniqueCount}`
-                                        : "none",
-                                }),
-                            },
-                        ],
-                        {
-                            webMode,
-                            traceContext: {
-                                traceLabel: "runtime_synthesize_answer",
-                                questionPreview: state.question,
-                                webContext: webDecision.reason,
-                            },
-                        }
-                    );
-                    responseDraft = sanitizeConversationalAnswer(generated);
-                } catch {
-                    responseDraft = "";
-                }
-
-                if (!responseDraft) {
-                    responseDraft = buildFallbackAnswer({
-                        question: state.question,
-                        mode: state.mode,
-                        confidence: effectiveConfidence,
-                        evidence: state.evidence,
-                        replyContext: state.replyContext,
-                        recentTurns: state.recentTurns,
-                        stopReason: state.stopReason,
-                    });
-                }
-
-                responseDraft = sanitizeConversationalAnswer(responseDraft) || buildFallbackAnswer({
-                    question: state.question,
-                    mode: state.mode,
-                    confidence: effectiveConfidence,
-                    evidence: state.evidence,
-                    replyContext: state.replyContext,
-                    recentTurns: state.recentTurns,
-                    stopReason: state.stopReason,
-                });
-
-                return {
-                    responseDraft,
-                    confidence: effectiveConfidence,
-                    stopReason:
-                        state.stopReason ||
-                        (state.mode === "conversation" ? "direct_answer" : "insufficient_evidence"),
-                    traceEvents: appendTrace(
-                        state,
-                        "synthesize_answer",
-                        `confidence=${effectiveConfidence}; web=${webMode}`
-                    ),
-                };
-            })
-            .addNode("persist_run", async (state: RuntimeState) => {
-                await DiscordMemoryService.recordRuntimeRun({
-                    requestId: state.requestId,
-                    threadId: state.threadId,
-                    guildId: state.guildId,
-                    channelId: state.channelId,
-                    actorId: state.actorId,
-                    trigger: state.trigger,
-                    classificationMode: state.classification?.mode || "direct_answer",
-                    runtimeMode: state.mode || "conversation",
-                    stopReason: state.stopReason || "direct_answer",
-                    confidence: state.confidence,
-                    question: state.question,
-                    answer: state.responseDraft || "",
-                    traceEvents: state.traceEvents,
-                });
-
-                return {
-                    traceEvents: appendTrace(state, "persist_run", "Saved runtime run and trace events."),
-                };
-            })
-            .addEdge(START, "ingest_turn")
-            .addEdge("ingest_turn", "load_context")
-            .addEdge("load_context", "load_checkpoint")
-            .addEdge("load_checkpoint", "load_memory")
-            .addEdge("load_memory", "plan_turn")
-            .addEdge("plan_turn", "route_mode")
-            .addConditionalEdges("route_mode", (state: RuntimeState) =>
-                state.mode === "research" ? "run_research_loop" : "synthesize_answer"
-            )
-            .addEdge("run_research_loop", "synthesize_answer")
-            .addEdge("synthesize_answer", "persist_run")
-            .addEdge("persist_run", END)
-            .compile({ checkpointer });
-    }
-
-    public static async answer(input: TurnInput): Promise<RuntimeAnswer> {
-        const graph = await this.getGraph();
-        const config = getAppConfig();
-        const requestId = randomUUID();
-        const initialState: RuntimeState = {
-            requestId,
-            threadId: input.conversation.key,
-            guildId: input.guild?.id || null,
-            channelId: input.currentChannelId || null,
-            actorId: input.user.id,
-            requesterDisplayName: input.requesterDisplayName,
-            trigger: input.trigger,
-            conversationKind: input.conversation.kind,
-            question: input.question,
-            replyContext: input.replyContext || null,
-            recentTurns: [],
-            channelContext: [],
-            permissionContext: {
-                isAdmin: true,
-                canReadChannel: true,
-                canReadHistory: true,
-                canSendMessages: true,
-            },
-            requestedWebMode: input.requestedWebMode || "off",
-            mode: null,
-            classification: null,
-            goal: input.question,
-            successCriteria: "Answer the question clearly.",
-            candidateCapabilities: [],
-            activeMemberTarget: null,
-            activeChannelTarget: null,
-            activeResolvedChannelIds: [],
-            activeRetrievalSession: null,
-            toolHistory: [],
-            evidence: [],
-            retrievalSummary: null,
-            turnIntent: null,
-            stopReason: null,
-            confidence: "insufficient",
-            responseDraft: null,
-            traceEvents: [],
-            constraints: {
-                maxToolCalls: config.runtime.maxToolCalls,
-                maxResearchPasses: config.runtime.maxResearchPasses,
-                maxRepeatedCallSignature: config.runtime.maxRepeatedCallSignature,
-                maxLatencyBudgetMs: config.runtime.maxLatencyBudgetMs,
-                maxPriorTurns: config.runtime.maxPriorTurns,
-                maxChannelMessages: config.runtime.maxChannelMessages,
-                maxToolRunsContext: config.runtime.maxToolRunsContext,
-                maxEvidenceSlice: config.runtime.maxEvidenceSlice,
-                maxContextPreviewEvidenceItems:
-                    config.runtime.maxContextPreviewEvidenceItems,
-                maxResolveChannelTargetEvidenceItems:
-                    config.runtime.maxResolveChannelTargetEvidenceItems,
-                maxRetrieveHistoryEvidenceItems:
-                    config.runtime.maxRetrieveHistoryEvidenceItems,
-                maxRetrieveSemanticEvidenceItems:
-                    config.runtime.maxRetrieveSemanticEvidenceItems,
-                maxRetrieveEvidenceContentChars:
-                    config.runtime.maxRetrieveEvidenceContentChars,
-            },
-        };
-
-        try {
-            this.requestContext.set(requestId, input);
-            await input.debugSession?.setClassifying();
-            await input.debugSession?.setRequesterContext?.(input.requesterDisplayName, input.trigger);
-            await input.debugSession?.setConversationContext?.({
-                threadId: initialState.threadId,
-                kind: input.conversation.kind,
-                replyAnchorMessageId: input.conversation.replyAnchorMessageId,
-                replyContext: input.replyContext,
-            });
-            await input.debugSession?.setCheckpointThread?.(initialState.threadId);
-            await input.debugSession?.setWebStatus?.(
-                input.requestedWebMode === "auto" ? "enabled" : "off"
-            );
-
-            const result = await graph.invoke(initialState, {
-                configurable: { thread_id: initialState.threadId, checkpoint_ns: "" },
-            });
-
-            const summary = countEvidence(result);
-            await input.debugSession?.setClassification(
-                result.classification?.mode || "direct_answer"
-            );
-            await input.debugSession?.setRuntimeMode?.(result.mode || "conversation");
-            for (let index = 0; index < result.toolHistory.length; index += 1) {
-                const tool = result.toolHistory[index] as ToolInvocationRecord;
-                const itemCount =
-                    tool.tool === "retrieve_messages" &&
-                    tool.output.data &&
-                    typeof tool.output.data === "object" &&
-                    Array.isArray((tool.output.data as { combinedResults?: unknown[] }).combinedResults)
-                        ? (tool.output.data as { combinedResults?: unknown[] }).combinedResults?.length
-                        : undefined;
-                await input.debugSession?.setPlanning(index + 1);
-                await input.debugSession?.setToolRunning(tool.tool, [tool.learned]);
-                await input.debugSession?.setToolResult(tool.tool, tool.summary, itemCount);
+                if (loopDone) break;
             }
-            await input.debugSession?.setRetrievalSummary?.(
-                result.retrievalSummary || {
-                cacheHit: false,
-                mode: "history",
-                liveEscalated: false,
-                searchedChannelIds: [],
-                fetchedChannelIds: [],
-                cacheEnriched: false,
-                evidenceSufficient: false,
-                strongResultCount: 0,
-                weakResultCount: 0,
-                historyMessageCount: 0,
-                semanticMatchCount: 0,
-                accumulatedUniqueCount: 0,
-                sourceOrigin: "none",
-                continuationAvailable: false,
-                historyContinuationAvailable: false,
-                historyCursorByChannel: {},
-                semanticContinuationAvailable: false,
-                semanticCursor: null,
-                exhaustedChannelIds: [],
-                historyExhausted: false,
-                semanticExhausted: false,
-                beforeTimestamp: null,
-                afterTimestamp: null,
-                activeChannelIds: [],
+
+            // ── 5. Determine final answer ──
+            if (!answer) {
+                // Model never called finish — synthesize from what was found
+                if (!stopReason) stopReason = "insufficient_evidence";
+                confidence = toolHistory.length > 0
+                    ? answerConfidenceForInsufficient({ evidence })
+                    : "insufficient";
+                answer = toolHistory.length > 0
+                    ? await synthesizeAnswer(systemPrompt, input.question, toolHistory, evidence, traceEvents)
+                    : "";
+            } else {
+                answer = sanitizeAnswer(answer);
+                if (!stopReason) stopReason = "direct_answer";
+                confidence = toolHistory.length > 0 ? "confident" : "best_effort";
             }
-            );
-            await input.debugSession?.setGroundingSummary(
+
+            const runtimeMode = toolHistory.length > 0 ? "research" : "conversation";
+            const classification = classify(runtimeMode);
+
+            // ── 6. Persist run ──
+            await DiscordMemoryService.recordRuntimeRun({
+                requestId,
+                threadId,
+                guildId,
+                channelId,
+                actorId,
+                trigger: input.trigger,
+                classificationMode: classification.mode,
+                runtimeMode,
+                stopReason: stopReason || "direct_answer",
+                confidence,
+                question: input.question,
+                answer,
+                traceEvents,
+            });
+            trace("persist_run", "Saved runtime run and trace events.");
+
+            // ── 7. Final debug session updates ──
+            const summary = countEvidence({ evidence });
+            await input.debugSession?.setRuntimeMode?.(runtimeMode);
+            await input.debugSession?.setEvidenceSummary(
                 {
                     messageEvidenceCount: summary.messageEvidenceCount,
                     liveEvidenceCount: summary.liveEvidenceCount,
-                    sufficient: result.stopReason === "evidence_sufficient",
+                    sufficient: stopReason === "evidence_sufficient",
                 },
-                "judge",
-                result.confidence
+                "agent_loop",
+                confidence
             );
             await input.debugSession?.setStopReason?.(
-                result.stopReason || "direct_answer",
-                deriveStopDetail(result.stopReason || "direct_answer", result.traceEvents || [])
+                stopReason || "direct_answer",
+                deriveStopDetail(stopReason || "direct_answer", traceEvents)
             );
-            await input.debugSession?.setConfidence?.(result.confidence);
-            for (const event of result.traceEvents.slice(-8)) {
-                await input.debugSession?.setTraceEvent?.(event.label, event.detail);
+            await input.debugSession?.setConfidence?.(confidence);
+            const contextUsagePercent = cumulativePromptTokens > 0 && config.modelProfile.contextWindow > 0
+                ? (cumulativePromptTokens / config.modelProfile.contextWindow) * 100
+                : null;
+            await input.debugSession?.setTokenUsage?.(cumulativePromptTokens, cumulativeCompletionTokens, contextUsagePercent);
+            const REALTIME_TRACE_LABELS = new Set(["tool_result", "tool_call", "tool_progress"]);
+            for (const event of traceEvents.slice(-8)) {
+                if (REALTIME_TRACE_LABELS.has(event.label)) continue;
+                await input.debugSession?.setTraceEvent?.(event.label, event.detail, event.timestamp);
             }
             await input.debugSession?.setGenerating();
-            await input.debugSession?.finishSuccess(result.stopReason || "completed");
+            await input.debugSession?.finishSuccess(stopReason || "completed");
 
             return {
                 requestId,
-                threadId: result.threadId,
-                answer: result.responseDraft || buildDirectConversationFallback(input.question),
-                citations: collectCitations(result.toolHistory as ToolInvocationRecord[]),
-                classification: result.classification || classify(result.mode || "conversation"),
-                toolRuns: (result.toolHistory as ToolInvocationRecord[]).filter((item) => !item.blocked).map((item) => item.output),
-                confidence: result.confidence,
+                threadId,
+                answer,
+                citations: collectCitations(toolHistory),
+                classification,
+                toolRuns: toolHistory.filter((item) => !item.blocked).map((item) => item.output),
+                confidence,
             };
         } catch (error) {
             await input.debugSession?.setTraceEvent?.(
@@ -1110,23 +640,13 @@ export class Runtime {
             await input.debugSession?.finishError(error);
             return {
                 requestId,
-                threadId: initialState.threadId,
-                answer: buildFallbackAnswer({
-                    question: input.question,
-                    mode: "conversation",
-                    confidence: "best_effort",
-                    evidence: [],
-                    replyContext: input.replyContext || null,
-                    recentTurns: [],
-                    stopReason: null,
-                }),
+                threadId,
+                answer: "",
                 citations: [],
                 classification: classify("conversation"),
                 toolRuns: [],
                 confidence: "best_effort",
             };
-        } finally {
-            this.requestContext.delete(requestId);
         }
     }
 }
@@ -1164,11 +684,11 @@ function deriveStopDetail(
     }
 
     if (stopReason === "evidence_sufficient" || stopReason === "insufficient_evidence") {
-        return findLast((event) => event.label === "judge_evidence");
+        return findLast((event) => event.label === "finish");
     }
 
     if (stopReason === "direct_answer") {
-        return "Answered directly without entering the research loop.";
+        return "Model answered directly via finish tool.";
     }
 
     return null;

@@ -1,4 +1,5 @@
 import { ChannelType, Collection, type Guild, type Message } from "discord.js";
+import { getAppConfig } from "@/app/AppConfig";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type { ChannelCrawlResult } from "@/shared/appTypes";
 
@@ -19,9 +20,11 @@ type CrawlableChannel = {
         fetch: (options: { limit: number; before?: string }) => Promise<any>;
     };
 };
-export const INTERACTIVE_CRAWL_LIMIT = Number(
-    process.env.TOOL_RETRIEVE_MESSAGES_MAX_INTERACTIVE_CRAWL_MESSAGES || 250
-);
+
+export function getInteractiveCrawlLimit(): number {
+    return getAppConfig().runtime.interactiveCrawlLimit;
+}
+
 const PREVIEW_MESSAGE_LIMIT = 12;
 
 let backgroundIngestQueue: Promise<void> = Promise.resolve();
@@ -300,7 +303,7 @@ export class DiscordChannelCrawlService {
     public static async crawlChannelMessages(
         guild: Guild | null,
         channelId: string,
-        limit = INTERACTIVE_CRAWL_LIMIT,
+        limit = getInteractiveCrawlLimit(),
         queryHint?: string,
         onProgress?: (toolName: string, summary: string) => Promise<void> | void
     ): Promise<ChannelCrawlResult> {
@@ -460,8 +463,10 @@ export class DiscordChannelCrawlService {
         }
 
         const DISCORD_EPOCH = 1420070400000;
-        const snowflakeNum = (beforeTimestamp - DISCORD_EPOCH) * 4194304;
-        let before: string | undefined = String(snowflakeNum);
+        const DISCORD_SNOWFLAKE_INCREMENT = BigInt(4194304);
+        const snowflakeNum =
+            (BigInt(beforeTimestamp) - BigInt(DISCORD_EPOCH)) * DISCORD_SNOWFLAKE_INCREMENT;
+        let before: string | undefined = snowflakeNum.toString();
         let fetched = 0;
         let exhausted = false;
         const fetchedMessages: Array<Message> = [];

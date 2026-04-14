@@ -1,7 +1,6 @@
-import type { ActiveRetrievalSession, EvidenceItem, RetrievalSummary, ToolArguments, ToolArgumentValue } from "@/runtime/contracts";
+import type { ActiveRetrievalSession, EvidenceItem, RetrievalSummary } from "@/runtime/contracts";
 import type { DiscordToolResult, RetrievalMode } from "@/shared/appTypes";
-import type { ArgumentEnrichmentContext, RetrievalPayload, ToolEnrichmentResult, ToolStrategy } from "./types";
-import { sanitizeReason } from "./utils";
+import type { RetrievalPayload, ToolStrategy } from "./types";
 
 function toRetrievalSummary(payload: RetrievalPayload): RetrievalSummary {
     return {
@@ -74,7 +73,7 @@ function toRetrievalSession(payload: RetrievalPayload & Record<string, unknown>)
 export const retrieveMessagesStrategy: ToolStrategy = {
     id: "retrieve_messages",
 
-    extractEvidence(run: DiscordToolResult, limits): EvidenceItem[] {
+    extractEvidence(run: DiscordToolResult): EvidenceItem[] {
         if (!run.data || typeof run.data !== "object") {
             return [];
         }
@@ -83,12 +82,9 @@ export const retrieveMessagesStrategy: ToolStrategy = {
         const historyRows = payload.historyMessages || [];
         const semanticRows = payload.semanticMatches || [];
         const sourceOrigin = (payload.sourceOrigin || "none") as RetrievalSummary["sourceOrigin"];
-        const maxHistoryItems = limits?.maxRetrieveHistoryEvidenceItems ?? 30;
-        const maxSemanticItems = limits?.maxRetrieveSemanticEvidenceItems ?? 30;
-        const maxContentChars = limits?.maxRetrieveEvidenceContentChars ?? 260;
 
-        const historyEvidence = historyRows.slice(0, maxHistoryItems).map((item) => {
-            const body = String(item.content || "").slice(0, maxContentChars);
+        const historyEvidence = historyRows.map((item) => {
+            const body = String(item.content || "");
             return {
                 tool: "retrieve_messages" as const,
                 summary: run.summary,
@@ -108,8 +104,8 @@ export const retrieveMessagesStrategy: ToolStrategy = {
             };
         });
 
-        const semanticEvidence = semanticRows.slice(0, maxSemanticItems).map((item) => {
-            const body = String(item.content || "").slice(0, maxContentChars);
+        const semanticEvidence = semanticRows.map((item) => {
+            const body = String(item.content || "");
             const lexicalScore = Number(item.lexicalScore || 0);
             const strength: EvidenceItem["strength"] =
                 lexicalScore >= 2 || (lexicalScore >= 1 && body.length >= 80)
@@ -136,81 +132,6 @@ export const retrieveMessagesStrategy: ToolStrategy = {
         });
 
         return [...historyEvidence, ...semanticEvidence];
-    },
-
-    enrichArguments(
-        modelArgs: ToolArguments,
-        modelStep: { reason: string; learnedExpectation: string },
-        ctx: ArgumentEnrichmentContext
-    ): ToolEnrichmentResult {
-        const { activeRetrievalSession } = ctx;
-
-        const resolvedBeforeTimestamp =
-            ctx.timeBounds.beforeTimestamp ??
-            ctx.explicitBeforeTimestamp ??
-            activeRetrievalSession?.beforeTimestamp;
-        const resolvedAfterTimestamp =
-            ctx.timeBounds.afterTimestamp ??
-            ctx.explicitAfterTimestamp ??
-            activeRetrievalSession?.afterTimestamp;
-
-        return {
-            arguments: {
-                query:
-                    typeof modelArgs.query === "string" && (modelArgs.query as string).trim()
-                        ? (modelArgs.query as string).trim()
-                        : ctx.question,
-                mode:
-                    typeof modelArgs.mode === "string" &&
-                    ["history", "semantic", "mixed"].includes(modelArgs.mode as string)
-                        ? modelArgs.mode
-                        : ctx.turnIntent?.retrievalMode ?? activeRetrievalSession?.mode ?? "history",
-                limit:
-                    typeof modelArgs.limit === "number" ? modelArgs.limit : 8,
-                ...(ctx.resolvedMember?.resolvedId || ctx.activeMember?.resolvedId
-                    ? { authorId: ctx.resolvedMember?.resolvedId || ctx.activeMember?.resolvedId }
-                    : {}),
-                ...(Array.isArray(modelArgs.channelIds) && (modelArgs.channelIds as unknown[]).length
-                    ? { channelIds: modelArgs.channelIds }
-                    : ctx.resolvedChannelIds.length
-                      ? { channelIds: ctx.resolvedChannelIds }
-                      : ctx.channelMentionIds.length
-                        ? { channelIds: ctx.channelMentionIds }
-                        : {}),
-                ...(resolvedBeforeTimestamp != null
-                    ? { beforeTimestamp: resolvedBeforeTimestamp }
-                    : {}),
-                ...(resolvedAfterTimestamp != null
-                    ? { afterTimestamp: resolvedAfterTimestamp }
-                    : {}),
-                ...((ctx.shouldContinueSession || ctx.shouldAutoInjectCursor) &&
-                activeRetrievalSession?.historyCursorByChannel &&
-                Object.keys(activeRetrievalSession.historyCursorByChannel).length
-                    ? {
-                          cursor: ({
-                              history: activeRetrievalSession.historyCursorByChannel,
-                              ...(activeRetrievalSession.semanticCursor
-                                  ? { semantic: activeRetrievalSession.semanticCursor }
-                                  : {}),
-                          } as unknown as ToolArgumentValue),
-                      }
-                    : {}),
-                ...((ctx.shouldContinueSession || ctx.shouldAutoInjectCursor) && activeRetrievalSession?.seenMessageIds?.length
-                    ? { excludedMessageIds: activeRetrievalSession.seenMessageIds }
-                    : {}),
-                ...(typeof modelArgs.aroundMessageId === "string" && (modelArgs.aroundMessageId as string).trim()
-                    ? { aroundMessageId: (modelArgs.aroundMessageId as string).trim() }
-                    : {}),
-            },
-            reason: sanitizeReason(
-                modelStep.reason,
-                "Read scoped Discord history first, then supplement with semantic matches if needed."
-            ),
-            learnedExpectation: sanitizeReason(
-                modelStep.learnedExpectation,
-                "Return ordered scoped history, semantic matches, and a continuation cursor."
-            ),
-        };
     },
 
     extractRetrievalSummary(run: DiscordToolResult): RetrievalSummary | null {

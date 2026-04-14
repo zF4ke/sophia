@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DebugModeService } from "@/discord/debug/DebugModeService";
-import { DebugStateStore } from "@/discord/debug/DebugStateStore";
+import { SettingsService } from "@/app/SettingsService";
 
 describe("DebugModeService", () => {
     beforeEach(() => {
@@ -9,20 +9,22 @@ describe("DebugModeService", () => {
     });
 
     it("defaults to disabled when no stored state exists", () => {
-        vi.spyOn(DebugStateStore, "load").mockReturnValue({ enabled: false });
+        vi.spyOn(SettingsService, "load").mockReturnValue({ ...SettingsService.getDefaults(), debug: false });
 
         expect(DebugModeService.isEnabled()).toBe(false);
     });
 
     it("persists enable and disable toggles", () => {
-        const saveSpy = vi.spyOn(DebugStateStore, "save").mockImplementation(() => undefined);
+        const updateSpy = vi.spyOn(SettingsService, "update").mockImplementation((patch) => {
+            return { ...SettingsService.getDefaults(), ...patch } as any;
+        });
 
         DebugModeService.setEnabled(true);
         expect(DebugModeService.isEnabled()).toBe(true);
-        expect(saveSpy).toHaveBeenLastCalledWith({ enabled: true });
+        expect(updateSpy).toHaveBeenLastCalledWith({ debug: true });
 
         DebugModeService.setEnabled(false);
         expect(DebugModeService.isEnabled()).toBe(false);
-        expect(saveSpy).toHaveBeenLastCalledWith({ enabled: false });
+        expect(updateSpy).toHaveBeenLastCalledWith({ debug: false });
     });
 });

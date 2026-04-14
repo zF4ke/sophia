@@ -1,11 +1,11 @@
-import { DebugStateStore } from "@/discord/debug/DebugStateStore";
+import { SettingsService } from "@/app/SettingsService";
 
 export class DebugModeService {
     private static enabled: boolean | null = null;
 
     public static isEnabled(): boolean {
         if (this.enabled === null) {
-            this.enabled = DebugStateStore.load().enabled;
+            this.enabled = SettingsService.load().debug;
         }
 
         return this.enabled;
@@ -13,7 +13,7 @@ export class DebugModeService {
 
     public static setEnabled(enabled: boolean): void {
         this.enabled = enabled;
-        DebugStateStore.save({ enabled });
+        SettingsService.update({ debug: enabled });
     }
 
     public static resetForTests(): void {

@@ -1,8 +1,7 @@
-import type { EvidenceItem, ToolArguments } from "@/runtime/contracts";
+import type { EvidenceItem } from "@/runtime/contracts";
 import type { DiscordToolResult, ResolvedChannelTarget } from "@/shared/appTypes";
 import { asGuildStructureEntries, buildStructureEvidenceItems } from "./guildStructure";
-import type { ArgumentEnrichmentContext, GuildStructurePayload, ToolEnrichmentResult, ToolStrategy } from "./types";
-import { sanitizeReason } from "./utils";
+import type { GuildStructurePayload, ToolStrategy } from "./types";
 
 export const listGuildStructureStrategy: ToolStrategy = {
     id: "list_guild_structure",
@@ -13,32 +12,6 @@ export const listGuildStructureStrategy: ToolStrategy = {
         }
 
         return buildStructureEvidenceItems(run.data as GuildStructurePayload, run.summary);
-    },
-
-    enrichArguments(
-        modelArgs: ToolArguments,
-        modelStep: { reason: string; learnedExpectation: string },
-        ctx: ArgumentEnrichmentContext
-    ): ToolEnrichmentResult {
-        return {
-            arguments: {
-                ...(typeof modelArgs.targetText === "string" && (modelArgs.targetText as string).trim()
-                    ? { targetText: (modelArgs.targetText as string).trim() }
-                    : ctx.activeChannelTarget?.query
-                      ? { targetText: ctx.activeChannelTarget.query }
-                      : ctx.structuralChannel
-                        ? { targetText: ctx.structuralChannel }
-                        : { targetText: ctx.question }),
-            },
-            reason: sanitizeReason(
-                modelStep.reason,
-                "Inspect the current guild structure around the resolved or likely category/channel target."
-            ),
-            learnedExpectation: sanitizeReason(
-                modelStep.learnedExpectation,
-                "Return matched categories/channels plus visible child-channel structure."
-            ),
-        };
     },
 
     extractResolvedChannel(run: DiscordToolResult): ResolvedChannelTarget | null {

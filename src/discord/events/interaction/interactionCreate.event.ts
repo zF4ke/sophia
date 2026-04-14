@@ -1,7 +1,9 @@
 import type { BotClient } from "@/shared/appTypes";
 import { Interaction, MessageFlags } from "discord.js";
 import { handleAccessPanelInteraction } from "@/discord/commands/system/access/panelInteractions";
+import { handleDebugLogsInteraction } from "@/discord/commands/system/debugLogsInteractions";
 import { handleDebugPanelInteraction } from "@/discord/debug/debugPanelInteractions";
+import { handleSettingsPanelInteraction } from "@/discord/commands/system/settings/settingsInteractions";
 import { SecurityService } from "@/security/SecurityService";
 
 export = {
@@ -27,6 +29,24 @@ export = {
                 }
             }
 
+            if (
+                interaction.isButton() ||
+                interaction.isStringSelectMenu()
+            ) {
+                if (await handleDebugLogsInteraction(interaction)) {
+                    return;
+                }
+            }
+
+            if (
+                interaction.isButton() ||
+                interaction.isStringSelectMenu()
+            ) {
+                if (await handleSettingsPanelInteraction(interaction)) {
+                    return;
+                }
+            }
+
             if (await handleAccessPanelInteraction(interaction, client)) {
                 return;
             }
@@ -37,7 +57,7 @@ export = {
             if (!command) {
                 return interaction.reply({
                     flags: MessageFlags.Ephemeral,
-                    content: "Comando desatualizado",
+                    content: "Unknown command.",
                 });
             }
             
@@ -48,7 +68,7 @@ export = {
                 if (!isPublic && !SecurityService.isAdmin(interaction.user.id)) {
                     return interaction.reply({
                         flags: MessageFlags.Ephemeral,
-                        content: "❌ Este comando é restrito apenas para administradores.",
+                        content: "❌ This command is restricted to administrators.",
                     });
                 }
                 
@@ -56,7 +76,7 @@ export = {
                     const remainingTime = Math.ceil((SecurityService.RATE_LIMIT_WINDOW / 1000) / 60);
                     return interaction.reply({
                         flags: MessageFlags.Ephemeral,
-                        content: `❌ Você atingiu o limite de uso para este comando. Por favor, aguarde ${remainingTime} minuto(s) antes de tentar novamente.`,
+                        content: `❌ Rate limit reached for this command. Please wait ${remainingTime} minute(s) before trying again.`,
                     });
                 }
             }
