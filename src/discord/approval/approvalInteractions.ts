@@ -331,7 +331,7 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
 
     const pending = getPendingBatchApproval(batchId);
     if (!pending) {
-        await safeReply(interaction, "⏳ Este batch já expirou ou foi resolvido.");
+        await safeReply(interaction, "⏳ Esta aprovação em massa já expirou ou foi resolvida.");
         return true;
     }
 
@@ -344,7 +344,7 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
     if (isCorrect) {
         const modal = new ModalBuilder()
             .setCustomId(`${BATCH_MODAL_PREFIX}${batchId}`)
-            .setTitle("Recusar batch e corrigir");
+            .setTitle("Recusar em massa e corrigir");
 
         const textInput = new TextInputBuilder()
             .setCustomId("correction_text")
@@ -434,7 +434,7 @@ async function handleBatchCategorySelect(interaction: StringSelectMenuInteractio
     const pending = getPendingBatchApproval(batchId);
     if (!pending) {
         try {
-            await interaction.reply({ content: "⏳ Este batch já expirou ou foi resolvido.", flags: MessageFlags.Ephemeral });
+            await interaction.reply({ content: "⏳ Esta aprovação em massa já expirou ou foi resolvida.", flags: MessageFlags.Ephemeral });
         } catch (error) {
             if (!isUnknownInteractionError(error)) throw error;
         }
@@ -485,7 +485,7 @@ async function handleBatchModalSubmit(interaction: ModalSubmitInteraction): Prom
     const batchId = interaction.customId.slice(BATCH_MODAL_PREFIX.length);
     const pending = getPendingBatchApproval(batchId);
     if (!pending) {
-        await safeModalReply(interaction, "⏳ Este batch já expirou ou foi resolvido.");
+        await safeModalReply(interaction, "⏳ Esta aprovação em massa já expirou ou foi resolvida.");
         return true;
     }
 
