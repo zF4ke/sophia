@@ -22,6 +22,52 @@ These rules keep Sophia’s Discord responses clear, human-facing, and easy to s
 - Use accent colors sparingly to communicate rough state, not branding decoration.
 - Prefer the language of the channel and the user when possible.
 
+## Approval Cards
+
+Approval cards use discord.js Components V2 (ContainerBuilder, ButtonBuilder, StringSelectMenuBuilder, ModalBuilder).
+
+### Single-Item Cards
+
+- Show tool name and short description
+- Side-effect badge: yellow for write, red for destructive
+- Buttons: **Aceitar** (Success green), **Recusar** (Danger red), **Recusar e corrigir** (Primary blue), **Parar execução** (Secondary gray)
+- Timeout indicator: auto-deny after configurable `approvalTimeoutMs`
+- Post-action status: ✅ approved, ❌ denied, ✏️ corrected, ⏳ timed out, 🛑 stopped
+
+### Batch Destructive Cards
+
+- Show count of pending actions
+- List each item with tool icon + description
+- Buttons: **Aprovar tudo**, **Recusar tudo**, **Recusar e corrigir**, **Parar execução**
+- Category select menu: shown when actions span 2+ Discord categories (parent channels)
+- "Recusar e corrigir" opens a modal asking "O que deve ser feito de diferente?"
+- Post-action status: Approved / Denied / Partial (by category) / Timeout / Stopped / Corrected
+
+### Confirmation Dialog
+
+- Destructive actions show a confirmation after initial approval: "Esta ação é destrutiva. Tens a certeza?"
+- Buttons: **Confirmar** (Danger red), **Cancelar** (Secondary gray)
+
+## Activity Indicators
+
+### Message Replies (mentions, direct replies)
+
+- **Thinking**: Animated emoji reaction cycling every 2 seconds:
+  `🤨 → 🧐 → 🤓 → 😎 → 🤔 → 🫡 → 😴 → 😬 → [repeat]`
+- **Typing**: Discord typing indicator refreshed every 8 seconds
+- Graceful degradation if bot lacks reaction permissions
+
+### Interactions (/talk, /find)
+
+- Discord native "thinking" state after `deferReply` — no custom indicator needed
+
+## Settings Panel
+
+- Interactive panel with select menus for model profile and runtime parameters
+- Toggle buttons for auto-approve writes and debug mode
+- Reset to Defaults button
+- All labels and descriptions in Portuguese
+
 ## Avoid
 
 - Raw IDs, cursors, or internal storage terminology in normal command output
@@ -33,6 +79,8 @@ These rules keep Sophia’s Discord responses clear, human-facing, and easy to s
 
 - `/debug`
 - `/index status`
+- `/settings`
+- approval cards
 - future operator/status commands
 
 ## If You Change UI Patterns

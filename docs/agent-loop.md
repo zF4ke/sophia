@@ -8,9 +8,10 @@ Sophia uses a while-loop with native function calling. One unified system prompt
 2. Load memory (recent turns, channel context, prior evidence from persisted tool runs)
 3. Build system prompt (`runtime/agent_loop` with all context injected)
 4. Enter while-loop: model receives messages and available tools via `generateWithTools`
-5. Model calls Discord tools → runtime executes them → results fed back as tool messages
-6. Model calls `finish` → loop exits with the answer
-7. Persist runtime run, tool runs, and trace events
+5. Model calls tools → runtime validates and executes them → results fed back as tool messages
+6. Write/destructive tool calls pass through the approval gate before execution
+7. Model calls `finish` → loop exits with the answer
+8. Persist runtime run, tool runs, and trace events
 
 If the model never calls `finish`, the runtime produces a conversational fallback based on whatever evidence was collected.
 
@@ -26,16 +27,57 @@ Replies add referenced-message context, but they do not fork into a separate run
 ## Capability Model
 
 The model sees these capabilities as native function-calling tools:
-- `retrieve_messages`
-- `resolve_member_identity`
-- `list_guild_structure`
-- `resolve_channel_targets`
-- `get_member_profile`
-- `list_members`
-- `get_guild_context`
-- `finish` (delivers the final answer and exits the loop)
+
+### Read & Discovery Tools
+- `retrieve_messages` — cache-first scoped history search with semantic lane, pagination, time bounds, author filters
+- `resolve_member_identity` — resolve members by ID, username, nickname, display name (batch)
+- `list_guild_structure` — list readable channels/categories + cached-only remembered entries
+- `resolve_channel_targets` — resolve channel/category names, IDs, mentions; expands categories to child channels
+- `get_member_profile` — rich profile data (roles, join date, account created, Nitro, avatar, etc.)
+- `list_members` — live guild members with offset pagination and optional name filter
+- `get_guild_context` — guild-level metadata (name, member count, etc.)
+- `get_role_info` — role details (members, permissions, color, position)
+- `list_threads` — active + recently archived threads in a channel
+- `read_thread_messages` — read messages from a specific thread
+
+### Utility Tools
+- `measure_text_length` — count characters, words, lines
+- `evaluate_math` — safe arithmetic evaluation
+
+### Write Tools (require admin approval)
+- `create_channel` — create a new channel
+- `create_category` — create a new category
+- `create_thread` — create a thread in a channel
+- `move_channel` — move a channel to a different category/position
+- `manage_member_roles` — add/remove roles from a member
+- `send_message` — send a message to a channel or thread
+
+### Destructive Tools (require approval + confirmation)
+- `clear_messages` — delete messages from a channel
+- `delete_channel` — permanently delete a channel
+
+### Control
+- `finish` — delivers the final answer and exits the loop
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`. Capability handlers are registered in `src/capabilities/CapabilityRegistry.ts`.
+
+## Approval Gate
+
+Write and destructive tool calls do not execute immediately. They pass through an approval gate:
+
+- **Write tools**: An approval card is shown to the admin with Aceitar (approve) / Recusar (deny) buttons. If `autoApproveWrites` is enabled in settings, these are auto-approved.
+- **Destructive tools**: Always require explicit admin approval via an approval card, followed by a confirmation dialog ("Esta ação é destrutiva. Tens a certeza?").
+- **Batch destructive**: Multiple destructive calls in the same model response are grouped into a single batch approval card. The batch card shows all pending actions and allows approve-all, deny-all, or approve-by-category (grouped by Discord parent category).
+
+Approval cards include:
+- Tool name and description
+- Side-effect level badge (yellow for write, red for destructive)
+- Timeout countdown (configurable via `approvalTimeoutMs`)
+- Post-action status icons (✅ approved, ❌ denied, ✏️ corrected, ⏳ timed out, 🛑 stopped)
+
+The "Recusar e corrigir" button opens a modal where the admin can explain what should be done differently. That feedback is returned to the model.
+
+## Retrieval Deep Dive
 
 `retrieve_messages` is the main Discord evidence path. It is history-first and lane-based:
 - ordered scoped history messages are the default lane
@@ -51,20 +93,12 @@ For strict scoped reads (author/time bounded), retrieval performs guarded empty-
 - retry once without cursor when needed
 - record diagnostics in tool output and debug timeline
 
-`resolve_member_identity`, `list_guild_structure`, and `resolve_channel_targets` are the current-guild discovery layer.
-
-`get_member_profile` returns rich profile data surfaced as evidence content: display name, username, nickname, roles, join date, account creation date, bot status, Nitro/premium status, pending status, and avatar URL.
-
-`list_members` supports offset-based pagination with a default page size of 20. An optional `filters` parameter narrows results by name/username fragment; omitting it returns all guild members in pages.
-
-The model chooses which tools to call and in what order. It may call the same tool multiple times with different arguments (e.g. `get_member_profile` once per ambiguous member). The runtime validates tool names, executes capabilities, and enforces budgets, but it does not enrich or rewrite the model's arguments.
-
 ## Runtime Guardrails
 
 Hard limits:
-- max tool calls per turn
+- max tool calls per turn (configurable, default 6, range 2–30)
 - repeated-call guard (same tool + same arguments blocked)
-- latency budget
+- latency budget (configurable, default 20s, range 10s–5m)
 - context overflow pruning (old tool outputs are pruned when approaching the context window)
 
 ## Context Retention

@@ -24,3 +24,5 @@ Sophia is conversational first.
 Local storage is a Discord retrieval cache plus runtime state. It is not a separate memory-search product.
 
 When evidence is weak, the runtime should keep the conversation moving with the best grounded interpretation it can produce, then ask a targeted follow-up or continue retrieval.
+
+Write and destructive actions are now supported through an approval gate system. Non-destructive writes can optionally be auto-approved. Destructive actions always require explicit admin approval plus a confirmation dialog.
