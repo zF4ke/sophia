@@ -653,7 +653,7 @@ export class Runtime {
                             const correctionNote = approvalResult.correction
                                 ? ` Admin correction: "${approvalResult.correction}". Adjust your approach based on this feedback.`
                                 : "";
-                            const denyMsg = `Action denied by ${approvalResult.decidedBy}.${correctionNote}`;
+                            const denyMsg = `Action NOT executed. Denied by ${approvalResult.decidedBy}.${correctionNote} Do not tell the user this action was completed.`;
                             messages.push({
                                 role: "tool",
                                 tool_call_id: tc.id,
@@ -672,6 +672,9 @@ export class Runtime {
                             toolHistory.push(deniedRecord);
                             trace("approval_denied", `${toolName}: denied by ${approvalResult.decidedBy}${approvalResult.correction ? ` (correction: ${approvalResult.correction})` : ""}`);
                             await input.activityIndicator?.startThinking();
+                            if (approvalResult.decidedBy === "timeout") {
+                                loopDone = true;
+                            }
                             continue;
                         }
                         trace("approval_granted", `${toolName}: approved by ${approvalResult.decidedBy}`);
@@ -685,7 +688,73 @@ export class Runtime {
 
                 // ── Batch destructive approval (after processing all tool calls in this iteration) ──
                 if (destructiveBatch.length > 0 && !loopDone) {
-                    if (!input.batchApprovalGate) {
+                    if (destructiveBatch.length === 1 && input.approvalGate) {
+                        // Single destructive action — use the single-item approval gate (no batch card)
+                        const item = destructiveBatch[0];
+                        const approvalRequest: ApprovalRequest = {
+                            requestId: `${requestId}:${item.toolName}:${totalToolCalls}`,
+                            toolName: item.toolName,
+                            toolArgs: item.parsedArgs,
+                            description: item.description,
+                            sideEffectLevel: "destructive",
+                            requesterId: actorId,
+                        };
+                        trace("approval_requested", `${item.toolName}: ${item.description}`);
+                        await input.debugSession?.setToolRunning(item.toolName, ["⏳ Awaiting admin approval"]);
+                        await input.activityIndicator?.stop();
+
+                        const singleDestructiveWaitStartedAt = Date.now();
+                        const approvalResult = await input.approvalGate(approvalRequest);
+                        const singleDestructiveWaitMs = Math.max(0, Date.now() - singleDestructiveWaitStartedAt);
+                        pausedLatencyMs += singleDestructiveWaitMs;
+                        trace("approval_wait", `${item.toolName}: waited ${singleDestructiveWaitMs}ms for admin approval (excluded from latency budget).`);
+
+                        if (approvalResult.haltExecution) {
+                            const stopMsg = `Execution stopped by ${approvalResult.decidedBy}.`;
+                            messages.push({ role: "tool", tool_call_id: item.tc.id, content: JSON.stringify({ error: stopMsg }) });
+                            const stoppedRecord: ToolInvocationRecord = {
+                                tool: item.toolName,
+                                arguments: item.parsedArgs,
+                                summary: `Execution stopped by ${approvalResult.decidedBy}.`,
+                                learned: stopMsg,
+                                confidenceImproved: false,
+                                output: { tool: item.toolName, summary: stopMsg, data: null, errorMessage: stopMsg },
+                                durationMs: 0,
+                                blocked: true,
+                            };
+                            toolHistory.push(stoppedRecord);
+                            trace("stop", `${item.toolName}: execution stopped by ${approvalResult.decidedBy}`);
+                            stopReason = "execution_stopped_by_admin";
+                            loopDone = true;
+                            await input.activityIndicator?.startThinking();
+                        } else if (!approvalResult.approved) {
+                            const correctionNote = approvalResult.correction
+                                ? ` Admin correction: "${approvalResult.correction}". Adjust your approach based on this feedback.`
+                                : "";
+                            const denyMsg = `Action NOT executed. Denied by ${approvalResult.decidedBy}.${correctionNote} Do not tell the user this action was completed.`;
+                            messages.push({ role: "tool", tool_call_id: item.tc.id, content: JSON.stringify({ error: denyMsg }) });
+                            const deniedRecord: ToolInvocationRecord = {
+                                tool: item.toolName,
+                                arguments: item.parsedArgs,
+                                summary: `Denied by ${approvalResult.decidedBy}.${correctionNote}`,
+                                learned: denyMsg,
+                                confidenceImproved: false,
+                                output: { tool: item.toolName, summary: denyMsg, data: null, errorMessage: denyMsg },
+                                durationMs: 0,
+                                blocked: true,
+                            };
+                            toolHistory.push(deniedRecord);
+                            trace("approval_denied", `${item.toolName}: denied by ${approvalResult.decidedBy}${approvalResult.correction ? ` (correction: ${approvalResult.correction})` : ""}`);
+                            await input.activityIndicator?.startThinking();
+                            if (approvalResult.decidedBy === "timeout") {
+                                loopDone = true;
+                            }
+                        } else {
+                            trace("approval_granted", `${item.toolName}: approved by ${approvalResult.decidedBy}`);
+                            await input.activityIndicator?.startThinking();
+                            await executeToolCall(item.tc, item.toolName, item.parsedArgs);
+                        }
+                    } else if (!input.batchApprovalGate) {
                         // No batch gate — auto-deny all queued destructive tools
                         for (const item of destructiveBatch) {
                             const denyMsg = "Destructive operations require admin approval, but no approval channel is available.";
@@ -761,13 +830,19 @@ export class Runtime {
                                 ? ` Admin correction: "${batchResult.correction}". Adjust your approach based on this feedback.`
                                 : "";
 
+                            if (batchResult.decidedBy === "timeout") {
+                                // No admin present (timeout) — stop the loop so the model can't queue
+                                // the same destructive actions again in the next iteration.
+                                loopDone = true;
+                            }
+
                             for (const item of destructiveBatch) {
                                 const decision = batchResult.decisions[item.tc.id];
                                 if (decision === "approved") {
                                     trace("batch_item_approved", `${item.toolName}: approved in batch by ${batchResult.decidedBy}`);
                                     await executeToolCall(item.tc, item.toolName, item.parsedArgs);
                                 } else {
-                                    const denyMsg = `Action denied by ${batchResult.decidedBy}.${batchCorrectionNote}`;
+                                    const denyMsg = `Action NOT executed. Denied by ${batchResult.decidedBy}.${batchCorrectionNote} Do not tell the user this action was completed.`;
                                     messages.push({
                                         role: "tool",
                                         tool_call_id: item.tc.id,

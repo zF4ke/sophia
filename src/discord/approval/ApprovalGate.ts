@@ -210,7 +210,7 @@ export function buildResolvedBatchContainer(
         case "approved":
             accentColor = 0x57f287;
             statusIcon = "✅";
-            statusLine = "`✅ Lote aprovado`";
+            statusLine = "`✅ Batch aprovado`";
             break;
         case "partial":
             accentColor = 0xfee75c;
@@ -222,7 +222,7 @@ export function buildResolvedBatchContainer(
         case "denied":
             accentColor = 0xed4245;
             statusIcon = "❌";
-            statusLine = "`❌ Lote recusado`";
+            statusLine = "`❌ Batch recusado`";
             break;
         case "corrected":
             accentColor = 0xfee75c;
@@ -246,7 +246,7 @@ export function buildResolvedBatchContainer(
     return new ContainerBuilder()
         .setAccentColor(accentColor)
         .addTextDisplayComponents(
-            new TextDisplayBuilder().setContent(`### ${statusIcon} Aprovação em lote (${request.items.length} ações)`),
+            new TextDisplayBuilder().setContent(`### ${statusIcon} Aprovação batch (${request.items.length} ações)`),
             new TextDisplayBuilder().setContent(buildBatchItemList(request.items)),
         )
         .addSeparatorComponents(new SeparatorBuilder().setDivider(false).setSpacing(SeparatorSpacingSize.Small))
@@ -262,7 +262,7 @@ export function createBatchApprovalGate(channel: SendableChannels) {
         const container = new ContainerBuilder()
             .setAccentColor(0xed4245)
             .addTextDisplayComponents(
-                new TextDisplayBuilder().setContent(`### 🗑️ Aprovação em lote (${request.items.length} ações)`),
+                new TextDisplayBuilder().setContent(`### 🗑️ Aprovação batch (${request.items.length} ações)`),
                 new TextDisplayBuilder().setContent(itemList),
             );
 
