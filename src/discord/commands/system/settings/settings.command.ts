@@ -67,7 +67,7 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
         label: "Default Retrieval Page",
         shortDescription: "Default rows returned per retrieve_messages call.",
         longDescription: "Default page size for retrieve_messages when the model does not specify a limit. Higher values scan more history per call but also create larger tool outputs.",
-        presets: [25, 50, 75, 100, 150],
+        presets: [25, 50, 75, 100, 150, 250, 400, 600, 1000],
     },
     retrievalContextWindow: {
         label: "Around-Message Window",

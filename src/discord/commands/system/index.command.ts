@@ -52,7 +52,7 @@ export = {
                         .setDescription("Maximum messages")
                         .setRequired(false)
                         .setMinValue(1)
-                        .setMaxValue(5000)
+                        .setMaxValue(50000)
                 )
         )
         .addSubcommand((subcommand) =>

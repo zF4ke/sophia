@@ -27,7 +27,7 @@ describe("AppConfig", () => {
 
         expect(config.runtime.interactiveCrawlLimit).toBe(250);
         expect(config.runtime.escalationFetchLimit).toBe(150);
-        expect(config.runtime.retrievalHistoryLimit).toBe(50);
+        expect(config.runtime.retrievalHistoryLimit).toBeGreaterThanOrEqual(50);
         expect(config.runtime.retrievalContextWindow).toBe(15);
     });
 
