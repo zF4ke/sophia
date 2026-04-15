@@ -11,7 +11,9 @@ Sophia runs on one conversational runtime and one unified Discord retrieval pipe
 - `retrieval`
   Cache-first Discord message retrieval with automatic live refresh when the cache is weak.
 - `capabilities`
-  Registry-driven capability manifests and handlers.
+  Registry-driven capability manifests and handlers. 21 tools across read, write, and destructive tiers.
+- `approval`
+  Gate layer for write and destructive tool calls. Single-item cards for individual actions; batch cards for grouped destructive actions organized by Discord category.
 - `memory`
   Local runtime state, message cache, and trace storage.
 - `integrations/discord`
@@ -19,7 +21,7 @@ Sophia runs on one conversational runtime and one unified Discord retrieval pipe
 - `observability`
   Debug rendering and trace capture.
 - `security`
-  Access, moderation, and command policy.
+  Access, moderation, rate limiting, and command policy.
 
 ## Core Principles
 
@@ -29,7 +31,8 @@ Sophia runs on one conversational runtime and one unified Discord retrieval pipe
 - Weak grounding should lead to best-effort continuation or a targeted follow-up, not a dead-end refusal.
 - The model decides what to do inside a while-loop with native function calling. The runtime enforces budgets and guardrails but does not pre-plan or redirect tool choices.
 - Capability execution is registry-driven, not hardcoded per tool in the core runtime.
-- `retrieve_messages` is the main message-evidence capability. `resolve_member_identity` handles exact member and bot resolution with same-guild historical fallback. `list_guild_structure` and `resolve_channel_targets` provide current-guild discovery. `get_member_profile` returns rich profile data including roles, join date, account creation date, nickname, bot status, Nitro/premium status, and avatar. `list_members` supports offset-based pagination (default page size 20) with an optional name/username fragment filter — omitting the filter returns all members. `get_guild_context` provides live guild-level metadata.
+- Write and destructive tool calls pass through an approval gate before execution. Destructive calls additionally require a confirmation dialog. Multiple destructive calls in the same response are batched into one approval card grouped by Discord category.
+- `retrieve_messages` is the main message-evidence capability. `resolve_member_identity` handles exact member and bot resolution with same-guild historical fallback. `list_guild_structure` and `resolve_channel_targets` provide current-guild discovery. `get_member_profile` returns rich profile data including roles, join date, account creation date, nickname, bot status, Nitro/premium status, and avatar. `list_members` supports offset-based pagination (default page size 20) with an optional name/username fragment filter — omitting the filter returns all members. `get_guild_context` provides live guild-level metadata. `get_role_info` provides role details. `list_threads` and `read_thread_messages` support thread discovery and reading.
 - `/find` stays separate as a specialized retrieval workflow built on the same primitives.
 
 ## Active Runtime Flow
@@ -39,8 +42,18 @@ Sophia runs on one conversational runtime and one unified Discord retrieval pipe
 3. Load memory (recent turns, channel context, prior evidence from persisted tool runs)
 4. Build unified system prompt (`runtime/agent_loop`)
 5. While-loop: model calls tools via native function calling, runtime executes them and feeds results back
-6. Model calls `finish` with the final answer, or runtime produces a conversational fallback
-7. Persist runtime run, tool runs, and trace events
+6. Write/destructive tool calls pass through the approval gate before execution
+7. Model calls `finish` with the final answer, or runtime produces a conversational fallback
+8. Persist runtime run, tool runs, and trace events
+
+## Approval Layer
+
+The approval layer sits between the model's tool call and the capability handler:
+
+- **Write tools** (`create_channel`, `create_category`, `create_thread`, `move_channel`, `manage_member_roles`, `send_message`): require admin approval via an approval card with Aceitar/Recusar buttons. Can be auto-approved when `autoApproveWrites` is enabled.
+- **Destructive tools** (`clear_messages`, `delete_channel`): always require admin approval plus a confirmation dialog. Multiple destructive calls in the same response are grouped into a batch approval card organized by Discord category.
+
+Approval cards show the tool name, description, side-effect level badge, and timeout countdown. Batch cards include a category select menu when actions span multiple Discord categories.
 
 ## Conversation Identity
 

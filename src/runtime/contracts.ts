@@ -17,6 +17,7 @@ export type StopReason =
     | "evidence_sufficient"
     | "budget_exhausted"
     | "confidence_plateau"
+    | "execution_stopped_by_admin"
     | "no_useful_next_step"
     | "insufficient_evidence";
 export type RetrievalSourceOrigin = "none" | "cache" | "live_refresh" | "cache_after_refresh";
@@ -77,6 +78,67 @@ export interface TurnInput {
     replyContext?: ReplyContext | null;
     referencedMessage?: Message | null;
     conversation: ConversationContext;
+    approvalGate?: (request: ApprovalRequest) => Promise<ApprovalResult>;
+    batchApprovalGate?: (request: BatchApprovalRequest) => Promise<BatchApprovalResult>;
+    activityIndicator?: {
+        startThinking(): Promise<void>;
+        startTyping(): Promise<void>;
+        stop(): Promise<void>;
+    } | null;
+}
+
+export type SideEffectLevel = "none" | "write" | "destructive";
+
+export interface ApprovalRequest {
+    requestId: string;
+    toolName: string;
+    toolArgs: ToolArguments;
+    description: string;
+    sideEffectLevel: SideEffectLevel;
+    requesterId: string;
+}
+
+export interface ApprovalResult {
+    approved: boolean;
+    decidedBy: string;
+    decidedAt: number;
+    haltExecution?: boolean;
+    correction?: string;
+}
+
+// ── Batch destructive approval ──
+
+/** Discord Category (parent channel) that an action targets. null = uncategorized / no channel target. */
+export interface DiscordCategoryRef {
+    id: string;
+    name: string;
+}
+
+export interface BatchedDestructiveItem {
+    /** Matches the OpenRouter tool_call id so we can push the right tool result. */
+    toolCallId: string;
+    toolName: string;
+    toolArgs: ToolArguments;
+    description: string;
+    /** The Discord Category the target channel belongs to, or null for top-level / non-channel tools. */
+    targetCategory: DiscordCategoryRef | null;
+}
+
+export interface BatchApprovalRequest {
+    batchId: string;
+    items: BatchedDestructiveItem[];
+    requesterId: string;
+}
+
+export type BatchItemDecision = "approved" | "denied";
+
+export interface BatchApprovalResult {
+    /** Per-item decision keyed by toolCallId. */
+    decisions: Record<string, BatchItemDecision>;
+    haltExecution?: boolean;
+    correction?: string;
+    decidedBy: string;
+    decidedAt: number;
 }
 
 export interface CapabilityManifest {
@@ -85,7 +147,7 @@ export interface CapabilityManifest {
     description: string;
     inputSchema: z.ZodTypeAny;
     outputSchema: z.ZodTypeAny;
-    sideEffectLevel: "none";
+    sideEffectLevel: SideEffectLevel;
     authRequirements: string[];
     costClass: "cheap" | "normal" | "expensive";
     latencyClass: "fast" | "medium" | "slow";
@@ -171,18 +233,6 @@ export interface RuntimeTraceEvent {
     label: string;
     detail: string;
     timestamp: number;
-}
-
-export interface TurnIntent {
-    continuation: boolean;
-    retrievalMode: RetrievalMode | null;
-    beforeTimestamp: number | null;
-    afterTimestamp: number | null;
-    source: {
-        continuation: "deterministic" | "model";
-        retrievalMode: "deterministic" | "model" | "session" | "none";
-        timeBounds: "deterministic" | "model" | "none";
-    };
 }
 
 export interface RuntimeAnswer {

@@ -1,119 +1,174 @@
 # Sophia
 
-Sophia is a Discord assistant built around one conversational runtime and one unified Discord retrieval pipeline.
+A conversational Discord assistant that can search server history, manage channels, and take actions — all through natural language.
 
-## Public Surface
+Sophia turns your Discord server into a searchable, manageable workspace. Ask her questions about what happened in any channel, who said what, or have her create channels, manage roles, and clean up messages — with a built-in approval system that keeps admins in control.
 
-Main conversation entrypoints:
-- `/talk`
-- mentions
-- replies
+## Features
 
-Specialized workflow:
-- `/find`
+**Conversational AI** — Talk to Sophia naturally through `/talk`, mentions, or replies. She maintains conversation continuity across reply chains and threads.
 
-Operator surfaces:
-- `/nth`
-- `/index`
-- `/debug`
-- `/access`
-- `/settings`
+**Deep Server Search** — Search through your entire Discord history with intelligent retrieval. Sophia indexes messages locally for fast lookups and automatically fetches live history when needed.
 
-## What Sophia Does
+**21 Built-in Tools** — From retrieving messages and resolving members to creating channels, managing roles, and sending messages. The model decides which tools to use based on your request.
 
-Sophia is conversational first. When a turn does not need Discord evidence, she keeps the conversation moving instead of shutting it down.
+**Admin Approval System** — Write actions (create channel, send message, manage roles) require admin approval. Destructive actions (delete channel, clear messages) require approval *plus* confirmation. Multiple destructive actions are batched into a single approval card grouped by Discord category.
 
-When a turn does depend on Discord, she uses a cache-first retrieval pipeline:
-1. search local indexed Discord messages
-2. if evidence is weak, refresh from live Discord history behind the scenes
-3. ingest the refreshed messages locally
-4. retry retrieval on the enriched cache
+**Auto-Approve Mode** — Optionally skip approval for non-destructive write actions when you trust the model.
 
-That local storage is a Discord retrieval cache plus runtime state. It is not a separate memory-search product.
+**Animated Activity Indicators** — Sophia reacts with a cycling emoji sequence while thinking, so you always know she's working.
 
-Runtime budget defaults such as tool-call limits and latency budget are configurable through `/settings` or `.env` overrides.
+**Configurable Runtime** — Tune tool-call limits, latency budgets, retrieval depth, approval timeouts, and more through an interactive `/settings` panel. Switch between model profiles on the fly.
 
-## Runtime Architecture
+**Role-Based Access** — Admin and moderator tiers with rate limiting. Admins get full control; moderators get scoped permissions.
 
-Sophia uses a while-loop with native function calling. One unified system prompt (`runtime/agent_loop`) gives the model the question, context, and available tools. The model calls tools iteratively and calls `finish` when it has an answer.
+## Quick Start
 
-There is no separate planner, step selector, or evidence judge. The model handles all decisions inside the tool-calling loop. The runtime enforces:
-- capability validation (tool name must be registered)
-- repeated-call protection (same arguments blocked)
-- tool-call budget and latency budget
-- context overflow pruning
-- refusal prevention for ordinary conversation
+### Prerequisites
 
-If the model never calls `finish`, the runtime produces a conversational fallback.
+- Node.js 18+
+- A Discord bot token
+- An [OpenRouter](https://openrouter.ai/) API key
 
-## Conversation Continuity
+### Install
 
-Conversation identity is reply-chain first:
-- a native Discord thread keeps its own conversation key
-- replies to Sophia reuse the stored conversation thread when one exists
-- replies without a stored Sophia anchor fall back to the first real anchor message
-- otherwise Sophia uses a shared channel-level conversation key
+```bash
+git clone <repo-url>
+cd sophia
+npm install
+```
 
-This lets `/talk`, mentions, and replies behave like one continuous conversation even when multiple users join the same chain.
+### Configure
 
-## Grounding And Recovery
+Create a `.env` file:
 
-Sophia should not dead-end a turn with a bare refusal when grounding is weak. The runtime is designed to:
-- give the best-effort interpretation from current context
-- mark uncertainty clearly when needed
-- ask a targeted follow-up or continue the retrieval path
+```env
+DISCORD_TOKEN=your-discord-bot-token
+OPENROUTER_API_KEY=your-openrouter-api-key
+```
 
-That applies to casual conversation, follow-up questions, and partially grounded channel questions.
+### Run
 
-## Stable Capabilities
+```bash
+npm start
+```
 
-The current stable capability ids are:
-- `retrieve_messages`
-- `resolve_member_identity`
-- `list_guild_structure`
-- `resolve_channel_targets`
-- `get_member_profile`
-- `list_members`
-- `get_guild_context`
+For development with auto-reload:
 
-These are exposed to the model as native function-calling tools via `src/runtime/toolSchemas.ts`.
+```bash
+npm run dev
+```
 
-`retrieve_messages` is the main Discord evidence path. `resolve_member_identity`, `list_guild_structure`, and `resolve_channel_targets` are the current-guild discovery layer. The remaining capabilities are live metadata lookups.
+## Commands
 
-## Storage
+### Conversation
 
-Active runtime storage lives under `storage/runtime/` and is disposable local state.
+| Command | Description |
+|---------|-------------|
+| `/talk` | Start a conversation with Sophia |
+| `@Sophia` | Mention Sophia in any message |
+| *Reply* | Reply to any Sophia message to continue the conversation |
 
-Current storage roles:
-- operational runtime state and traces
-- local message cache and indexing state
-- conversation state (SQLite)
+### Search
 
-Bot settings are stored in `storage/settings.json` and managed through `/settings` or `SettingsService`.
+| Command | Description |
+|---------|-------------|
+| `/find` | Targeted retrieval with topic, channel, and author filters |
+| `/nth` | Read the N-th historical message from an indexed channel |
+
+### Admin
+
+| Command | Description |
+|---------|-------------|
+| `/settings` | Interactive panel to configure runtime parameters and model profile |
+| `/index` | Manage message indexing — backfill channels/categories, check status, repair |
+| `/debug` | Toggle debug mode or view model output logs |
+| `/access` | Manage admin and moderator access |
+| `/ping` | Health check with latency info |
+
+## Tools
+
+Sophia has **21 tools** organized by capability:
+
+| Category | Tools |
+|----------|-------|
+| **Retrieval** | `retrieve_messages` |
+| **Discovery** | `list_guild_structure`, `get_guild_context`, `resolve_channel_targets` |
+| **Members** | `resolve_member_identity`, `get_member_profile`, `list_members`, `get_role_info` |
+| **Threads** | `list_threads`, `read_thread_messages` |
+| **Utilities** | `measure_text_length`, `evaluate_math` |
+| **Write** | `create_channel`, `create_category`, `create_thread`, `move_channel`, `manage_member_roles`, `send_message` |
+| **Destructive** | `clear_messages`, `delete_channel` |
+
+Write tools require admin approval. Destructive tools require approval + confirmation dialog.
+
+## Model Profiles
+
+Three pre-configured profiles, switchable via `/settings`:
+
+| Profile | Model | Context Window |
+|---------|-------|----------------|
+| **fast** (default) | Gemini 3.1 Flash Lite | 1M tokens |
+| **smarter** | MiniMax M2.7 | 190K tokens |
+| **alt** | DeepSeek V3.2 | 160K tokens |
+
+All models are accessed through OpenRouter. No models are hardcoded — profiles are defined in `resources/models/model-profiles.json`.
+
+## How It Works
+
+Sophia uses a **while-loop with native function calling**. One unified system prompt gives the model the question, conversation context, and available tools. The model calls tools iteratively and calls `finish` when it has an answer.
+
+There is no separate planner or step selector. The model handles all decisions inside the tool-calling loop. The runtime enforces budgets, guardrails, and approval gates.
+
+**Retrieval pipeline:**
+1. Search local indexed Discord messages
+2. If evidence is weak, refresh from live Discord history
+3. Ingest new messages into the local cache
+4. Retry retrieval on the enriched cache
+
+**Conversation continuity** follows reply chains across threads and channels, so `/talk`, mentions, and replies all feel like one continuous conversation.
+
+## Configuration
+
+All runtime tuning is done through `/settings` or `storage/settings.json`:
+
+- **Context retention** — recent turns, channel messages, prior evidence slice
+- **Retrieval** — history page size, context window, crawl limits
+- **Loop guardrails** — max tool calls (2–30), latency budget (10s–5m), repeated call guard
+- **Approval** — timeout duration (30s–5m), auto-approve writes toggle
+- **Model profile** — switch between fast/smarter/alt
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `npm start` | Run the bot |
+| `npm run dev` | Development mode with auto-reload |
+| `npm run check` | Typecheck + run all deterministic tests |
+| `npm run test` | Fast deterministic test suite |
+| `npm run test:live` | Real-model tests (requires API key) |
+| `npm run clean` | Reset all storage to defaults |
 
 ## Documentation
 
-Key docs:
-- `AGENTS.md`
-- `docs/architecture.md`
-- `docs/agent-loop.md`
-- `docs/memory-indexing.md`
-- `docs/prompt-catalog.md`
-- `docs/commands-and-admin.md`
-- `docs/cleanup-migration.md`
-- `docs/how-sophia-works.md`
-- `docs/feature-user-stories.md`
-- `docs/testing.md`
-- `docs/ui.md`
+| Doc | Topic |
+|-----|-------|
+| [Architecture](docs/architecture.md) | System blocks, runtime flow, storage |
+| [Agent Loop](docs/agent-loop.md) | While-loop mechanics, tool model, guardrails |
+| [How Sophia Works](docs/how-sophia-works.md) | End-to-end flow, retrieval deep dive, capability composition |
+| [Commands & Admin](docs/commands-and-admin.md) | All commands, approval system, access control |
+| [Memory & Indexing](docs/memory-indexing.md) | Local cache, retrieval strategy, `/index` commands |
+| [Prompt Catalog](docs/prompt-catalog.md) | Active prompts and stable capability names |
+| [Feature Stories](docs/feature-user-stories.md) | Concrete acceptance stories for all tools and compositions |
+| [Testing](docs/testing.md) | Test strategy, deterministic + live suites, manual tests |
+| [UI Guidelines](docs/ui.md) | Response formatting, approval cards, activity indicators |
+| [Cleanup & Migration](docs/cleanup-migration.md) | What was removed and why |
 
-## Verification
+## Tech Stack
 
-Run:
-```bash
-npm run check
-```
-
-Optional live-model suite:
-```bash
-LIVE_MODEL_TESTS=1 OPENROUTER_API_KEY=... npm run test:live
-```
+- **Runtime:** Node.js + TypeScript
+- **Discord:** discord.js v14
+- **AI:** OpenRouter (OpenAI SDK compatible)
+- **Storage:** libSQL (local SQLite)
+- **Validation:** Zod
+- **Testing:** Vitest

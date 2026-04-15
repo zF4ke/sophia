@@ -23,6 +23,7 @@ export interface ModelProfile {
     temperature: number;
     maxOutputTokens: number;
     contextWindow: number;
+    parallelToolCalls?: boolean;
 }
 
 export type WebMode = "off" | "auto" | "required";
@@ -49,7 +50,6 @@ export interface AppConfig {
         maxChannelMessages: number;
         maxToolRunsContext: number;
         maxEvidenceSlice: number;
-        interactiveCrawlLimit: number;
         escalationFetchLimit: number;
         retrievalHistoryLimit: number;
         retrievalContextWindow: number;

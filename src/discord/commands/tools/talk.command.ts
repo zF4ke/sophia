@@ -49,6 +49,7 @@ export = {
                 flags: ephemeral ? MessageFlags.Ephemeral : undefined,
             });
             activityIndicator = await ResponseActivityService.startForInteraction(interaction);
+            await activityIndicator.startThinking();
             debugSession = await DebugService.startForInteraction(interaction, message);
 
             const input = await ConversationAdapter.fromInteraction({
@@ -57,6 +58,7 @@ export = {
                 debugSession,
             });
             const result = await Runtime.answer(input);
+            await activityIndicator.startTyping();
             const sentMessages = await UIService.sendLongResponse(
                 interaction,
                 "",
@@ -79,7 +81,7 @@ export = {
                 )
             );
         } finally {
-            activityIndicator?.stop();
+            await activityIndicator?.stop();
         }
     },
 };

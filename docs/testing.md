@@ -75,6 +75,7 @@ Add new live stories when changing:
 Recent deterministic regression additions are in:
 - `tests/runtime/runtimeUserStories.test.ts` (follow-up can answer from reused prior evidence without rerunning tools)
 - `tests/runtime/planning.test.ts` (fresh follow-ups do not auto-apply cursor/exclusions; model tool choice is honored without pre-flight redirects; ambiguous members profiled before generic channel discovery)
+- `tests/runtime/approvalGate.test.ts` (single-item approval card creation for write/destructive tools; batch approval card creation for grouped destructive calls; destructive confirmation dialog flow; auto-approve for write tools when enabled; timeout handling; correction modal feedback; Discord category grouping in batch cards)
 - `tests/discord/UnifiedMessageRetrieval.test.ts` (strict scoped retry recovers hidden rows)
 - `tests/discord/DiscordLiveService.test.ts` (list_members pagination with offset, no duplicate members across pages, default page size of 20, get_member_profile returns enriched fields: joinedAt, accountCreatedAt, premiumSince, pending)
 

@@ -27,3 +27,16 @@ The runtime prompt set expects these capability ids to stay stable:
 - `get_member_profile`
 - `list_members`
 - `get_guild_context`
+- `clear_messages`
+- `create_channel`
+- `create_category`
+- `measure_text_length`
+- `evaluate_math`
+- `get_role_info`
+- `delete_channel`
+- `create_thread`
+- `move_channel`
+- `manage_member_roles`
+- `list_threads`
+- `read_thread_messages`
+- `send_message`

@@ -59,15 +59,18 @@ async function respondToMessage(message: Message, trigger: "mention" | "reply") 
                 : message.content.trim();
 
         debugSession = await DebugService.startForMessage(message, prompt);
-        activityIndicator = await ResponseActivityService.startForChannel(channel);
+        activityIndicator = await ResponseActivityService.startForMessage(message, channel);
+        await activityIndicator.startThinking();
 
         const input = await ConversationAdapter.fromMessage({
             message,
             trigger,
             question: prompt,
             debugSession,
+            activityIndicator,
         });
         const result = await Runtime.answer(input);
+        await activityIndicator.startTyping();
         const sentMessages = await UIService.sendLongMessage(
             message,
             UIService.formatAnswer(result.answer, result.citations)
@@ -81,7 +84,7 @@ async function respondToMessage(message: Message, trigger: "mention" | "reply") 
         console.error(error);
         await debugSession?.finishError(error);
     } finally {
-        activityIndicator?.stop();
+        await activityIndicator?.stop();
     }
 }
 

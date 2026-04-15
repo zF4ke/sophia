@@ -5,6 +5,8 @@ This document is the concrete acceptance layer for Sophia's current runtime. It 
 ## Tool Coverage
 
 Current runtime capabilities and workflows:
+
+### Read & Discovery
 - `resolve_member_identity`
 - `get_member_profile`
 - `list_members`
@@ -12,6 +14,27 @@ Current runtime capabilities and workflows:
 - `list_guild_structure`
 - `retrieve_messages`
 - `get_guild_context`
+- `get_role_info`
+- `list_threads`
+- `read_thread_messages`
+
+### Utilities
+- `measure_text_length`
+- `evaluate_math`
+
+### Write (admin approval required)
+- `create_channel`
+- `create_category`
+- `create_thread`
+- `move_channel`
+- `manage_member_roles`
+- `send_message`
+
+### Destructive (approval + confirmation required)
+- `clear_messages`
+- `delete_channel`
+
+### Workflows
 - `/find` specialized workflow
 
 ## Single-Tool Stories
@@ -58,6 +81,76 @@ Current runtime capabilities and workflows:
 
 - As a user, I can ask about guild-level facts such as server name, member count, or channel count.
 - Sophia should answer from current live guild metadata.
+
+### `get_role_info`
+
+- As a user, I can ask about a specific role's details: members who have it, permissions, color, position, and mentionability.
+- Sophia should answer from live role metadata, not cached or guessed data.
+
+### `list_threads`
+
+- As a user, I can ask what threads exist in a channel.
+- Sophia should list active and recently archived threads.
+- The `include_archived` flag can be toggled to control whether archived threads appear.
+
+### `read_thread_messages`
+
+- As a user, I can ask what was discussed in a specific thread.
+- Sophia should read messages from that thread and answer from the evidence.
+
+### `measure_text_length`
+
+- As a user, I can ask Sophia to count characters, words, or lines in a piece of text.
+- Sophia should return exact counts without approximation.
+
+### `evaluate_math`
+
+- As a user, I can ask Sophia to calculate arithmetic expressions.
+- Sophia should use safe evaluation supporting arithmetic, exponents, sqrt, trig, log, etc.
+
+### `create_channel`
+
+- As an admin, I can ask Sophia to create a new channel.
+- Sophia should present an approval card before executing.
+- The approval card shows the tool name, description, and a "write" badge.
+- If `autoApproveWrites` is enabled, the action executes immediately.
+
+### `create_category`
+
+- As an admin, I can ask Sophia to create a new category.
+- Same approval flow as `create_channel`.
+
+### `create_thread`
+
+- As an admin, I can ask Sophia to create a thread in a specific channel.
+- Same approval flow as `create_channel`.
+
+### `move_channel`
+
+- As an admin, I can ask Sophia to move a channel to a different category or position.
+- Same approval flow as `create_channel`.
+
+### `manage_member_roles`
+
+- As an admin, I can ask Sophia to add or remove roles from a member.
+- Same approval flow as `create_channel`.
+
+### `send_message`
+
+- As an admin, I can ask Sophia to send a message to a specific channel or thread.
+- Same approval flow as `create_channel`.
+
+### `clear_messages`
+
+- As an admin, I can ask Sophia to delete messages from a channel.
+- Sophia must show an approval card with a "destructive" badge.
+- After the admin clicks "Aceitar", a confirmation dialog appears: "Esta ação é destrutiva. Tens a certeza?"
+- The admin must click "Confirmar" to execute. This cannot be auto-approved.
+
+### `delete_channel`
+
+- As an admin, I can ask Sophia to permanently delete a channel.
+- Same destructive approval + confirmation flow as `clear_messages`.
 
 ### `/find`
 
@@ -126,6 +219,36 @@ Current runtime capabilities and workflows:
 - Runtime can combine `get_guild_context` with `list_guild_structure`.
 - Sophia answers with current guild metadata plus structure context.
 
+### Thread discovery and reading
+
+- User asks: `What threads are in #geral and what are they about?`
+- Runtime calls `list_threads` to enumerate threads.
+- Runtime calls `read_thread_messages` for each relevant thread.
+- Sophia summarizes thread topics from message evidence.
+
+### Batch destructive with approval
+
+- Admin says: `Clear messages in #spam and #temp, then delete #old-announcements.`
+- Runtime queues `clear_messages` for #spam, `clear_messages` for #temp, and `delete_channel` for #old-announcements.
+- All three are grouped into a single batch approval card, organized by Discord category.
+- Admin can approve all, deny all, or selectively approve by category.
+- If the admin clicks "Recusar e corrigir", a modal opens for correction feedback.
+
+### Write with auto-approve
+
+- `autoApproveWrites` is enabled in settings.
+- Admin says: `Create a channel called #project-updates under the Projects category.`
+- Runtime calls `create_channel`.
+- Because autoApproveWrites is enabled and this is a write (not destructive), the action executes immediately without an approval card.
+
+### Role management after member lookup
+
+- Admin asks: `Give the Moderator role to Glonos.`
+- Runtime resolves "Glonos" with `resolve_member_identity`.
+- If ambiguous, fetches profiles with `get_member_profile` to disambiguate.
+- Runtime calls `manage_member_roles` to add the role.
+- Approval card is shown. Admin approves. Role is added.
+
 ## Behavioral Expectations
 
 - Sophia should stay conversational in the final answer, even when tools were involved.
@@ -140,3 +263,7 @@ Current runtime capabilities and workflows:
 - If a target channel is readable but not indexed, Sophia should still try scoped retrieval and let the retrieval layer do the cache miss -> live fetch -> ingest path automatically.
 - For channel-understanding tasks, recent/ordered history is the default evidence lane and semantic matches are supplemental.
 - If a large scoped read stops because of budget, Sophia should say so and make it clear that continuation is still possible when that is true.
+- Write and destructive tools should only be called when the user explicitly requests an action. Sophia should never speculatively create, delete, or modify server resources.
+- Destructive tool calls always require admin approval plus confirmation, regardless of settings.
+- Multiple destructive calls in the same response should be batched into one approval card grouped by Discord category.
+- After an approved action, Sophia should confirm what was done using the concrete identifiers from tool output (channel mentions, role names, etc.).

@@ -185,7 +185,7 @@ describe("CapabilityRegistry", () => {
                 guild: { id: "g1" } as any,
                 question: "who is u-requester",
             },
-            { query: "u-requester" }
+            { queries: ["u-requester"] }
         );
 
         expect(DiscordLiveService.resolveMemberIdentity).toHaveBeenCalledWith(
@@ -194,33 +194,34 @@ describe("CapabilityRegistry", () => {
         );
         expect(result.tool).toBe("resolve_member_identity");
         expect(result.data).toMatchObject({
-            resolvedId: "u-requester",
-            source: "live_id",
+            results: [expect.objectContaining({ resolvedId: "u-requester", source: "live_id" })],
         });
     });
 
     it("executes resolve_channel_targets through the shared guild discovery service", async () => {
-        vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargets").mockResolvedValue({
-            query: "reflexoes",
-            resolvedIds: ["c-reflexoes"],
-            entries: [
-                {
-                    id: "c-reflexoes",
-                    guildId: "g1",
-                    name: "reflexoes",
-                    type: "0",
-                    parentCategoryId: "cat-1",
-                    parentCategoryName: "Text",
-                    isReadable: true,
-                    isViewable: true,
-                    isIndexed: true,
-                    source: "live",
-                    missingOrDeletedPossible: false,
-                },
-            ],
-            exactIdMatch: false,
-            confidence: "high",
-        });
+        vi.spyOn(DiscordGuildDiscoveryService, "resolveChannelTargetsBatch").mockResolvedValue([
+            {
+                query: "reflexoes",
+                resolvedIds: ["c-reflexoes"],
+                entries: [
+                    {
+                        id: "c-reflexoes",
+                        guildId: "g1",
+                        name: "reflexoes",
+                        type: "0",
+                        parentCategoryId: "cat-1",
+                        parentCategoryName: "Text",
+                        isReadable: true,
+                        isViewable: true,
+                        isIndexed: true,
+                        source: "live",
+                        missingOrDeletedPossible: false,
+                    },
+                ],
+                exactIdMatch: false,
+                confidence: "high",
+            },
+        ]);
 
         const capability = CapabilityRegistry.get("resolve_channel_targets");
         const result = await capability.run(
@@ -229,18 +230,17 @@ describe("CapabilityRegistry", () => {
                 question: "look in reflexoes",
                 currentChannelId: "c1",
             },
-            { targetText: "reflexoes" }
+            { targets: ["reflexoes"] }
         );
 
-        expect(DiscordGuildDiscoveryService.resolveChannelTargets).toHaveBeenCalledWith(
+        expect(DiscordGuildDiscoveryService.resolveChannelTargetsBatch).toHaveBeenCalledWith(
             expect.objectContaining({ id: "g1" }),
-            "reflexoes",
+            ["reflexoes"],
             "c1"
         );
         expect(result.tool).toBe("resolve_channel_targets");
         expect(result.data).toMatchObject({
-            resolvedIds: ["c-reflexoes"],
-            confidence: "high",
+            results: [expect.objectContaining({ resolvedIds: ["c-reflexoes"], confidence: "high" })],
         });
     });
 

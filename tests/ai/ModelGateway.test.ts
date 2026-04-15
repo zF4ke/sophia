@@ -29,7 +29,6 @@ vi.mock("@/app/AppConfig", () => ({
             maxChannelMessages: 15,
             maxToolRunsContext: 12,
             maxEvidenceSlice: 32,
-            interactiveCrawlLimit: 250,
             escalationFetchLimit: 150,
             retrievalHistoryLimit: 50,
             retrievalContextWindow: 15,

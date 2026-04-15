@@ -37,6 +37,8 @@ The cache is used to support Discord retrieval and runtime continuity. It is not
 - `get_member_profile` fetches live identity and profile metadata.
 - `list_members` fetches live guild membership data.
 - `get_guild_context` fetches live guild metadata.
+- `get_role_info` fetches live role details.
+- `list_threads` and `read_thread_messages` provide thread discovery and reading.
 
 `/find` is a specialized retrieval workflow that uses the same shared retrieval primitives.
 

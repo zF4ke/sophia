@@ -54,6 +54,19 @@ These capability ids are prompt- and runtime-stable:
 - `get_member_profile`
 - `list_members`
 - `get_guild_context`
+- `clear_messages`
+- `create_channel`
+- `create_category`
+- `measure_text_length`
+- `evaluate_math`
+- `get_role_info`
+- `delete_channel`
+- `create_thread`
+- `move_channel`
+- `manage_member_roles`
+- `list_threads`
+- `read_thread_messages`
+- `send_message`
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`.
 
@@ -68,6 +81,11 @@ If a capability id changes, update:
 - `src/capabilities/CapabilityRegistry.ts`
 - `resources/prompts/runtime/agent_loop.md`
 - the affected tests
+
+Mutating capability output contract (required for all current and future `write`/`destructive` tools):
+- Return identifier-rich `data` fields that are directly reusable in user replies (for Discord resources include both raw IDs and mention-ready fields, e.g. `channelId` and `channelMention: <#id>`).
+- Include the same concrete identifier in `summary` (not only display names), so the model can produce accurate post-action confirmations.
+- Prefer stable identifiers over names when they differ in reliability.
 
 ## Prompt Ownership
 
@@ -134,6 +152,25 @@ Interaction entrypoint:
 Command registry/loader:
 
 - `src/discord/loaders/commandLoader.ts`
+
+## Tool Schema Rules (read before touching any tool file)
+
+All tool parameter schemas in `src/tools/` are sent verbatim to every model provider, including Google Gemini. Gemini validates JSON Schema strictly and returns a 400 if any rule is violated. The following constraints are **mandatory** for every schema — violations have caused repeated production outages:
+
+1. **Every `type: "object"` must have a `required` field** — even if no fields are required, include `required: []`. This applies to nested objects at any depth (e.g. sub-objects inside a `cursor` property).
+2. **Every `type: "array"` must have an `items` field.**
+3. **Opaque passthrough objects must still have `properties: {}` and `required: []`** — never leave a `type: "object"` with nothing but a `description`.
+4. Do not use `additionalProperties` — Gemini rejects it.
+5. Do not use `null` as a type value.
+
+When adding or editing a tool schema, verify every object at every level of nesting satisfies rules 1–3 before running `npm run check`.
+
+Historical violations found and fixed:
+- `getGuildContext` — missing `required: []`
+- `listMembers` — missing `required: []`
+- `listGuildStructure` — missing `required: []`
+- `retrieveMessages` — nested `cursor`, `cursor.history`, `cursor.semantic` objects all missing `required: []`; `cursor.history` also missing `properties: {}`
+- `createThread` — numeric `enum: [60, 1440, 4320, 10080]` on `auto_archive_duration` (type: "number"); Gemini rejects numeric enums — use string `enum` or drop `enum` entirely and document valid values in the description
 
 ## Safe Change Sequence
 

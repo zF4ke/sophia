@@ -4,12 +4,13 @@
 
 Sophia is a conversational-first Discord assistant. She uses a while-loop runtime with native function calling, one conversation system, and one Discord retrieval system.
 
-She currently does three main things:
+She currently does four main things:
 - keep casual conversation moving
 - retrieve Discord evidence when a turn depends on server state
+- take actions on the server (create channels, manage roles, send messages) with admin approval
 - preserve continuity through conversation state and a local message cache
 
-She does not yet have autonomous long-term memory, a self-updating personality system, or write-side task execution.
+She does not yet have autonomous long-term memory or a self-updating personality system.
 
 ## Core Runtime Flow
 
@@ -145,7 +146,7 @@ Retention is bounded instead of unbounded:
 
 ### Capability Composition
 
-The model can call any registered capability in any order, any number of times with different arguments. Common patterns emerge naturally:
+The model can call any registered capability in any order, any number of times with different arguments. There are 21 tools across read, write, and destructive tiers. Common patterns emerge naturally:
 
 ```mermaid
 flowchart LR
@@ -157,6 +158,12 @@ flowchart LR
     L --> C5[get_member_profile]
     L --> C6[list_members]
     L --> C7[get_guild_context]
+    L --> C8[get_role_info]
+    L --> C9[list_threads / read_thread_messages]
+    L --> C10[measure_text_length / evaluate_math]
+    L --> W1[create_channel / create_category / create_thread]
+    L --> W2[move_channel / manage_member_roles / send_message]
+    L --> D1[clear_messages / delete_channel]
     L --> FN[finish]
 
     C1 --> C3
@@ -164,6 +171,9 @@ flowchart LR
     C2 --> C5
     C2 --> C4
 
+    W1 -->|approval gate| FN
+    W2 -->|approval gate| FN
+    D1 -->|approval + confirm| FN
     C4 --> FN
     C5 --> FN
     C6 --> FN
@@ -174,6 +184,7 @@ flowchart LR
 Read this as a capability composer, not a fixed script:
 - different questions activate different tool sequences
 - composition is bounded by budgets, loop guards, and capability validation
+- write/destructive tools pass through the approval gate before execution
 - retrieval sessions let repeated turns continue composition statefully
 
 ## How `retrieve_messages` Works
@@ -280,6 +291,17 @@ That separation matters because a category name alone is not enough to explain w
 - distinguish current live guild structure from cached-only remembered entries
 - carry short-lived resolved member/channel targets across follow-up turns in the same conversation
 - inspect category structure and then retrieve scoped messages from its visible child channels
+- inspect role details (members, permissions, color, position)
+- list and read thread messages
+- measure text length and evaluate math expressions
+- create channels, categories, and threads (with admin approval)
+- move channels between categories (with admin approval)
+- manage member roles — add or remove (with admin approval)
+- send messages to channels or threads (with admin approval)
+- clear messages from a channel (with admin approval + confirmation)
+- delete channels permanently (with admin approval + confirmation)
+- batch multiple destructive actions into a single approval card grouped by Discord category
+- auto-approve non-destructive write actions when configured
 - run `/find` as a specialized retrieval workflow
 
 ## Common Wiring Patterns
@@ -328,21 +350,31 @@ agent loop -> resolve target
 -> finish
 ```
 
+### 6. Channel creation with approval
+
+```text
+agent loop -> user requests channel creation
+-> create_channel tool call
+-> approval card shown to admin
+-> admin approves -> channel created -> finish
+-> admin denies -> model receives denial -> finish with explanation
+```
+
+### 7. Batch destructive operations
+
+```text
+agent loop -> user requests cleanup of multiple channels
+-> clear_messages calls queued
+-> batch approval card shown (grouped by Discord category)
+-> admin approves all/by category -> actions executed -> finish
+```
+
 ## Limitations
 
 Current limitations:
 - no autonomous long-term belief store
 - no episodic memory layer
 - no self-updating personality module
-- no write actions like role changes, thread creation, or DM task workflows
 - no universal capability composer yet
 - retrieval is still bounded and cache-first/live-refresh, not a full autonomous memory system
 - very large channel reconstructions may still need multiple user turns when the runtime hits budget before exhaustion
-
-## Future Evolution
-
-Planned but not yet implemented:
-- continuous long-term memory about people, concepts, and projects
-- a separate personality layer that does not contaminate factual memory
-- bounded write-side tasks with approvals
-- a future composer that can combine specialized workflows and general capabilities under one orchestration layer

@@ -15,10 +15,11 @@ export interface BotSettings {
         maxChannelMessages: number;
         maxToolRunsContext: number;
         maxEvidenceSlice: number;
-        interactiveCrawlLimit: number;
         escalationFetchLimit: number;
         retrievalHistoryLimit: number;
         retrievalContextWindow: number;
+        approvalTimeoutMs: number;
+        autoApproveWrites: boolean;
     };
     debug: boolean;
 }
@@ -31,17 +32,18 @@ const DEFAULT_SETTINGS: BotSettings = {
     runtime: {
         operationalDbPath: path.join(DEFAULT_RUNTIME_DIR, "operational.sqlite"),
         checkpointDbPath: path.join(DEFAULT_RUNTIME_DIR, "checkpoints.sqlite"),
-        maxToolCalls: 6,
+        maxToolCalls: 12,
         maxRepeatedCallSignature: 1,
         maxLatencyBudgetMs: 15000,
         maxPriorTurns: 5,
         maxChannelMessages: 15,
         maxToolRunsContext: 12,
         maxEvidenceSlice: 32,
-        interactiveCrawlLimit: 250,
         escalationFetchLimit: 150,
         retrievalHistoryLimit: 50,
         retrievalContextWindow: 15,
+        approvalTimeoutMs: 60_000,
+        autoApproveWrites: false,
     },
     debug: false,
 };

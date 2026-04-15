@@ -20,7 +20,7 @@ export function getAppConfig(): AppConfig {
     const profiles = readModelProfiles();
     const settings = SettingsService.load();
 
-    const modelProfileName = process.env.MODEL_PROFILE || settings.modelProfile || profiles.defaultProfile;
+    const modelProfileName = settings.modelProfile || profiles.defaultProfile;
     const modelProfile = profiles.profiles[modelProfileName];
 
     if (!modelProfile) {
@@ -47,8 +47,7 @@ export function getAppConfig(): AppConfig {
     return {
         discordToken,
         openRouterApiKey,
-        openRouterBaseUrl:
-            process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+        openRouterBaseUrl: "https://openrouter.ai/api/v1",
         modelProfileName,
         modelProfile,
         runtime: {
@@ -61,7 +60,6 @@ export function getAppConfig(): AppConfig {
             maxChannelMessages: rt.maxChannelMessages,
             maxToolRunsContext: rt.maxToolRunsContext,
             maxEvidenceSlice: rt.maxEvidenceSlice,
-            interactiveCrawlLimit: rt.interactiveCrawlLimit,
             escalationFetchLimit: rt.escalationFetchLimit,
             retrievalHistoryLimit: rt.retrievalHistoryLimit,
             retrievalContextWindow: rt.retrievalContextWindow,

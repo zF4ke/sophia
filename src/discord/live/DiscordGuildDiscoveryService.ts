@@ -150,8 +150,27 @@ export class DiscordGuildDiscoveryService {
         targetText: string,
         currentChannelId?: string | null
     ): Promise<ResolvedChannelTarget> {
-        const query = targetText.trim();
         const entries = await this.listGuildStructure(guild);
+        return this.scoreTargetAgainstEntries(targetText, entries, currentChannelId);
+    }
+
+    public static async resolveChannelTargetsBatch(
+        guild: Guild | null,
+        targets: string[],
+        currentChannelId?: string | null
+    ): Promise<ResolvedChannelTarget[]> {
+        const entries = await this.listGuildStructure(guild);
+        return targets.map((target) =>
+            this.scoreTargetAgainstEntries(target, entries, currentChannelId)
+        );
+    }
+
+    private static scoreTargetAgainstEntries(
+        targetText: string,
+        entries: GuildStructureEntry[],
+        currentChannelId?: string | null
+    ): ResolvedChannelTarget {
+        const query = targetText.trim();
         const exactIdMatchEntries = entries.filter((entry) => entry.id === query);
         if (exactIdMatchEntries.length) {
             const resolvedIds = this.expandToMessageChannelIds(exactIdMatchEntries, entries);

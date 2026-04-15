@@ -2,7 +2,6 @@ import type { Guild } from "discord.js";
 import { getAppConfig } from "@/app/AppConfig";
 import {
     DiscordChannelCrawlService,
-    getInteractiveCrawlLimit,
 } from "@/discord/live/DiscordChannelCrawlService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type {
@@ -16,10 +15,7 @@ import type {
 const MAX_CHANNEL_ESCALATIONS = 2;
 
 function getEscalationFetchLimit(): number {
-    return Math.min(
-        getAppConfig().runtime.escalationFetchLimit,
-        getInteractiveCrawlLimit()
-    );
+    return Math.max(1, getAppConfig().runtime.escalationFetchLimit);
 }
 
 function dedupeChunks(rows: RetrievedChunk[]): RetrievedChunk[] {
@@ -124,7 +120,6 @@ function buildSemanticCursor(results: RetrievedChunk[]): SemanticContinuationCur
 }
 
 async function buildExhaustion(
-    guildId: string | null,
     channelIds: string[],
     historyMessages: RetrievedChunk[],
     crawls: ChannelCrawlResult[]
@@ -651,7 +646,6 @@ export class UnifiedMessageRetrieval {
         );
         const semanticContinuationCursor = buildSemanticCursor(semanticMatches);
         const historyExhaustion = await buildExhaustion(
-            options.guild?.id || null,
             searchedChannelIds,
             historyMessages,
             crawlResults

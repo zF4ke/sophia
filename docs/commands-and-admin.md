@@ -21,14 +21,96 @@ These all route to the same conversation runtime.
 
 ## Operator Commands
 
-- `/nth` — read indexed historical messages
-- `/index` — manage backfill and repair; `/index status` shows local retrieval state
+- `/nth` — read indexed historical messages by position
+- `/index` — manage backfill and repair; subcommands: `status`, `clear`, `repair`, `backfill_channel`, `backfill_category`
 - `/debug toggle` — enable or disable the debug panel for the current guild
 - `/debug logs` — view recent model-output log entries with optional `count` and `date` filters
 - `/access` — manage admin and moderator access
-- `/settings` — configure runtime parameters through an interactive panel with explanations for context retention, paging, live crawl limits, and loop guardrails
+- `/settings` — configure runtime parameters through an interactive panel
+- `/ping` — health check with round-trip latency, gateway ping, and shard info
 
 `/index status` is the single status surface for local retrieval state. It exposes:
 - local message/index status
 - current-guild completeness data such as readable live channels/categories and cached-only remembered channels
 - runtime storage status
+
+## Settings Panel
+
+`/settings` opens an interactive panel with:
+- **Model profile selector** — switch between fast, smarter, and alt profiles
+- **Runtime parameter selectors** — 11 tuning knobs for context retention, retrieval, loop guardrails, and approval
+- **Auto-Approve Writes toggle** — skip approval for non-destructive write actions
+- **Debug toggle** — enable/disable debug mode
+- **Reset to Defaults** — restore all settings to factory defaults
+
+### Runtime Parameters
+
+| Setting | Description | Presets |
+|---------|-------------|---------|
+| Recent Turns | Q/A pairs replayed into prompt | 3, 5, 8, 10 |
+| Recent Channel Messages | Ambient context per turn | 10, 15, 25, 40 |
+| Prior Tool Runs | Past tool runs scanned for evidence | 6, 12, 18, 24 |
+| Prior Evidence Slice | Evidence items carried to next turn | 16, 32, 48, 64 |
+| Default Retrieval Page | Rows per `retrieve_messages` call | 25, 50, 75, 100, 150 |
+| Around-Message Window | Neighbors loaded around a hit | 8, 15, 25, 40 |
+| Max Tool Calls | Hard cap per turn | 2–30 |
+| Repeated Call Guard | Same args retry limit | 1, 2, 3 |
+| Latency Budget | Wall-clock timeout per turn | 10s–5m |
+| Escalation Fetch Limit | Live refresh cap for retries | 50, 100, 150, 250, 400, 600, 800, 1000 |
+| Approval Timeout | Admin approval wait time | 30s–5m |
+
+## Approval System
+
+When Sophia's model decides to call a write or destructive tool, the action goes through an approval gate before execution.
+
+### Write Actions
+
+Tools: `create_channel`, `create_category`, `create_thread`, `move_channel`, `manage_member_roles`, `send_message`
+
+- An approval card is shown to the admin with:
+  - Tool name and description
+  - Yellow "write" badge
+  - **Aceitar** (approve), **Recusar** (deny), **Recusar e corrigir** (deny with feedback), **Parar execução** (stop)
+- If `autoApproveWrites` is enabled, write actions execute immediately without a card.
+
+### Destructive Actions
+
+Tools: `clear_messages`, `delete_channel`
+
+- An approval card is shown with a red "destructive" badge
+- After clicking **Aceitar**, a confirmation dialog appears: "Esta ação é destrutiva. Tens a certeza?"
+- The admin must click **Confirmar** to execute
+- Destructive actions can never be auto-approved
+
+### Batch Destructive
+
+When the model emits multiple destructive tool calls in a single response:
+
+- All pending destructive actions are grouped into one batch approval card
+- Actions are organized by their target Discord category
+- The admin can:
+  - **Aprovar tudo** — approve all actions
+  - **Recusar tudo** — deny all actions
+  - **Category select** — approve only actions in a specific Discord category (shown when 2+ categories)
+  - **Recusar e corrigir** — open a modal to explain what should be done differently
+  - **Parar execução** — stop the entire runtime
+
+## Access Control
+
+- **Admins** have full permissions (`["*"]`). Can add/remove other admins and moderators.
+- **Moderators** have scoped permissions (`["moderate"]`). Cannot escalate themselves.
+- System admin IDs are hardcoded and always loaded.
+- Rate limiting applies per user per command. Admins get 2x limits, moderators get 1.5x.
+
+### Command Permissions
+
+| Command | Access |
+|---------|--------|
+| `/talk` | Admin |
+| `/find` | Admin |
+| `/index` | Admin |
+| `/debug` | Admin |
+| `/access` | Admin |
+| `/settings` | Admin |
+| `/nth` | Public |
+| `/ping` | Public |
