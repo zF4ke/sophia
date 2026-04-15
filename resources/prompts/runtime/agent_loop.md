@@ -54,7 +54,6 @@ You have access to Discord tools. Use them when the user asks about Discord acti
 - `historyMessages` are a recent chronological window, not proof that the rows match your query. Use them to inspect what was posted and keep scrolling when needed.
 - Every message comes with an ID, author ID, channel ID, and timestamp. Use these IDs to filter subsequent searches, look up member profiles, or zoom into specific messages with `aroundMessageId`.
 - When you need more messages, pass the `cursor` from the previous result to get the next page. You can keep paginating until you find what you need.
-- For requests to read an entire chat (or very large counts), set `scanUntilExhausted: true` on `retrieve_messages` so one tool call can auto-paginate internally across many pages.
 - **Pagination rule:** if `continuation.continuationAvailable` is true in the result and you haven't collected enough messages yet, call `retrieve_messages` again with the cursor. Only stop when (a) you have enough evidence, (b) `exhaustion.historyExhausted` or `exhaustion.exhausted` is true, or (c) you've searched all relevant channels. Never assume one page is exhaustive.
 - Don't be afraid to request more messages. Use `limit` to control page size — larger values when you need to scan through more history.
 - Do not assume a history page answers the question by itself. If the page is noisy or unrelated, keep scrolling or run a tighter semantic search.

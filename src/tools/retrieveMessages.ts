@@ -64,23 +64,7 @@ export type RetrievalPayload = {
         retryStrategy?: string;
         scopedEmptyRetryRecovered?: boolean;
     };
-    scan?: {
-        requestedDeepScan?: boolean;
-        scanUntilExhausted?: boolean;
-        targetCount?: number | null;
-        pagesScanned?: number;
-        maxPagesReached?: boolean;
-        messageCapReached?: boolean;
-        totalUniqueScanned?: number;
-        totalHistoryScanned?: number;
-        totalSemanticScanned?: number;
-    };
 };
-
-const DEFAULT_MAX_SCAN_PAGES = 12;
-const ABSOLUTE_MAX_SCAN_PAGES = 40;
-const DEFAULT_MAX_RETURNED_MESSAGES = 300;
-const ABSOLUTE_MAX_RETURNED_MESSAGES = 600;
 
 // ── Strategy helpers ────────────────────────────────────────────────
 
@@ -258,26 +242,6 @@ const parameters = {
             description:
                 "Number of messages to return per page. Default 50. Use higher values when scrolling through history.",
         },
-        scanUntilExhausted: {
-            type: "boolean",
-            description:
-                "If true, auto-paginates internally through continuation cursors until exhaustion or limits are hit. Use when the user asks to read an entire chat/history.",
-        },
-        targetCount: {
-            type: "number",
-            description:
-                "Target number of unique messages to gather before stopping auto-pagination. Useful for requests like 'find 200 latest messages'.",
-        },
-        maxPages: {
-            type: "number",
-            description:
-                "Maximum number of internal pages to scan in one tool call when deep scanning. Safety bound to avoid runaway scans.",
-        },
-        maxReturnedMessages: {
-            type: "number",
-            description:
-                "Maximum number of messages included in this tool response payload. Scanning can continue beyond this for counting, but payload stays bounded.",
-        },
         cursor: {
             type: "object",
             description:
@@ -354,10 +318,6 @@ export const retrieveMessagesTool: ToolDefinition = {
                 )
                 .optional(),
             mode: retrievalModeSchema.optional(),
-            scanUntilExhausted: z.boolean().optional(),
-            targetCount: z.number().int().positive().optional(),
-            maxPages: z.number().int().positive().optional(),
-            maxReturnedMessages: z.number().int().positive().optional(),
             cursor: z
                 .object({
                     history: z
@@ -425,17 +385,6 @@ export const retrieveMessagesTool: ToolDefinition = {
             beforeTimestamp: z.number().nullable(),
             afterTimestamp: z.number().nullable(),
             excludedMessageIds: z.array(z.string()),
-            scan: z.object({
-                requestedDeepScan: z.boolean().optional(),
-                scanUntilExhausted: z.boolean().optional(),
-                targetCount: z.number().nullable().optional(),
-                pagesScanned: z.number().optional(),
-                maxPagesReached: z.boolean().optional(),
-                messageCapReached: z.boolean().optional(),
-                totalUniqueScanned: z.number().optional(),
-                totalHistoryScanned: z.number().optional(),
-                totalSemanticScanned: z.number().optional(),
-            }).optional(),
         }),
         sideEffectLevel: "none",
         authRequirements: [],
@@ -529,46 +478,11 @@ export const retrieveMessagesTool: ToolDefinition = {
                           value.trim().length > 0,
                   )
                 : undefined;
-            const scanUntilExhausted = Boolean(
-                args.scanUntilExhausted,
-            );
-            const targetCount =
-                typeof args.targetCount === "number" &&
-                Number.isFinite(args.targetCount) &&
-                args.targetCount > 0
-                    ? Math.floor(args.targetCount)
-                    : null;
-            const requestedMaxPages =
-                typeof args.maxPages === "number" &&
-                Number.isFinite(args.maxPages) &&
-                args.maxPages > 0
-                    ? Math.floor(args.maxPages)
-                    : DEFAULT_MAX_SCAN_PAGES;
-            const maxPages = Math.max(
-                1,
-                Math.min(requestedMaxPages, ABSOLUTE_MAX_SCAN_PAGES),
-            );
-            const requestedMaxReturned =
-                typeof args.maxReturnedMessages === "number" &&
-                Number.isFinite(args.maxReturnedMessages) &&
-                args.maxReturnedMessages > 0
-                    ? Math.floor(args.maxReturnedMessages)
-                    : DEFAULT_MAX_RETURNED_MESSAGES;
-            const maxReturnedMessages = Math.max(
-                1,
-                Math.min(
-                    requestedMaxReturned,
-                    ABSOLUTE_MAX_RETURNED_MESSAGES,
-                ),
-            );
             const effectiveLimit = Number(
                 args.limit ||
                     getAppConfig().runtime.retrievalHistoryLimit,
             );
-            const shouldDeepScan =
-                scanUntilExhausted ||
-                (targetCount != null && targetCount > effectiveLimit);
-            let result = await UnifiedMessageRetrieval.retrieve({
+            const result = await UnifiedMessageRetrieval.retrieve({
                 guild: context.guild,
                 question: query,
                 currentChannelId: context.currentChannelId,
@@ -593,174 +507,8 @@ export const retrieveMessagesTool: ToolDefinition = {
                 limit: effectiveLimit,
                 onProgress: context.onProgress,
             });
-            let outputData = result as unknown as RetrievalPayload &
+            const outputData = result as unknown as RetrievalPayload &
                 Record<string, unknown>;
-
-            if (shouldDeepScan && !args.aroundMessageId) {
-                const historyById = new Map<string, RetrievedChunk>();
-                const semanticById = new Map<string, RetrievedChunk>();
-                const combinedById = new Map<string, RetrievedChunk>();
-                const seedRows = (result.combinedResults || [])
-                    .map((row) =>
-                        row && typeof row === "object" ? row : null,
-                    )
-                    .filter((row): row is RetrievedChunk =>
-                        Boolean(row),
-                    );
-                const seenMessageIds = new Set<string>(
-                    excludedMessageIds || [],
-                );
-                for (const row of seedRows) {
-                    const id = String(row.messageId || "");
-                    if (!id) continue;
-                    seenMessageIds.add(id);
-                }
-
-                const insertRows = (
-                    rows: RetrievedChunk[],
-                    bag: Map<string, RetrievedChunk>,
-                ) => {
-                    for (const row of rows) {
-                        const id = String(row.messageId || "");
-                        if (!id) continue;
-                        if (!bag.has(id)) bag.set(id, row);
-                        if (!combinedById.has(id)) combinedById.set(id, row);
-                        seenMessageIds.add(id);
-                    }
-                };
-
-                insertRows(
-                    result.historyMessages || [],
-                    historyById,
-                );
-                insertRows(
-                    result.semanticMatches || [],
-                    semanticById,
-                );
-
-                let pagesScanned = 1;
-                let maxPagesReached = false;
-                let exhausted = Boolean(result.exhaustion?.exhausted);
-                let messageCapReached =
-                    combinedById.size >= maxReturnedMessages;
-                let nextCursor = {
-                    history:
-                        result.continuation?.history
-                            ?.perChannelOldestMessageId,
-                    semantic:
-                        result.continuation?.semantic?.cursor || undefined,
-                };
-
-                while (
-                    !exhausted &&
-                    Boolean(result.continuation?.continuationAvailable) &&
-                    pagesScanned < maxPages
-                ) {
-                    if (
-                        targetCount != null &&
-                        combinedById.size >= targetCount
-                    ) {
-                        break;
-                    }
-                    if (messageCapReached) {
-                        break;
-                    }
-
-                    const next = await UnifiedMessageRetrieval.retrieve({
-                        guild: context.guild,
-                        question: query,
-                        currentChannelId: context.currentChannelId,
-                        channelIds,
-                        authorId,
-                        mode,
-                        beforeTimestamp:
-                            typeof args.beforeTimestamp === "number"
-                                ? args.beforeTimestamp
-                                : undefined,
-                        afterTimestamp:
-                            typeof args.afterTimestamp === "number"
-                                ? args.afterTimestamp
-                                : undefined,
-                        cursor: nextCursor,
-                        excludedMessageIds: Array.from(seenMessageIds),
-                        limit: effectiveLimit,
-                        onProgress: context.onProgress,
-                    });
-
-                    result = next;
-                    pagesScanned += 1;
-                    exhausted = Boolean(next.exhaustion?.exhausted);
-                    nextCursor = {
-                        history:
-                            next.continuation?.history
-                                ?.perChannelOldestMessageId,
-                        semantic:
-                            next.continuation?.semantic?.cursor ||
-                            undefined,
-                    };
-
-                    insertRows(
-                        next.historyMessages || [],
-                        historyById,
-                    );
-                    insertRows(
-                        next.semanticMatches || [],
-                        semanticById,
-                    );
-                    messageCapReached =
-                        combinedById.size >= maxReturnedMessages;
-                }
-
-                if (
-                    pagesScanned >= maxPages &&
-                    Boolean(result.continuation?.continuationAvailable) &&
-                    !Boolean(result.exhaustion?.exhausted)
-                ) {
-                    maxPagesReached = true;
-                }
-
-                const sortByTimestamp = (
-                    left: RetrievedChunk,
-                    right: RetrievedChunk,
-                ) =>
-                    Number(left.createdTimestamp || 0) -
-                    Number(right.createdTimestamp || 0);
-
-                const historyMessages = Array.from(
-                    historyById.values(),
-                )
-                    .sort(sortByTimestamp)
-                    .slice(0, maxReturnedMessages);
-                const semanticMatches = Array.from(
-                    semanticById.values(),
-                ).slice(0, maxReturnedMessages);
-                const combinedResults = Array.from(
-                    combinedById.values(),
-                )
-                    .sort(sortByTimestamp)
-                    .slice(0, maxReturnedMessages);
-
-                outputData = {
-                    ...result,
-                    historyMessages,
-                    semanticMatches,
-                    combinedResults,
-                    historyMessageCount: historyMessages.length,
-                    semanticMatchCount: semanticMatches.length,
-                    accumulatedUniqueCount: combinedById.size,
-                    scan: {
-                        requestedDeepScan: true,
-                        scanUntilExhausted,
-                        targetCount,
-                        pagesScanned,
-                        maxPagesReached,
-                        messageCapReached,
-                        totalUniqueScanned: combinedById.size,
-                        totalHistoryScanned: historyById.size,
-                        totalSemanticScanned: semanticById.size,
-                    },
-                };
-            }
 
             const qualityLabel =
                 Number(outputData.historyMessageCount || 0) >= 2
@@ -780,22 +528,15 @@ export const retrieveMessagesTool: ToolDefinition = {
                               : "no"
                       })`
                     : "";
-            const scanSuffix = outputData.scan
-                ? ` [deep scan pages=${outputData.scan.pagesScanned || 1}, unique=${outputData.scan.totalUniqueScanned || outputData.accumulatedUniqueCount}${outputData.scan.maxPagesReached ? ", max-pages" : ""}${outputData.scan.messageCapReached ? ", payload-cap" : ""}]`
-                : "";
-
-            const isDeepScan = Boolean(outputData.scan);
-            const emptyReason = isDeepScan
-                ? `No messages found after scanning ${outputData.scan?.pagesScanned ?? 1} page(s) — channel may be empty or not yet indexed.${diagnosticsSuffix}${scanSuffix}`
-                : outputData.liveEscalated
-                  ? `No messages found (live refresh attempted — channel may be empty or unindexed).${diagnosticsSuffix}${scanSuffix}`
-                  : `No messages in cache yet — channel may not be indexed.${diagnosticsSuffix}${scanSuffix}`;
+            const emptyReason = outputData.liveEscalated
+                ? `No messages found (live refresh attempted — channel may be empty or unindexed).${diagnosticsSuffix}`
+                : `No messages in cache yet — channel may not be indexed.${diagnosticsSuffix}`;
 
             return {
                 tool: T.retrieve_messages,
                 summary: Array.isArray(outputData.combinedResults) &&
                     outputData.combinedResults.length
-                    ? `${qualityLabel}; ${outputData.historyMessageCount} history and ${outputData.semanticMatchCount} semantic result(s) ${outputData.liveEscalated ? "after refreshing Discord history" : "from cached Discord history"}.${diagnosticsSuffix}${scanSuffix}`
+                    ? `${qualityLabel}; ${outputData.historyMessageCount} history and ${outputData.semanticMatchCount} semantic result(s) ${outputData.liveEscalated ? "after refreshing Discord history" : "from cached Discord history"}.${diagnosticsSuffix}`
                     : emptyReason,
                 data: outputData,
             };
