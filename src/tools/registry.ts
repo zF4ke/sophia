@@ -82,10 +82,6 @@ for (const tool of ALL_TOOLS) {
         _destructiveSet.add(tool.name);
 }
 
-export function isWriteTool(name: string): boolean {
-    return _writeSet.has(name);
-}
-
 export function isDestructiveTool(name: string): boolean {
     return _destructiveSet.has(name);
 }

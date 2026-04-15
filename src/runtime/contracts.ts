@@ -235,18 +235,6 @@ export interface RuntimeTraceEvent {
     timestamp: number;
 }
 
-export interface TurnIntent {
-    continuation: boolean;
-    retrievalMode: RetrievalMode | null;
-    beforeTimestamp: number | null;
-    afterTimestamp: number | null;
-    source: {
-        continuation: "deterministic" | "model";
-        retrievalMode: "deterministic" | "model" | "session" | "none";
-        timeBounds: "deterministic" | "model" | "none";
-    };
-}
-
 export interface RuntimeAnswer {
     requestId: string;
     answer: string;

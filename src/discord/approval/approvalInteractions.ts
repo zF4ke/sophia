@@ -80,7 +80,6 @@ export async function handleApprovalInteraction(
         const resolvedContainer = buildResolvedContainer(
             request,
             "corrected",
-            interaction.user.id,
             undefined,
             correctionText || undefined,
         );
@@ -259,7 +258,6 @@ async function updateMessage(
     const container = buildResolvedContainer(
         request,
         status,
-        interaction.user.id,
     );
     try {
         await interaction.update({ components: [container] });

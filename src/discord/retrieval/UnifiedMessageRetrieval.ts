@@ -124,7 +124,6 @@ function buildSemanticCursor(results: RetrievedChunk[]): SemanticContinuationCur
 }
 
 async function buildExhaustion(
-    guildId: string | null,
     channelIds: string[],
     historyMessages: RetrievedChunk[],
     crawls: ChannelCrawlResult[]
@@ -651,7 +650,6 @@ export class UnifiedMessageRetrieval {
         );
         const semanticContinuationCursor = buildSemanticCursor(semanticMatches);
         const historyExhaustion = await buildExhaustion(
-            options.guild?.id || null,
             searchedChannelIds,
             historyMessages,
             crawlResults

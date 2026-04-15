@@ -57,7 +57,6 @@ export function resolvePendingApproval(requestId: string, result: ApprovalResult
 export function buildResolvedContainer(
     request: ApprovalRequest,
     status: "approved" | "denied" | "timeout" | "stopped" | "corrected",
-    decidedBy?: string,
     timeoutSec?: number,
     correctionText?: string,
 ): ContainerBuilder {
@@ -157,7 +156,7 @@ export function createApprovalGate(channel: SendableChannels) {
                 const timeoutSec = Math.round(timeoutMs / 1000);
                 try {
                     await sentMessage.edit({
-                        components: [buildResolvedContainer(request, "timeout", undefined, timeoutSec)],
+                        components: [buildResolvedContainer(request, "timeout", timeoutSec)],
                     });
                 } catch { /* message may have been deleted */ }
             }, timeoutMs);
@@ -228,7 +227,7 @@ export function buildResolvedBatchContainer(
             accentColor = 0xfee75c;
             statusIcon = "✏️";
             statusLine = options?.correctionText
-                ? `\`✏️ Recusado com correção:\` ${options.correctionText}`
+                ? `\`✏️ Recusado com correção: ${options.correctionText}\``
                 : "`✏️ Recusado com correção`";
             break;
         case "timeout":

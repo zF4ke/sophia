@@ -36,7 +36,6 @@ type RuntimeSettingMeta = {
     presets: number[];
 };
 
-const MAX_TOOL_RESULT_CHARS = 150_000;
 const CONTEXT_HEADROOM_RATIO = 0.80;
 
 const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {

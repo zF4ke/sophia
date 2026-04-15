@@ -1,4 +1,3 @@
-import type { DiscordToolName } from "@/shared/discordTools";
 import { buildToolDefinitions, type NativeToolDef } from "@/tools/registry";
 
 export type { NativeToolDef };
@@ -26,11 +25,3 @@ export const TOOL_DEFINITIONS: NativeToolDef[] = [
         },
     },
 ];
-
-/** Map of tool name → NativeToolDef for quick lookup. */
-export const TOOL_BY_NAME = Object.fromEntries(
-    TOOL_DEFINITIONS.map((def) => [def.function.name, def])
-) as Record<string, NativeToolDef>;
-
-/** All valid tool names including 'finish'. */
-export type NativeToolName = DiscordToolName | "finish";

@@ -477,7 +477,7 @@ describe("UnifiedMessageRetrieval", () => {
 
         vi.spyOn(DiscordChannelCrawlService, "waitForBackgroundIngest").mockResolvedValue();
 
-        const historySpy = vi
+        vi
             .spyOn(DiscordMemoryService, "getChannelHistoryPageAsync")
             // First call: initial DB query before escalation — empty
             .mockResolvedValueOnce([])
