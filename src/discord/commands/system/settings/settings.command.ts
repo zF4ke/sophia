@@ -23,7 +23,6 @@ export type RuntimeSettingKey =
     | "maxChannelMessages"
     | "maxEvidenceSlice"
     | "maxToolRunsContext"
-    | "interactiveCrawlLimit"
     | "escalationFetchLimit"
     | "retrievalHistoryLimit"
     | "retrievalContextWindow"
@@ -116,17 +115,11 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
             300000,
         ],
     },
-    interactiveCrawlLimit: {
-        label: "Interactive Crawl Limit",
-        shortDescription: "Live Discord history fetch ceiling.",
-        longDescription: "Maximum number of live Discord messages a direct channel crawl may ingest when local history is not enough.",
-        presets: [100, 250, 400, 600],
-    },
     escalationFetchLimit: {
         label: "Escalation Fetch Limit",
         shortDescription: "Live refresh cap for scoped retrieval retries.",
         longDescription: "Maximum number of messages fetched during a scoped live refresh when retrieve_messages escalates beyond the cache.",
-        presets: [50, 150, 250, 400],
+        presets: [50, 100, 150, 250, 400, 600, 800, 1000],
     },
     approvalTimeoutMs: {
         label: "Approval Timeout",

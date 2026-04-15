@@ -25,7 +25,6 @@ describe("AppConfig", () => {
         const { getAppConfig } = await import("@/app/AppConfig");
         const config = getAppConfig();
 
-        expect(config.runtime.interactiveCrawlLimit).toBe(250);
         expect(config.runtime.escalationFetchLimit).toBe(150);
         expect(config.runtime.retrievalHistoryLimit).toBeGreaterThanOrEqual(50);
         expect(config.runtime.retrievalContextWindow).toBe(15);

@@ -38,7 +38,7 @@ These all route to the same conversation runtime.
 
 `/settings` opens an interactive panel with:
 - **Model profile selector** — switch between fast, smarter, and alt profiles
-- **Runtime parameter selectors** — 12 tuning knobs for context retention, retrieval, loop guardrails, and approval
+- **Runtime parameter selectors** — 11 tuning knobs for context retention, retrieval, loop guardrails, and approval
 - **Auto-Approve Writes toggle** — skip approval for non-destructive write actions
 - **Debug toggle** — enable/disable debug mode
 - **Reset to Defaults** — restore all settings to factory defaults
@@ -56,8 +56,7 @@ These all route to the same conversation runtime.
 | Max Tool Calls | Hard cap per turn | 2–30 |
 | Repeated Call Guard | Same args retry limit | 1, 2, 3 |
 | Latency Budget | Wall-clock timeout per turn | 10s–5m |
-| Interactive Crawl Limit | Max live Discord fetches | 100, 250, 400, 600 |
-| Escalation Fetch Limit | Live refresh cap for retries | 50, 150, 250, 400 |
+| Escalation Fetch Limit | Live refresh cap for retries | 50, 100, 150, 250, 400, 600, 800, 1000 |
 | Approval Timeout | Admin approval wait time | 30s–5m |
 
 ## Approval System

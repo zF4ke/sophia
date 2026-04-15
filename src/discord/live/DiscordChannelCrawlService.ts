@@ -21,10 +21,6 @@ type CrawlableChannel = {
     };
 };
 
-export function getInteractiveCrawlLimit(): number {
-    return getAppConfig().runtime.interactiveCrawlLimit;
-}
-
 const PREVIEW_MESSAGE_LIMIT = 12;
 
 let backgroundIngestQueue: Promise<void> = Promise.resolve();
@@ -305,7 +301,7 @@ export class DiscordChannelCrawlService {
     public static async crawlChannelMessages(
         guild: Guild | null,
         channelId: string,
-        limit = getInteractiveCrawlLimit(),
+        limit = getAppConfig().runtime.escalationFetchLimit,
         queryHint?: string,
         onProgress?: (toolName: string, summary: string) => Promise<void> | void
     ): Promise<ChannelCrawlResult> {

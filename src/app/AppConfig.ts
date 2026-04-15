@@ -60,7 +60,6 @@ export function getAppConfig(): AppConfig {
             maxChannelMessages: rt.maxChannelMessages,
             maxToolRunsContext: rt.maxToolRunsContext,
             maxEvidenceSlice: rt.maxEvidenceSlice,
-            interactiveCrawlLimit: rt.interactiveCrawlLimit,
             escalationFetchLimit: rt.escalationFetchLimit,
             retrievalHistoryLimit: rt.retrievalHistoryLimit,
             retrievalContextWindow: rt.retrievalContextWindow,
