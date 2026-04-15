@@ -33,7 +33,7 @@ const DEFAULT_SETTINGS: BotSettings = {
     runtime: {
         operationalDbPath: path.join(DEFAULT_RUNTIME_DIR, "operational.sqlite"),
         checkpointDbPath: path.join(DEFAULT_RUNTIME_DIR, "checkpoints.sqlite"),
-        maxToolCalls: 6,
+        maxToolCalls: 12,
         maxRepeatedCallSignature: 1,
         maxLatencyBudgetMs: 15000,
         maxPriorTurns: 5,

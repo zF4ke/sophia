@@ -62,9 +62,22 @@ function isReusablePromptEvidence(item: EvidenceItem): boolean {
     );
 }
 
-function formatRecentToolRuns(runs: Array<{ toolName: string; summary: string }>): string {
+function formatRecentToolRuns(runs: Array<{ toolName: string; summary: string; learned: string; outputJson: string }>): string {
     if (!runs.length) return "None.";
-    return runs.map((r) => `- ${r.toolName}: ${r.summary}`).join("\n");
+    return runs.map((r) => {
+        const base = `- ${r.toolName}: ${r.summary}`;
+        // For resolution/discovery tools, include the learned data (resolved IDs, structure)
+        // so the model can reuse them directly without re-calling.
+        if (
+            (r.toolName === T.resolve_member_identity ||
+             r.toolName === T.resolve_channel_targets ||
+             r.toolName === T.list_guild_structure) &&
+            r.learned && r.learned !== r.summary
+        ) {
+            return `${base}\n  Data: ${r.learned}`;
+        }
+        return base;
+    }).join("\n");
 }
 
 function summarizeRecentTurns(turns: ConversationTurnSummary[]): string {
