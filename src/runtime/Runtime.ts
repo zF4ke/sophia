@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { getAppConfig } from "@/app/AppConfig";
 import { SettingsService } from "@/app/SettingsService";
+import { ProtectedChannelsService } from "@/app/ProtectedChannelsService";
 import { ModelGateway, type ToolChatMessage } from "@/ai/ModelGateway";
 import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
@@ -305,6 +306,16 @@ export class Runtime {
                   }).join("\n")
                 : "None.";
 
+            const personality = SettingsService.load().personality;
+            let personalityOverride = "";
+            if (personality === "classic") {
+                try {
+                    personalityOverride = PromptRegistry.load("system/personality_classic_override");
+                } catch {
+                    personalityOverride = "";
+                }
+            }
+
             const systemPrompt = PromptRegistry.render("runtime/agent_loop", {
                 guild_name: input.guild?.name || "DM",
                 guild_id: guildId || "none",
@@ -322,6 +333,7 @@ export class Runtime {
                     ? `Replying to ${input.replyContext.authorDisplayName}: "${input.replyContext.content}"`
                     : "Not a reply.",
                 max_tool_calls: String(constraints.maxToolCalls),
+                personality_override: personalityOverride,
             });
 
             // ── 4. Agent loop ──
@@ -404,6 +416,7 @@ export class Runtime {
                     parsedArgs: ToolArguments,
                 ) => {
                     const capability = CapabilityRegistry.get(toolName);
+
                     await input.debugSession?.setToolRunning(toolName, []);
                     const toolStartedAt = Date.now();
                     const output = await capability.run(
@@ -491,6 +504,69 @@ export class Runtime {
                         afterTimestamp: null,
                         activeChannelIds: [],
                     });
+                };
+
+                const getProtectedTargetChannelId = (
+                    toolName: DiscordToolName,
+                    parsedArgs: ToolArguments,
+                ): string | null => {
+                    const capability = CapabilityRegistry.get(toolName);
+                    if (capability.sideEffectLevel !== "destructive") return null;
+
+                    const targetChannelId = parsedArgs.channel_id
+                        ? String(parsedArgs.channel_id)
+                        : null;
+
+                    if (!targetChannelId || !ProtectedChannelsService.isProtected(targetChannelId)) {
+                        return null;
+                    }
+
+                    return targetChannelId;
+                };
+
+                const recordProtectedChannelBlock = async (
+                    tc: typeof result.toolCalls[number],
+                    toolName: DiscordToolName,
+                    parsedArgs: ToolArguments,
+                    targetChannelId: string,
+                ) => {
+                    const denyMsg = `Action NOT executed. Auto-blocked because channel ${targetChannelId} is protected. Do not tell the user this action was completed.`;
+                    // console.log(`[ProtectedChannels] AUTO-BLOCKED ${toolName} on channel ${targetChannelId}`);
+
+                    // Send visual notification card (best-effort)
+                    if (input.protectedBlockNotifier) {
+                        const approvalDescription = describeApproval(toolName, parsedArgs);
+                        await input.protectedBlockNotifier({
+                            requestId: `${requestId}:${toolName}:${totalToolCalls}:protected`,
+                            toolName,
+                            toolArgs: parsedArgs,
+                            description: approvalDescription,
+                            sideEffectLevel: "destructive",
+                            requesterId: actorId,
+                        }).catch(() => { /* best-effort */ });
+                    }
+
+                    messages.push({
+                        role: "tool",
+                        tool_call_id: tc.id,
+                        content: JSON.stringify({ error: denyMsg }),
+                    });
+                    toolHistory.push({
+                        tool: toolName,
+                        arguments: parsedArgs,
+                        summary: `Blocked: protected channel ${targetChannelId}.`,
+                        learned: denyMsg,
+                        confidenceImproved: false,
+                        output: {
+                            tool: toolName,
+                            summary: `Blocked: <#${targetChannelId}> is a protected channel.`,
+                            data: null,
+                            errorMessage: `Channel ${targetChannelId} is protected and cannot be modified or deleted.`,
+                        },
+                        durationMs: 0,
+                        blocked: true,
+                    });
+                    trace("tool_blocked", `${toolName} auto-blocked on protected channel ${targetChannelId} after approval.`);
                 };
 
                 // Collect destructive tool calls for batch approval
@@ -591,8 +667,13 @@ export class Runtime {
                             trace("approval_auto_approved", `${toolName}: auto-approved by setting (write-only).`);
                         }
 
-                        // ── Destructive → queue for batch approval ──
+                        // ── Destructive → auto-block if protected, otherwise queue for batch approval ──
                         if (!autoApproveWrite && capability.sideEffectLevel === "destructive") {
+                            const protectedId = getProtectedTargetChannelId(toolName, parsedArgs);
+                            if (protectedId) {
+                                await recordProtectedChannelBlock(tc, toolName, parsedArgs, protectedId);
+                                continue;
+                            }
                             const approvalDescription = describeApproval(toolName, parsedArgs);
                             destructiveBatch.push({ tc, toolName, parsedArgs, description: approvalDescription });
                             trace("batch_queued", `${toolName}: queued for batch approval — ${approvalDescription}`);
@@ -765,7 +846,12 @@ export class Runtime {
                         } else {
                             trace("approval_granted", `${item.toolName}: approved by ${approvalResult.decidedBy}`);
                             await input.activityIndicator?.startThinking();
-                            await executeToolCall(item.tc, item.toolName, item.parsedArgs);
+                            const protectedChannelId = getProtectedTargetChannelId(item.toolName, item.parsedArgs);
+                            if (protectedChannelId) {
+                                await recordProtectedChannelBlock(item.tc, item.toolName, item.parsedArgs, protectedChannelId);
+                            } else {
+                                await executeToolCall(item.tc, item.toolName, item.parsedArgs);
+                            }
                         }
                     } else if (!input.batchApprovalGate) {
                         // No batch gate — auto-deny all queued destructive tools
@@ -853,7 +939,12 @@ export class Runtime {
                                 const decision = batchResult.decisions[item.tc.id];
                                 if (decision === "approved") {
                                     trace("batch_item_approved", `${item.toolName}: approved in batch by ${batchResult.decidedBy}`);
-                                    await executeToolCall(item.tc, item.toolName, item.parsedArgs);
+                                    const protectedChannelId = getProtectedTargetChannelId(item.toolName, item.parsedArgs);
+                                    if (protectedChannelId) {
+                                        await recordProtectedChannelBlock(item.tc, item.toolName, item.parsedArgs, protectedChannelId);
+                                    } else {
+                                        await executeToolCall(item.tc, item.toolName, item.parsedArgs);
+                                    }
                                 } else {
                                     const denyMsg = `Action NOT executed. Denied by ${batchResult.decidedBy}.${batchCorrectionNote} Do not tell the user this action was completed.`;
                                     messages.push({

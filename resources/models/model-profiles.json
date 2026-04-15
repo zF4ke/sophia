@@ -1,31 +1,68 @@
 {
-  "defaultProfile": "fast",
+  "defaultProfile": "gemini25flashlite",
   "profiles": {
-    "fast": {
+    "gemini31flashlite": {
       "chatModel": "google/gemini-3.1-flash-lite-preview",
-      "analysisModel": "google/gemini-3.1-flash-lite-preview",
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
       "maxOutputTokens": 1200,
       "contextWindow": 1000000,
       "parallelToolCalls": false
     },
-    "smarter": {
+    "minimax27": {
       "chatModel": "minimax/minimax-m2.7",
-      "analysisModel": "minimax/minimax-m2.7",
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
       "maxOutputTokens": 1400,
       "contextWindow": 190000,
       "parallelToolCalls": false
     },
-    "alt": {
+    "minimax25": {
+      "chatModel": "minimax/minimax-m2.5",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.5,
+      "maxOutputTokens": 1200,
+      "contextWindow": 190000,
+      "parallelToolCalls": false
+    },
+    "mimov2flash": {
+      "chatModel": "xiaomi/mimo-v2-flash",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.5,
+      "maxOutputTokens": 1200,
+      "contextWindow": 260000,
+      "parallelToolCalls": false
+    },
+    "mistralnemo": {
+      "chatModel": "mistralai/mistral-nemo",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.5,
+      "maxOutputTokens": 1400,
+      "contextWindow": 130000,
+      "parallelToolCalls": false
+    },
+    "deepseek32": {
       "chatModel": "deepseek/deepseek-v3.2",
-      "analysisModel": "deepseek/deepseek-v3.2",
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
       "maxOutputTokens": 1400,
       "contextWindow": 160000,
+      "parallelToolCalls": false
+    },
+    "gemini25flashlite": {
+      "chatModel": "google/gemini-2.5-flash-lite-preview-09-2025",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.5,
+      "maxOutputTokens": 1200,
+      "contextWindow": 131072,
+      "parallelToolCalls": false
+    },
+    "glm5": {
+      "chatModel": "z-ai/glm-5.1",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.5,
+      "maxOutputTokens": 1200,
+      "contextWindow": 80000,
       "parallelToolCalls": false
     }
   }

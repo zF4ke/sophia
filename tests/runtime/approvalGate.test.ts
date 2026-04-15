@@ -5,6 +5,7 @@ import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { Runtime } from "@/runtime/Runtime";
 import type { ApprovalRequest, ApprovalResult, BatchApprovalRequest, BatchApprovalResult, TurnInput } from "@/runtime/contracts";
 import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
+import { ProtectedChannelsService } from "@/app/ProtectedChannelsService";
 import { SettingsService } from "@/app/SettingsService";
 
 function createInput(overrides: Partial<TurnInput> = {}): TurnInput {
@@ -219,6 +220,48 @@ describe("approval gate", () => {
         expect(request.items[0].toolName).toBe("clear_messages");
         expect(request.items[0].targetCategory).toBeNull(); // no guild mock → no parent category
         expect(result.answer).toBe("Messages cleared.");
+    });
+
+    it("auto-blocks protected destructive actions before showing approval card", async () => {
+        const approvalGate = vi.fn<(req: ApprovalRequest) => Promise<ApprovalResult>>()
+            .mockResolvedValue({ approved: true, decidedBy: "admin-1", decidedAt: Date.now() });
+
+        const originalGet = CapabilityRegistry.get.bind(CapabilityRegistry);
+        const clearMessagesRun = vi.fn().mockResolvedValue({
+            tool: "clear_messages",
+            summary: "Deleted 5 message(s) from #general.",
+            data: { deletedCount: 5, channelId: "c1", channelName: "general" },
+        });
+        vi.spyOn(CapabilityRegistry, "get").mockImplementation((id) => {
+            const cap = originalGet(id);
+            if (id === "clear_messages") {
+                return {
+                    ...cap,
+                    run: clearMessagesRun,
+                };
+            }
+            return cap;
+        });
+        vi.spyOn(ProtectedChannelsService, "isProtected").mockImplementation((channelId) => channelId === "c1");
+
+        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeToolCallResult([
+                { name: "clear_messages", args: { channel_id: "c1", count: 5 } },
+            ]))
+            .mockResolvedValueOnce(makeFinishResult("Protected action was blocked."));
+
+        const result = await Runtime.answer(createInput({ approvalGate }));
+
+        expect(approvalGate).not.toHaveBeenCalled();
+        expect(clearMessagesRun).not.toHaveBeenCalled();
+        expect(result.answer).toBe("Protected action was blocked.");
+
+        const secondCallMessages = generateSpy.mock.calls[1][0];
+        const blockedToolMsg = secondCallMessages.find(
+            (m: any) => m.role === "tool" && typeof m.content === "string" && m.content.includes("protected"),
+        );
+        expect(blockedToolMsg).toBeDefined();
+        expect((blockedToolMsg as any).content).toContain("Auto-blocked");
     });
 
     it("does not spend the latency budget while waiting for approval", async () => {

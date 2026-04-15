@@ -12,6 +12,7 @@ export type DiscordToolEvidenceRole =
 const TOOL_NAMES = [
     // ── Retrieval ──
     "retrieve_messages",
+    "search_messages",
     // ── Server & channel discovery ──
     "list_guild_structure",
     "get_guild_context",

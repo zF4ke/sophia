@@ -19,6 +19,7 @@ export interface KnownChannelRecord {
     channelId: string;
     guildId: string | null;
     channelName: string;
+    channelTopic?: string | null;
     channelType: string | null;
     parentCategoryId: string | null;
     parentCategoryName: string | null;

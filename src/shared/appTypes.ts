@@ -18,7 +18,6 @@ export type SupportedInteraction =
 
 export interface ModelProfile {
     chatModel: string;
-    analysisModel: string;
     embeddingModel: string;
     temperature: number;
     maxOutputTokens: number;
@@ -217,6 +216,7 @@ export interface MemberProfileResult {
     joinedTimestamp: number | null;
     accountCreatedAt: string | null;
     avatarUrl: string | null;
+    /** When the member started boosting this guild (NOT Nitro status). Null if not boosting. */
     premiumSince: string | null;
     pending: boolean;
     bannerUrl: string | null;
@@ -246,6 +246,7 @@ export interface GuildStructureEntry {
     id: string;
     guildId: string | null;
     name: string;
+    channelTopic?: string | null;
     type: string;
     parentCategoryId: string | null;
     parentCategoryName: string | null;

@@ -16,7 +16,9 @@ export = {
             if (!(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
             if (message.author.id === message.client.user!.id) return;
 
-            await DiscordMemoryService.ingestMessage(message);
+            DiscordMemoryService.ingestMessage(message).catch((err) => {
+                console.warn("[messageCreate] ingestion failed (non-fatal):", (err as Error).message ?? err);
+            });
 
             if (message.reference?.messageId) {
                 const referencedMessage = await message.fetchReference().catch(() => null);

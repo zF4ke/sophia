@@ -26,7 +26,7 @@ export const getMemberProfileTool: ToolDefinition = {
 
     schema: {
         description:
-            "Fetch a detailed live guild member profile. Returns roles, join date, account age, nickname, bot status, Nitro/premium status, avatar URL, and Discord ID. Use the returned ID for filtering messages by author.",
+            "Fetch a detailed live guild member profile. Returns roles, join date, account age, nickname, bot status, boost status (premiumSince = when they started boosting this guild, NOT Nitro), avatar URL, and Discord ID. Use the returned ID for filtering messages by author.",
         parameters,
     },
 
@@ -57,7 +57,7 @@ export const getMemberProfileTool: ToolDefinition = {
                           profile.joinedAt ? `joined=${profile.joinedAt}` : null,
                           `${profile.roles.length} roles`,
                           profile.isBot ? "bot" : null,
-                          profile.premiumSince ? "nitro" : null,
+                          profile.premiumSince ? "boosting" : null,
                       ]
                           .filter(Boolean)
                           .join(", ")
@@ -81,7 +81,7 @@ export const getMemberProfileTool: ToolDefinition = {
             if (item.accountCreatedAt) parts.push(`created=${String(item.accountCreatedAt)}`);
             parts.push(`roles=${roles || "none"}`);
             if (item.isBot) parts.push("bot=true");
-            if (item.premiumSince) parts.push(`nitro_since=${String(item.premiumSince)}`);
+            if (item.premiumSince) parts.push(`boosting_since=${String(item.premiumSince)}`);
             if (item.pending) parts.push("pending=true");
 
             return [

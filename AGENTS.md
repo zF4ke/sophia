@@ -48,6 +48,7 @@ Intent policy:
 These capability ids are prompt- and runtime-stable:
 
 - `retrieve_messages`
+- `search_messages`
 - `resolve_member_identity`
 - `list_guild_structure`
 - `resolve_channel_targets`

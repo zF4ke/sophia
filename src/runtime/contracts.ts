@@ -80,6 +80,7 @@ export interface TurnInput {
     conversation: ConversationContext;
     approvalGate?: (request: ApprovalRequest) => Promise<ApprovalResult>;
     batchApprovalGate?: (request: BatchApprovalRequest) => Promise<BatchApprovalResult>;
+    protectedBlockNotifier?: (request: ApprovalRequest) => Promise<void>;
     activityIndicator?: {
         startThinking(): Promise<void>;
         startTyping(): Promise<void>;

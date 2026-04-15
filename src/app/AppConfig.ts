@@ -1,30 +1,22 @@
-import fs from "fs";
 import path from "path";
-import { AppPaths } from "@/app/AppPaths";
 import { SettingsService } from "@/app/SettingsService";
+import { readModelProfiles, resolveModelProfileName } from "@/app/modelProfiles";
 import { FileSystemService } from "@/shared/storage/FileSystemService";
-import type { AppConfig, ModelProfileConfig } from "@/shared/appTypes";
-
-function readModelProfiles(): ModelProfileConfig {
-    const raw = fs.readFileSync(AppPaths.modelProfilesPath, "utf8");
-    const parsed = JSON.parse(raw) as ModelProfileConfig;
-
-    if (!parsed.defaultProfile || !parsed.profiles?.[parsed.defaultProfile]) {
-        throw new Error("Invalid model profile configuration.");
-    }
-
-    return parsed;
-}
+import type { AppConfig } from "@/shared/appTypes";
 
 export function getAppConfig(): AppConfig {
     const profiles = readModelProfiles();
     const settings = SettingsService.load();
 
-    const modelProfileName = settings.modelProfile || profiles.defaultProfile;
+    const modelProfileName = resolveModelProfileName(settings.modelProfile, profiles);
     const modelProfile = profiles.profiles[modelProfileName];
 
     if (!modelProfile) {
         throw new Error(`Unknown model profile "${modelProfileName}".`);
+    }
+
+    if (settings.modelProfile !== modelProfileName) {
+        SettingsService.update({ modelProfile: modelProfileName });
     }
 
     const discordToken = process.env.DISCORD_TOKEN;
@@ -39,7 +31,7 @@ export function getAppConfig(): AppConfig {
     }
 
     FileSystemService.ensureDirectoryExists(FileSystemService.getBaseStorageDir());
-    const runtimeDir = path.join(AppPaths.storageRoot, "runtime");
+    const runtimeDir = path.join(FileSystemService.getBaseStorageDir(), "runtime");
     FileSystemService.ensureDirectoryExists(runtimeDir);
 
     const rt = settings.runtime;

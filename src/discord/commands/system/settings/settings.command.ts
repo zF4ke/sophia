@@ -1,4 +1,3 @@
-import fs from "fs";
 import {
     ActionRowBuilder,
     ButtonBuilder,
@@ -10,10 +9,10 @@ import {
     StringSelectMenuBuilder,
     TextDisplayBuilder,
 } from "discord.js";
-import { AppPaths } from "@/app/AppPaths";
 import { SettingsService, type BotSettings } from "@/app/SettingsService";
+import { readModelProfiles, resolveModelProfileName } from "@/app/modelProfiles";
 import { SecurityService } from "@/security/SecurityService";
-import type { BotClient, ModelProfileConfig } from "@/shared/appTypes";
+import type { BotClient } from "@/shared/appTypes";
 
 export type RuntimeSettingKey =
     | "maxToolCalls"
@@ -129,43 +128,6 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
     },
 };
 
-function readModelProfiles(): ModelProfileConfig {
-    try {
-        const raw = fs.readFileSync(AppPaths.modelProfilesPath, "utf8");
-        return JSON.parse(raw) as ModelProfileConfig;
-    } catch {
-        return {
-            defaultProfile: "fast",
-            profiles: {
-                fast: {
-                    chatModel: "google/gemini-3.1-flash-lite-preview",
-                    analysisModel: "google/gemini-3.1-flash-lite-preview",
-                    embeddingModel: "openai/text-embedding-3-small",
-                    temperature: 0.5,
-                    maxOutputTokens: 1200,
-                    contextWindow: 1_000_000,
-                },
-                smarter: {
-                    chatModel: "minimax/minimax-m2.7",
-                    analysisModel: "minimax/minimax-m2.7",
-                    embeddingModel: "openai/text-embedding-3-small",
-                    temperature: 0.5,
-                    maxOutputTokens: 1400,
-                    contextWindow: 100_000,
-                },
-                alt: {
-                    chatModel: "deepseek/deepseek-v3.2",
-                    analysisModel: "deepseek/deepseek-v3.2",
-                    embeddingModel: "openai/text-embedding-3-small",
-                    temperature: 0.5,
-                    maxOutputTokens: 1400,
-                    contextWindow: 128_000,
-                },
-            },
-        };
-    }
-}
-
 function formatNumber(value: number): string {
     return value.toLocaleString("en-US");
 }
@@ -173,7 +135,8 @@ function formatNumber(value: number): string {
 function buildSettingsPanel(settings: BotSettings) {
     const profileConfig = readModelProfiles();
     const profiles = Object.keys(profileConfig.profiles);
-    const selectedProfile = profileConfig.profiles[settings.modelProfile];
+    const selectedProfileName = resolveModelProfileName(settings.modelProfile, profileConfig);
+    const selectedProfile = profileConfig.profiles[selectedProfileName];
     const pruneThreshold = selectedProfile
         ? Math.floor(selectedProfile.contextWindow * CONTEXT_HEADROOM_RATIO)
         : null;
@@ -184,8 +147,9 @@ function buildSettingsPanel(settings: BotSettings) {
     });
 
     const infoLines = [
-        `**Profile:** ${settings.modelProfile}${selectedProfile ? ` · ${selectedProfile.chatModel}` : ""}`,
+        `**Profile:** ${selectedProfileName}${selectedProfile ? ` · ${selectedProfile.chatModel}` : ""}`,
         selectedProfile ? `**Context:** ${formatNumber(selectedProfile.contextWindow)} tokens · **Max Output:** ${formatNumber(selectedProfile.maxOutputTokens)}` : null,
+        `**Personality:** ${settings.personality === "classic" ? "Classic (v1)" : "Default"}`,
         `**Debug:** ${settings.debug ? "enabled" : "disabled"}`,
         `**Auto-Approve Writes (non-destructive):** ${settings.runtime.autoApproveWrites ? "enabled" : "disabled"}`,
         "",
@@ -211,7 +175,7 @@ function buildSettingsPanel(settings: BotSettings) {
                 profiles.map((p) => ({
                     label: p,
                     value: p,
-                    default: p === settings.modelProfile,
+                    default: p === selectedProfileName,
                 }))
             )
     );
@@ -233,6 +197,10 @@ function buildSettingsPanel(settings: BotSettings) {
     );
 
     const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setCustomId("settings:personality:toggle")
+            .setLabel(settings.personality === "classic" ? "Personality: Classic" : "Personality: Default")
+            .setStyle(settings.personality === "classic" ? ButtonStyle.Primary : ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId("settings:auto-approve-writes:toggle")
             .setLabel(settings.runtime.autoApproveWrites ? "Disable Auto-Approve Writes" : "Enable Auto-Approve Writes")
@@ -315,11 +283,12 @@ export default {
 };
 
 export function handleSettingsInteraction(customId: string): {
-    type: "profile" | "runtime_pick" | "runtime_set" | "auto_approve_writes_toggle" | "debug_toggle" | "reset" | null;
+    type: "profile" | "runtime_pick" | "runtime_set" | "auto_approve_writes_toggle" | "personality_toggle" | "debug_toggle" | "reset" | null;
     key?: RuntimeSettingKey;
 } {
     if (customId === "settings:profile") return { type: "profile" };
     if (customId === "settings:runtime") return { type: "runtime_pick" };
+    if (customId === "settings:personality:toggle") return { type: "personality_toggle" };
     if (customId === "settings:auto-approve-writes:toggle") return { type: "auto_approve_writes_toggle" };
     if (customId === "settings:debug:toggle") return { type: "debug_toggle" };
     if (customId === "settings:reset") return { type: "reset" };

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { T } from "@/shared/discordTools";
 import { getAppConfig } from "@/app/AppConfig";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
+import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type {
     ActiveRetrievalSession,
     EvidenceItem,
@@ -59,6 +60,7 @@ export type RetrievalPayload = {
     beforeTimestamp?: number | null;
     afterTimestamp?: number | null;
     excludedMessageIds?: string[];
+    channelTopics?: Record<string, string>;
     retrievalDiagnostics?: {
         scopedEmptyRetryAttempted?: boolean;
         retryStrategy?: string;
@@ -240,7 +242,7 @@ const parameters = {
         limit: {
             type: "number",
             description:
-                "Number of messages to return per page. Default 50. Use higher values when scrolling through history.",
+                "Number of messages to return per page. Omit to use server default. Match the user's requested count when they ask for a specific number.",
         },
         cursor: {
             type: "object",
@@ -304,7 +306,7 @@ export const retrieveMessagesTool: ToolDefinition = {
                 .int()
                 .positive()
                 .describe(
-                    "Page size. Omit to use the server default (typically 50). Use larger values when searching through deep history.",
+                    "Page size. Omit to use server default. Match the user's requested count when they specify one. Use larger values when searching through deep history.",
                 )
                 .optional(),
             channelIds: z.array(z.string()).optional(),
@@ -385,6 +387,7 @@ export const retrieveMessagesTool: ToolDefinition = {
             beforeTimestamp: z.number().nullable(),
             afterTimestamp: z.number().nullable(),
             excludedMessageIds: z.array(z.string()),
+            channelTopics: z.record(z.string(), z.string()).optional(),
         }),
         sideEffectLevel: "none",
         authRequirements: [],
@@ -507,7 +510,42 @@ export const retrieveMessagesTool: ToolDefinition = {
                 limit: effectiveLimit,
                 onProgress: context.onProgress,
             });
-            const outputData = result as unknown as RetrievalPayload &
+            const channelTopics: Record<string, string> = {};
+            const targetChannelIds = Array.isArray(result.targetChannelIds) ? result.targetChannelIds : [];
+
+            const knownChannelsById = new Map(
+                (await DiscordMemoryService.getKnownChannelsAsync(context.guild?.id)).map((channel) => [
+                    channel.channelId,
+                    channel,
+                ]),
+            );
+
+            for (const channelId of targetChannelIds) {
+                let topic: string | null = null;
+                const liveChannel = context.guild?.channels.cache.get(channelId);
+                if (liveChannel && "topic" in liveChannel) {
+                    const liveTopic = (liveChannel as typeof liveChannel & { topic?: unknown }).topic;
+                    if (typeof liveTopic === "string" && liveTopic.trim()) {
+                        topic = liveTopic.trim();
+                    }
+                }
+
+                if (!topic) {
+                    const cachedTopic = knownChannelsById.get(channelId)?.channelTopic;
+                    if (typeof cachedTopic === "string" && cachedTopic.trim()) {
+                        topic = cachedTopic.trim();
+                    }
+                }
+
+                if (topic) {
+                    channelTopics[channelId] = topic;
+                }
+            }
+
+            const outputData = {
+                ...result,
+                channelTopics,
+            } as unknown as RetrievalPayload &
                 Record<string, unknown>;
 
             const qualityLabel =

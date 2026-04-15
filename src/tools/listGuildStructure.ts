@@ -37,6 +37,14 @@ export function isCategoryStructureEntry(
     );
 }
 
+function formatTopic(topic: string | null | undefined): string {
+    if (!topic) return "";
+    const compact = topic.replace(/\s+/g, " ").trim();
+    if (!compact) return "";
+    const clipped = compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
+    return ` Topic: ${clipped}.`;
+}
+
 export function asGuildStructureEntries(
     value: unknown,
 ): GuildStructureEntry[] {
@@ -51,6 +59,10 @@ export function asGuildStructureEntries(
             id: String(item.id || ""),
             guildId: item.guildId == null ? null : String(item.guildId),
             name: String(item.name || ""),
+            channelTopic:
+                item.channelTopic == null
+                    ? null
+                    : String(item.channelTopic),
             type: String(item.type || "unknown"),
             parentCategoryId:
                 item.parentCategoryId == null
@@ -137,7 +149,7 @@ export function buildStructureEvidenceItems(
             summary,
             content: isCategoryStructureEntry(entry)
                 ? `Category ${entry.name}. Viewable=${entry.isViewable ? "yes" : "no"}.`
-                : `Channel #${entry.name}${entry.parentCategoryName ? ` in ${entry.parentCategoryName}` : ""}. Readable=${entry.isReadable ? "yes" : "no"}. Indexed=${entry.isIndexed ? "yes" : "no"}.`,
+                : `Channel #${entry.name}${entry.parentCategoryName ? ` in ${entry.parentCategoryName}` : ""}.${formatTopic(entry.channelTopic)} Readable=${entry.isReadable ? "yes" : "no"}. Indexed=${entry.isIndexed ? "yes" : "no"}.`,
             evidenceRole: "discovery_only" as const,
             strength: "metadata" as const,
             sourceOrigin: "none" as const,
@@ -185,7 +197,7 @@ export function buildStructureEvidenceItems(
                 evidence.push({
                     tool: T.list_guild_structure,
                     summary,
-                    content: `Channel #${child.name} in category ${entry.name}. Readable=yes. Indexed=${child.isIndexed ? "yes" : "no"}.`,
+                    content: `Channel #${child.name} in category ${entry.name}.${formatTopic(child.channelTopic)} Readable=yes. Indexed=${child.isIndexed ? "yes" : "no"}.`,
                     evidenceRole: "discovery_only" as const,
                     strength: "metadata",
                     sourceOrigin: "none",
@@ -199,7 +211,7 @@ export function buildStructureEvidenceItems(
         evidence.push({
             tool: T.list_guild_structure,
             summary,
-            content: `Channel #${entry.name}${entry.parentCategoryName ? ` in category ${entry.parentCategoryName}` : ""}. Readable=${entry.isReadable ? "yes" : "no"}. Indexed=${entry.isIndexed ? "yes" : "no"}.`,
+            content: `Channel #${entry.name}${entry.parentCategoryName ? ` in category ${entry.parentCategoryName}` : ""}.${formatTopic(entry.channelTopic)} Readable=${entry.isReadable ? "yes" : "no"}. Indexed=${entry.isIndexed ? "yes" : "no"}.`,
             evidenceRole: "discovery_only" as const,
             strength: "metadata",
             sourceOrigin: "none",

@@ -21,6 +21,7 @@ Legacy prompt files under `resources/prompts/system/` may still exist as referen
 The runtime prompt set expects these capability ids to stay stable:
 
 - `retrieve_messages`
+- `search_messages`
 - `resolve_member_identity`
 - `list_guild_structure`
 - `resolve_channel_targets`

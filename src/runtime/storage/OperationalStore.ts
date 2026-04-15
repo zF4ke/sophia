@@ -100,6 +100,18 @@ export class OperationalStore {
         }
 
         await this.initializeSchema(client);
+        await this.ensureOptionalColumns(client);
+    }
+
+    private static async ensureOptionalColumns(client: Client): Promise<void> {
+        try {
+            await client.execute(`ALTER TABLE channels ADD COLUMN channel_topic TEXT`);
+        } catch (error) {
+            const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+            if (!message.includes("duplicate column name")) {
+                throw error;
+            }
+        }
     }
 
     private static async shouldResetExistingDatabase(
@@ -171,6 +183,7 @@ export class OperationalStore {
     private static async initializeSchema(client: Client): Promise<void> {
         await client.executeMultiple(`
             PRAGMA journal_mode = WAL;
+            PRAGMA busy_timeout = 5000;
             PRAGMA foreign_keys = ON;
 
             CREATE TABLE IF NOT EXISTS runtime_metadata (
@@ -182,6 +195,7 @@ export class OperationalStore {
                 channel_id TEXT PRIMARY KEY,
                 guild_id TEXT,
                 channel_name TEXT NOT NULL,
+                channel_topic TEXT,
                 channel_type TEXT,
                 parent_category_id TEXT,
                 parent_category_name TEXT,

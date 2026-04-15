@@ -42,6 +42,18 @@ function isThreadLikeType(type: ChannelType | number | string): boolean {
     );
 }
 
+function getChannelTopic(channel: GuildBasedChannel): string | null {
+    if (!("topic" in channel)) {
+        return null;
+    }
+    const topic = (channel as GuildBasedChannel & { topic?: unknown }).topic;
+    if (typeof topic !== "string") {
+        return null;
+    }
+    const trimmed = topic.trim();
+    return trimmed.length ? trimmed : null;
+}
+
 function getParentCategory(channel: GuildBasedChannel): { id: string | null; name: string | null } {
     if (
         channel.type === ChannelType.GuildCategory ||
@@ -86,6 +98,7 @@ function mapLiveEntry(guild: Guild, channel: GuildBasedChannel, indexedIds: Set<
         id: channel.id,
         guildId: guild.id,
         name: channel.name,
+        channelTopic: getChannelTopic(channel),
         type: String(channel.type),
         parentCategoryId: parentCategory.id,
         parentCategoryName: parentCategory.name,
@@ -119,6 +132,7 @@ export class DiscordGuildDiscoveryService {
                 entry.name,
                 Date.now(),
                 {
+                    channelTopic: entry.channelTopic,
                     channelType: entry.type,
                     parentCategoryId: entry.parentCategoryId,
                     parentCategoryName: entry.parentCategoryName,
@@ -132,6 +146,7 @@ export class DiscordGuildDiscoveryService {
                 id: channel.channelId,
                 guildId: channel.guildId,
                 name: channel.channelName,
+                channelTopic: channel.channelTopic || null,
                 type: channel.channelType || "unknown",
                 parentCategoryId: channel.parentCategoryId,
                 parentCategoryName: channel.parentCategoryName,
@@ -188,6 +203,7 @@ export class DiscordGuildDiscoveryService {
         const scored = entries
             .map((entry) => {
                 const normalizedName = normalizeLookupValue(entry.name);
+                const normalizedTopic = normalizeLookupValue(entry.channelTopic || "");
                 const normalizedParent = normalizeLookupValue(entry.parentCategoryName || "");
                 let score = 0;
 
@@ -199,6 +215,15 @@ export class DiscordGuildDiscoveryService {
                 }
                 if (normalizedTarget.length >= 4 && normalizedName.includes(normalizedTarget)) {
                     score += 6;
+                }
+                if (normalizedTopic === normalizedTarget) {
+                    score += 9;
+                }
+                if (normalizedTopic && targetTokens.some((token) => normalizedTopic.includes(token))) {
+                    score += 4;
+                }
+                if (normalizedTopic && normalizedTarget.length >= 4 && normalizedTopic.includes(normalizedTarget)) {
+                    score += 3;
                 }
                 if (
                     normalizedName.length >= 4 &&

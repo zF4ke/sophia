@@ -54,6 +54,13 @@ export async function handleSettingsPanelInteraction(
                 await interaction.update(buildSettingsPanel(updated));
                 break;
             }
+            case "personality_toggle": {
+                const current = SettingsService.load();
+                const newPersonality = current.personality === "classic" ? "default" : "classic";
+                const updated = SettingsService.update({ personality: newPersonality });
+                await interaction.update(buildSettingsPanel(updated));
+                break;
+            }
             case "auto_approve_writes_toggle": {
                 const current = SettingsService.load();
                 const updated = SettingsService.update({

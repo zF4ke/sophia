@@ -13,7 +13,6 @@ vi.mock("@/app/AppConfig", () => ({
         modelProfileName: "test",
         modelProfile: {
             chatModel: "test-model",
-            analysisModel: "test-analysis",
             embeddingModel: "test-embedding",
             temperature: 0.2,
             maxOutputTokens: 256,

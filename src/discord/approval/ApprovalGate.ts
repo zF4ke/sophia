@@ -56,7 +56,7 @@ export function resolvePendingApproval(requestId: string, result: ApprovalResult
 
 export function buildResolvedContainer(
     request: ApprovalRequest,
-    status: "approved" | "denied" | "timeout" | "stopped" | "corrected",
+    status: "approved" | "denied" | "timeout" | "stopped" | "corrected" | "protected",
     timeoutSec?: number,
     correctionText?: string,
 ): ContainerBuilder {
@@ -73,6 +73,11 @@ export function buildResolvedContainer(
         case "denied":
             accentColor = 0xed4245;
             statusIcon = "❌";
+            break;
+        case "protected":
+            statusLine = "`🔒 Auto-bloqueado — este canal é protegido.`";
+            accentColor = 0x95a5a6;
+            statusIcon = "🔒";
             break;
         case "corrected":
             accentColor = 0xfee75c;
@@ -107,6 +112,18 @@ export function buildResolvedContainer(
     return container
         .addSeparatorComponents(new SeparatorBuilder().setDivider(false).setSpacing(SeparatorSpacingSize.Small))
         .addTextDisplayComponents(new TextDisplayBuilder().setContent(statusLine));
+}
+
+export function createProtectedBlockNotifier(channel: SendableChannels) {
+    return async (request: ApprovalRequest): Promise<void> => {
+        const container = buildResolvedContainer(request, "protected");
+        try {
+            await channel.send({
+                components: [container],
+                flags: MessageFlags.IsComponentsV2,
+            });
+        } catch { /* best-effort visual notification */ }
+    };
 }
 
 export function createApprovalGate(channel: SendableChannels) {

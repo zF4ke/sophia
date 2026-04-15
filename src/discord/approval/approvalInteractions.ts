@@ -33,11 +33,14 @@ import {
 } from "@/discord/approval/ApprovalGate";
 import { getToolDisplay } from "@/tools/registry";
 import { SecurityService } from "@/security/SecurityService";
-import type { ApprovalRequest, BatchItemDecision } from "@/runtime/contracts";
+import type { ApprovalRequest, BatchApprovalRequest, BatchItemDecision } from "@/runtime/contracts";
 
 export const APPROVAL_CONFIRM_APPROVE_PREFIX = "approval:confirm_approve:";
 export const APPROVAL_CONFIRM_CANCEL_PREFIX = "approval:confirm_cancel:";
 export const APPROVAL_MODAL_PREFIX = "approval:modal:";
+
+export const BATCH_CONFIRM_APPROVE_PREFIX = "batch:confirm_approve:";
+export const BATCH_CONFIRM_CANCEL_PREFIX = "batch:confirm_cancel:";
 
 function isUnknownInteractionError(error: unknown): boolean {
     return Boolean(
@@ -110,7 +113,9 @@ export async function handleApprovalInteraction(
         customId.startsWith(BATCH_APPROVE_ALL_PREFIX) ||
         customId.startsWith(BATCH_DENY_ALL_PREFIX) ||
         customId.startsWith(BATCH_STOP_PREFIX) ||
-        customId.startsWith(BATCH_CORRECT_PREFIX)
+        customId.startsWith(BATCH_CORRECT_PREFIX) ||
+        customId.startsWith(BATCH_CONFIRM_APPROVE_PREFIX) ||
+        customId.startsWith(BATCH_CONFIRM_CANCEL_PREFIX)
     ) {
         return handleBatchButton(interaction);
     }
@@ -250,6 +255,48 @@ async function showDestructiveConfirmButtons(
     }
 }
 
+async function showBatchDestructiveConfirm(
+    interaction: ButtonInteraction,
+    request: BatchApprovalRequest,
+    batchId: string,
+): Promise<void> {
+    const itemList = request.items
+        .map((item, i) => {
+            const tool = getToolDisplay(item.toolName);
+            return `${i + 1}. ${tool.icon} ${item.description}`;
+        })
+        .join("\n");
+
+    const container = new ContainerBuilder()
+        .setAccentColor(0xed4245)
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(`### ⚠️ Confirmar ${request.items.length} ações destrutivas`),
+            new TextDisplayBuilder().setContent(itemList),
+            new TextDisplayBuilder().setContent("Estas ações são destrutivas e irreversíveis. Tens a certeza?"),
+        );
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`${BATCH_CONFIRM_CANCEL_PREFIX}${batchId}`)
+            .setLabel("Cancelar")
+            .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId(`${BATCH_CONFIRM_APPROVE_PREFIX}${batchId}`)
+            .setLabel(`Confirmar ${request.items.length} ações`)
+            .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+            .setCustomId(`${BATCH_STOP_PREFIX}${batchId}`)
+            .setLabel("Parar execução")
+            .setStyle(ButtonStyle.Secondary),
+    );
+
+    try {
+        await interaction.update({ components: [container, row] });
+    } catch (error) {
+        if (!isUnknownInteractionError(error)) throw error;
+    }
+}
+
 async function updateMessage(
     interaction: ButtonInteraction,
     request: ApprovalRequest,
@@ -318,6 +365,8 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
     const isDenyAll = customId.startsWith(BATCH_DENY_ALL_PREFIX);
     const isStop = customId.startsWith(BATCH_STOP_PREFIX);
     const isCorrect = customId.startsWith(BATCH_CORRECT_PREFIX);
+    const isConfirmApprove = customId.startsWith(BATCH_CONFIRM_APPROVE_PREFIX);
+    const isConfirmCancel = customId.startsWith(BATCH_CONFIRM_CANCEL_PREFIX);
 
     const batchId = isApproveAll
         ? customId.slice(BATCH_APPROVE_ALL_PREFIX.length)
@@ -325,7 +374,11 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
             ? customId.slice(BATCH_DENY_ALL_PREFIX.length)
             : isStop
                 ? customId.slice(BATCH_STOP_PREFIX.length)
-                : customId.slice(BATCH_CORRECT_PREFIX.length);
+                : isCorrect
+                    ? customId.slice(BATCH_CORRECT_PREFIX.length)
+                    : isConfirmApprove
+                        ? customId.slice(BATCH_CONFIRM_APPROVE_PREFIX.length)
+                        : customId.slice(BATCH_CONFIRM_CANCEL_PREFIX.length);
 
     const pending = getPendingBatchApproval(batchId);
     if (!pending) {
@@ -336,6 +389,48 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
     await SecurityService.initialize();
     if (!SecurityService.isAdmin(interaction.user.id)) {
         await safeReply(interaction, "❌ Apenas administradores podem aceitar ou recusar ações.");
+        return true;
+    }
+
+    // ── Batch confirm approve (after destructive confirmation) ──
+    if (isConfirmApprove) {
+        const allDecisions: Record<string, BatchItemDecision> = {};
+        for (const item of pending.request.items) {
+            allDecisions[item.toolCallId] = "approved";
+        }
+        resolvePendingBatchApproval(batchId, {
+            decisions: allDecisions,
+            decidedBy: interaction.user.id,
+            decidedAt: Date.now(),
+        });
+        try {
+            await interaction.update({
+                components: [buildResolvedBatchContainer(pending.request, "approved")],
+            });
+        } catch (error) {
+            if (!isUnknownInteractionError(error)) throw error;
+        }
+        return true;
+    }
+
+    // ── Batch confirm cancel (back out of destructive confirmation) ──
+    if (isConfirmCancel) {
+        const allDecisions: Record<string, BatchItemDecision> = {};
+        for (const item of pending.request.items) {
+            allDecisions[item.toolCallId] = "denied";
+        }
+        resolvePendingBatchApproval(batchId, {
+            decisions: allDecisions,
+            decidedBy: interaction.user.id,
+            decidedAt: Date.now(),
+        });
+        try {
+            await interaction.update({
+                components: [buildResolvedBatchContainer(pending.request, "denied")],
+            });
+        } catch (error) {
+            if (!isUnknownInteractionError(error)) throw error;
+        }
         return true;
     }
 
@@ -367,21 +462,8 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
     const allDecisions: Record<string, BatchItemDecision> = {};
 
     if (isApproveAll) {
-        for (const item of pending.request.items) {
-            allDecisions[item.toolCallId] = "approved";
-        }
-        resolvePendingBatchApproval(batchId, {
-            decisions: allDecisions,
-            decidedBy: interaction.user.id,
-            decidedAt: Date.now(),
-        });
-        try {
-            await interaction.update({
-                components: [buildResolvedBatchContainer(pending.request, "approved")],
-            });
-        } catch (error) {
-            if (!isUnknownInteractionError(error)) throw error;
-        }
+        // Show destructive confirmation before batch-approving
+        await showBatchDestructiveConfirm(interaction, pending.request, batchId);
         return true;
     }
 

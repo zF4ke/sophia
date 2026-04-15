@@ -22,7 +22,7 @@ const parameters = {
         },
         topic: {
             type: "string",
-            description: "Optional: channel topic/description.",
+            description: "Optional: short channel topic/description metadata (NOT the message body to post in the channel).",
         },
     },
     required: ["name"],
@@ -39,13 +39,13 @@ export const createChannelTool: ToolDefinition = {
 
     schema: {
         description:
-            "Create a new channel in the guild. This is a WRITE action that requires admin approval before execution. Use only when explicitly asked to create a channel.",
+            "Create a new channel in the guild. This is a WRITE action that requires admin approval before execution. Use only when explicitly asked to create a channel. Important: `topic` is channel metadata, not the content to post. If the user asks to post text in the new channel, create the channel first, then call `send_message` with that text.",
         parameters,
     },
 
     capability: {
         description:
-            "Create a new channel in the guild. Write action — requires admin approval.",
+            "Create a new channel in the guild. Write action — requires admin approval. `topic` is metadata only; use `send_message` to post actual content.",
         inputSchema: z.object({
             name: z.string().describe("Name for the new channel."),
             type: z
@@ -53,7 +53,7 @@ export const createChannelTool: ToolDefinition = {
                 .optional()
                 .describe("Channel type. Default: text."),
             category_id: z.string().optional().describe("Parent category ID."),
-            topic: z.string().optional().describe("Channel topic/description."),
+            topic: z.string().optional().describe("Short channel topic/description metadata (not a post message body)."),
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",

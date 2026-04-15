@@ -16,6 +16,7 @@ import type { ToolDefinition, CapabilityContext } from "./types";
 // ── Import all per-tool definitions ─────────────────────────────────
 
 import { retrieveMessagesTool } from "./retrieveMessages";
+import { searchMessagesTool } from "./searchMessages";
 import { listGuildStructureTool } from "./listGuildStructure";
 import { getGuildContextTool } from "./getGuildContext";
 import { resolveChannelTargetsTool } from "./resolveChannelTargets";
@@ -41,6 +42,7 @@ import { deleteChannelTool } from "./deleteChannel";
 export const ALL_TOOLS: readonly ToolDefinition[] = [
     // ── Retrieval ──
     retrieveMessagesTool,
+    searchMessagesTool,
     // ── Server & channel discovery ──
     listGuildStructureTool,
     getGuildContextTool,

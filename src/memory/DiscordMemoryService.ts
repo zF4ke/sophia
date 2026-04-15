@@ -172,7 +172,7 @@ export class DiscordMemoryService {
                 `SELECT channel_id, last_message_id, last_indexed_timestamp FROM index_state`
             ),
             client.execute(
-                `SELECT channel_id, guild_id, channel_name, channel_type, parent_category_id, parent_category_name, last_seen_timestamp FROM channels`
+                `SELECT channel_id, guild_id, channel_name, channel_topic, channel_type, parent_category_id, parent_category_name, last_seen_timestamp FROM channels`
             ),
             client.execute(
                 `SELECT channel_id, last_crawled_timestamp, oldest_fetched_message_id, exhausted FROM channel_crawl_state`
@@ -210,6 +210,7 @@ export class DiscordMemoryService {
                     channelId: String(row.channel_id),
                     guildId: row.guild_id == null ? null : String(row.guild_id),
                     channelName: String(row.channel_name),
+                    channelTopic: row.channel_topic == null ? null : String(row.channel_topic),
                     channelType: row.channel_type == null ? null : String(row.channel_type),
                     parentCategoryId:
                         row.parent_category_id == null ? null : String(row.parent_category_id),
@@ -341,16 +342,17 @@ export class DiscordMemoryService {
             {
                 sql: `
                     INSERT INTO channels (
-                        channel_id, guild_id, channel_name, channel_type,
+                        channel_id, guild_id, channel_name, channel_topic, channel_type,
                         parent_category_id, parent_category_name, last_seen_timestamp
                     )
                     VALUES (
-                        :channelId, :guildId, :channelName, :channelType,
+                        :channelId, :guildId, :channelName, :channelTopic, :channelType,
                         :parentCategoryId, :parentCategoryName, :lastSeenTimestamp
                     )
                     ON CONFLICT(channel_id) DO UPDATE SET
                         guild_id = excluded.guild_id,
                         channel_name = excluded.channel_name,
+                        channel_topic = COALESCE(excluded.channel_topic, channels.channel_topic),
                         channel_type = COALESCE(excluded.channel_type, channels.channel_type),
                         parent_category_id = COALESCE(excluded.parent_category_id, channels.parent_category_id),
                         parent_category_name = COALESCE(excluded.parent_category_name, channels.parent_category_name),
@@ -360,6 +362,7 @@ export class DiscordMemoryService {
                     channelId: stored.channelId,
                     guildId: stored.guildId,
                     channelName: stored.channelName,
+                    channelTopic: null,
                     channelType: null,
                     parentCategoryId: null,
                     parentCategoryName: null,
@@ -415,6 +418,7 @@ export class DiscordMemoryService {
             channelId: stored.channelId,
             guildId: stored.guildId,
             channelName: stored.channelName,
+            channelTopic: this.knownChannelsSnapshot.get(stored.channelId)?.channelTopic || null,
             channelType: this.knownChannelsSnapshot.get(stored.channelId)?.channelType || null,
             parentCategoryId: this.knownChannelsSnapshot.get(stored.channelId)?.parentCategoryId || null,
             parentCategoryName: this.knownChannelsSnapshot.get(stored.channelId)?.parentCategoryName || null,
@@ -857,6 +861,7 @@ export class DiscordMemoryService {
         channelName: string,
         timestamp = now(),
         metadata?: {
+            channelTopic?: string | null;
             channelType?: string | null;
             parentCategoryId?: string | null;
             parentCategoryName?: string | null;
@@ -866,16 +871,17 @@ export class DiscordMemoryService {
         await OperationalStore.getClient().execute({
             sql: `
                 INSERT INTO channels (
-                    channel_id, guild_id, channel_name, channel_type,
+                    channel_id, guild_id, channel_name, channel_topic, channel_type,
                     parent_category_id, parent_category_name, last_seen_timestamp
                 )
                 VALUES (
-                    :channelId, :guildId, :channelName, :channelType,
+                    :channelId, :guildId, :channelName, :channelTopic, :channelType,
                     :parentCategoryId, :parentCategoryName, :lastSeenTimestamp
                 )
                 ON CONFLICT(channel_id) DO UPDATE SET
                     guild_id = excluded.guild_id,
                     channel_name = excluded.channel_name,
+                    channel_topic = COALESCE(excluded.channel_topic, channels.channel_topic),
                     channel_type = COALESCE(excluded.channel_type, channels.channel_type),
                     parent_category_id = COALESCE(excluded.parent_category_id, channels.parent_category_id),
                     parent_category_name = COALESCE(excluded.parent_category_name, channels.parent_category_name),
@@ -885,6 +891,7 @@ export class DiscordMemoryService {
                 channelId,
                 guildId,
                 channelName,
+                channelTopic: metadata?.channelTopic || null,
                 channelType: metadata?.channelType || null,
                 parentCategoryId: metadata?.parentCategoryId || null,
                 parentCategoryName: metadata?.parentCategoryName || null,
@@ -896,6 +903,7 @@ export class DiscordMemoryService {
             channelId,
             guildId,
             channelName,
+            channelTopic: metadata?.channelTopic || this.knownChannelsSnapshot.get(channelId)?.channelTopic || null,
             channelType: metadata?.channelType || this.knownChannelsSnapshot.get(channelId)?.channelType || null,
             parentCategoryId:
                 metadata?.parentCategoryId ||

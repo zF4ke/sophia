@@ -86,7 +86,7 @@ export const resolveChannelTargetsTool: ToolDefinition = {
                     summary: run.summary,
                     content: isCategoryStructureEntry(entry)
                         ? `Category ${entry.name} resolved with ${Array.isArray(result.resolvedIds) ? result.resolvedIds.length : 0} visible message channels.`
-                        : `Channel #${entry.name}${entry.parentCategoryName ? ` in category ${entry.parentCategoryName}` : ""}.`,
+                        : `Channel #${entry.name}${entry.parentCategoryName ? ` in category ${entry.parentCategoryName}` : ""}${entry.channelTopic ? `. Topic: ${entry.channelTopic.replace(/\s+/g, " ").trim().slice(0, 120)}` : ""}.`,
                     evidenceRole: "discovery_only" as const,
                     strength: "metadata" as const,
                     sourceOrigin: "none" as const,
