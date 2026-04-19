@@ -50,26 +50,13 @@ export function shouldCompactInput(
     contextWindow: number,
 ): boolean {
     let fraction = 0;
-    let absoluteMax = 0;
     try {
-        const settings = SettingsService.load();
-        fraction = settings.compaction?.inputTriggerFraction ?? 0;
-        absoluteMax = settings.compaction?.inputMaxTokens ?? 0;
+        fraction = SettingsService.load().compaction?.inputTriggerFraction ?? 0;
     } catch {
         fraction = 0;
-        absoluteMax = 0;
     }
-    if (!Number.isFinite(contextWindow) || contextWindow <= 0) return false;
-
-    // Absolute ceiling: compact when prompt exceeds a hard token limit,
-    // regardless of the context window size. This ensures compaction fires
-    // on large-context models (e.g. 1M) where the ratio alone never triggers.
-    if (Number.isFinite(absoluteMax) && absoluteMax > 0 && promptTokens >= absoluteMax) {
-        return true;
-    }
-
-    // Ratio-based ceiling (original behavior).
     if (!Number.isFinite(fraction) || fraction <= 0) return false;
+    if (!Number.isFinite(contextWindow) || contextWindow <= 0) return false;
     return promptTokens >= contextWindow * fraction;
 }
 

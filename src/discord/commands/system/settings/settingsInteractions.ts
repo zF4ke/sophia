@@ -4,12 +4,9 @@ import {
     handleSettingsInteraction,
     buildSettingsPanel,
     buildRuntimeValueSelect,
-    buildCompactionValueSelect,
     getRuntimeSettingValue,
     buildRuntimeSettingPatch,
-    buildCompactionSettingPatch,
     type RuntimeSettingKey,
-    type CompactionSettingKey,
 } from "@/discord/commands/system/settings/settings.command";
 import { SecurityService } from "@/security/SecurityService";
 
@@ -83,23 +80,6 @@ export async function handleSettingsPanelInteraction(
                 const updated = SettingsService.update({
                     compaction: { ...current.compaction, summarizerModel: selected },
                 });
-                await interaction.update(buildSettingsPanel(updated, "compaction"));
-                break;
-            }
-            case "compaction_pick": {
-                if (!interaction.isStringSelectMenu()) break;
-                const key = interaction.values[0] as CompactionSettingKey;
-                const settings = SettingsService.load();
-                const currentValue = settings.compaction[key];
-                await interaction.update(buildCompactionValueSelect(key, currentValue));
-                break;
-            }
-            case "compaction_set": {
-                if (!interaction.isStringSelectMenu() || !parsed.compactionKey) break;
-                const key = parsed.compactionKey as CompactionSettingKey;
-                const numValue = Number(interaction.values[0]);
-                const current = SettingsService.load();
-                const updated = SettingsService.update(buildCompactionSettingPatch(current, key, numValue));
                 await interaction.update(buildSettingsPanel(updated, "compaction"));
                 break;
             }

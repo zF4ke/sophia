@@ -6,7 +6,6 @@ import type { ToolDefinition, CapabilityContext } from "./types";
 
 const MAX_BODY_CHARS = 4000;
 const MAX_LABEL_CHARS = 64;
-const MAX_PREVIEW_CHARS = 80;
 const DEFAULT_MAX_NOTES = 200;
 
 function requireIds(context: CapabilityContext): { requestId: string; threadId: string } | { error: string } {
@@ -134,16 +133,16 @@ export const noteListTool: ToolDefinition = {
     name: T.note_list,
     catalog: {
         effect: "read",
-        description: "Browse the notebook — returns metadata and previews, not full contents.",
+        description: "Read back the per-request scratchpad (notes and plan).",
         evidenceRole: "discovery_only",
     },
     schema: {
         description:
-            "Browse notebook pages. Returns note IDs, labels, short previews and timestamps — not full bodies. Use note_read to open a specific page. Pass include_thread_history: true to also see notes from earlier turns on the same thread.",
+            "List notes written during this turn. By default returns only current-request notes; pass include_thread_history: true to also see notes from earlier turns on the same thread. Output is ordered by creation time.",
         parameters: noteListParameters,
     },
     capability: {
-        description: "Browse notebook pages (metadata only).",
+        description: "List request scratchpad notes.",
         inputSchema: z.object({
             include_thread_history: z.boolean().optional(),
             label: z.string().optional(),
@@ -154,7 +153,7 @@ export const noteListTool: ToolDefinition = {
         costClass: "cheap",
         latencyClass: "fast",
         preconditions: [],
-        postconditions: ["returns note metadata for current request (and thread, if opted in)"],
+        postconditions: ["returns notes for current request (and thread, if opted in)"],
         async run(context, args) {
             const ids = requireIds(context);
             if ("error" in ids) {
@@ -173,7 +172,7 @@ export const noteListTool: ToolDefinition = {
             const planBody = await DiscordMemoryService.getRequestPlan(ids.requestId);
 
             const summary =
-                `${notes.length} page(s)` +
+                `${notes.length} note(s)` +
                 (planBody ? " + plan" : "") +
                 (includeThreadHistory ? " (incl. thread history)" : "");
 
@@ -185,100 +184,6 @@ export const noteListTool: ToolDefinition = {
                     notes: notes.map((n) => ({
                         seq: n.seq,
                         label: n.label,
-                        preview: n.body.length > MAX_PREVIEW_CHARS
-                            ? n.body.slice(0, MAX_PREVIEW_CHARS) + "…"
-                            : n.body,
-                        created_at: n.createdTimestamp,
-                        request_id: n.requestId,
-                    })),
-                },
-            };
-        },
-    },
-    strategy: { extractEvidence: () => [] },
-    display: { icon: "📖", labelPt: "Folhear caderno" },
-};
-
-// ── note_read ───────────────────────────────────────────────────────
-
-const noteReadParameters = {
-    type: "object",
-    properties: {
-        seq: {
-            type: "number",
-            description: "Read a single note by its sequence number.",
-        },
-        seqs: {
-            type: "array",
-            items: { type: "number" },
-            description: "Read multiple notes by sequence numbers.",
-        },
-        label: {
-            type: "string",
-            description: "Read all notes with this exact label.",
-        },
-    },
-    required: [],
-} as const;
-
-export const noteReadTool: ToolDefinition = {
-    name: T.note_read,
-    catalog: {
-        effect: "read",
-        description: "Open notebook pages and return full contents.",
-        evidenceRole: "discovery_only",
-    },
-    schema: {
-        description:
-            "Open one or more notebook pages and return their full contents. Filter by seq, seqs (array), or label. If none provided, returns all notes for the current request.",
-        parameters: noteReadParameters,
-    },
-    capability: {
-        description: "Read full contents of notebook pages.",
-        inputSchema: z.object({
-            seq: z.number().optional(),
-            seqs: z.array(z.number()).optional(),
-            label: z.string().optional(),
-        }),
-        outputSchema: z.any(),
-        sideEffectLevel: "none",
-        authRequirements: [],
-        costClass: "cheap",
-        latencyClass: "fast",
-        preconditions: [],
-        postconditions: ["returns full note bodies for matching notes"],
-        async run(context, args) {
-            const ids = requireIds(context);
-            if ("error" in ids) {
-                return { tool: T.note_read, summary: ids.error, data: null, errorMessage: ids.error };
-            }
-            const label = args.label == null ? undefined : String(args.label).trim() || undefined;
-
-            const allNotes = await DiscordMemoryService.listRequestNotes({
-                requestId: ids.requestId,
-                threadId: ids.threadId,
-                kind: "note",
-                label,
-            });
-
-            let filtered = allNotes;
-            const singleSeq = args.seq != null ? Number(args.seq) : null;
-            const multiSeq = Array.isArray(args.seqs) ? args.seqs.map(Number) : null;
-
-            if (singleSeq != null) {
-                filtered = allNotes.filter((n) => n.seq === singleSeq);
-            } else if (multiSeq != null && multiSeq.length > 0) {
-                const seqSet = new Set(multiSeq);
-                filtered = allNotes.filter((n) => seqSet.has(n.seq));
-            }
-
-            return {
-                tool: T.note_read,
-                summary: `${filtered.length} page(s) returned.`,
-                data: {
-                    notes: filtered.map((n) => ({
-                        seq: n.seq,
-                        label: n.label,
                         body: n.body,
                         created_at: n.createdTimestamp,
                         request_id: n.requestId,
@@ -288,94 +193,7 @@ export const noteReadTool: ToolDefinition = {
         },
     },
     strategy: { extractEvidence: () => [] },
-    display: { icon: "📄", labelPt: "Ler página" },
-};
-
-// ── note_update ─────────────────────────────────────────────────────
-
-const noteUpdateParameters = {
-    type: "object",
-    properties: {
-        seq: {
-            type: "number",
-            description: "Sequence number of the note to rewrite.",
-        },
-        body: {
-            type: "string",
-            description: "New full content for the note (replaces previous body entirely). Max ~4000 chars.",
-        },
-        label: {
-            type: "string",
-            description: "Optional: update the label. Omit to keep the existing label.",
-        },
-    },
-    required: ["seq", "body"],
-} as const;
-
-export const noteUpdateTool: ToolDefinition = {
-    name: T.note_update,
-    catalog: {
-        effect: "read",
-        description: "Rewrite a notebook page in place.",
-        evidenceRole: "discovery_only",
-    },
-    schema: {
-        description:
-            "Rewrite a notebook page by sequence number. Full replace — the old body is overwritten entirely. Use this to refine, correct, or consolidate an existing note instead of creating duplicates.",
-        parameters: noteUpdateParameters,
-    },
-    capability: {
-        description: "Rewrite a notebook page in place.",
-        inputSchema: z.object({
-            seq: z.number(),
-            body: z.string(),
-            label: z.string().optional(),
-        }),
-        outputSchema: z.any(),
-        sideEffectLevel: "none",
-        authRequirements: [],
-        costClass: "cheap",
-        latencyClass: "fast",
-        preconditions: [],
-        postconditions: ["note body replaced for matching seq"],
-        async run(context, args) {
-            const ids = requireIds(context);
-            if ("error" in ids) {
-                return { tool: T.note_update, summary: ids.error, data: null, errorMessage: ids.error };
-            }
-            const seq = Number(args.seq);
-            if (!Number.isFinite(seq) || seq < 1) {
-                return { tool: T.note_update, summary: "Invalid seq.", data: null, errorMessage: "invalid_seq" };
-            }
-            const body = String(args.body ?? "").slice(0, MAX_BODY_CHARS).trim();
-            if (!body) {
-                return { tool: T.note_update, summary: "Empty body rejected.", data: null, errorMessage: "empty_body" };
-            }
-            const label = args.label === undefined ? undefined : (args.label == null ? null : String(args.label).slice(0, MAX_LABEL_CHARS).trim() || null);
-
-            const { updated } = await DiscordMemoryService.updateRequestNote({
-                requestId: ids.requestId,
-                seq,
-                body,
-                label,
-            });
-            if (!updated) {
-                return {
-                    tool: T.note_update,
-                    summary: `Note #${seq} not found.`,
-                    data: { seq, updated: false },
-                    errorMessage: "not_found",
-                };
-            }
-            return {
-                tool: T.note_update,
-                summary: `Note #${seq} rewritten${label !== undefined ? ` [${label ?? "unlabelled"}]` : ""}.`,
-                data: { seq, updated: true },
-            };
-        },
-    },
-    strategy: { extractEvidence: () => [] },
-    display: { icon: "✏️", labelPt: "Reescrever página" },
+    display: { icon: "📖", labelPt: "Ler anotações" },
 };
 
 // ── note_clear ──────────────────────────────────────────────────────

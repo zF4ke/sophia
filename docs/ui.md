@@ -63,17 +63,9 @@ Approval cards use discord.js Components V2 (ContainerBuilder, ButtonBuilder, St
 
 ## Settings Panel
 
-- Interactive panel with explicit tabs for:
-  - model selection
-  - runtime tuning
-  - compaction tuning
-  - long-task budgets
-  - personality mode
+- Interactive panel with explicit tabs for model selection and runtime tuning
 - Model tab shows friendly labels, context window, and OpenRouter pricing
-- Runtime tab keeps parameter tuning separated from model selection, including notebook retention controls
-- Compaction tab exposes the summarizer model, Tier-2 trigger, Tier-0 trigger, and Tier-0 absolute ceiling
-- Long-task tab exposes the caps applied by `start_long_task`
-- Personality tab exposes `default`, `mixed`, and `classic`
+- Runtime tab keeps parameter tuning separated from model selection
 - Toggle button for auto-approve writes
 - Reset to Defaults button
 - All labels and descriptions in Portuguese

@@ -5,9 +5,6 @@ Runtime prompts remain external and are loaded through `PromptRegistry`.
 ## Active Prompt IDs
 
 - `runtime/agent_loop`
-- `runtime/stall_classifier`
-- `system/personality_mixed_override`
-- `system/personality_classic_override`
 
 The stable code catalog is `src/shared/promptCatalog.ts`.
 
@@ -15,12 +12,8 @@ The stable code catalog is `src/shared/promptCatalog.ts`.
 
 - `runtime/agent_loop`
   Unified system prompt for the native tool-calling loop. Defines identity, environment, research flow, evidence rules, tool calling rules, and voice.
-- `runtime/stall_classifier`
-  Lightweight binary classifier used by the stall guard to decide whether a finish-answer is a non-productive promise that should be rejected once.
-- `system/personality_mixed_override`
-  Mixed personality override injected when `/settings` → `Personalidade` is set to `mixed`.
-- `system/personality_classic_override`
-  Classic personality override injected when `/settings` → `Personalidade` is set to `classic`.
+
+Legacy prompt files under `resources/prompts/system/` may still exist as reference material, but they are not part of the active runtime prompt catalog.
 
 
 ## Stable Capability Names In Prompt Context
@@ -60,7 +53,5 @@ The runtime prompt set expects these capability ids to stay stable:
 - `start_long_task`
 - `note_add`
 - `note_list`
-- `note_read`
-- `note_update`
 - `note_clear`
 - `plan_update`

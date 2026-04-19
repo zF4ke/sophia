@@ -26,17 +26,10 @@ export type RuntimeSettingKey =
     | "retrievalHistoryLimit"
     | "retrievalContextWindow"
     | "approvalTimeoutMs"
-    | "maxNotesPerRequest"
-    | "noteExpiryRequests"
     | "longTaskMaxToolCalls"
     | "longTaskMaxLatencyBudgetMs"
     | "longTaskEvidenceSliceFloor"
     | "longTaskRetrievalInlineCrawlBatches";
-
-export type CompactionSettingKey =
-    | "triggerFraction"
-    | "inputTriggerFraction"
-    | "inputMaxTokens";
 
 const LONG_TASK_KEYS: RuntimeSettingKey[] = [
     "longTaskMaxToolCalls",
@@ -129,14 +122,6 @@ type RuntimeSettingMeta = {
     presets: number[];
 };
 
-type CompactionSettingMeta = {
-    label: string;
-    shortDescription: string;
-    longDescription: string;
-    presets: number[];
-    formatValue?: (value: number) => string;
-};
-
 const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
     maxPriorTurns: {
         label: "🧠 Turnos recentes",
@@ -204,18 +189,6 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
         longDescription: "Tempo máximo de espera por aprovação de ações write/destructive antes de auto-recusa.",
         presets: [30000, 60000, 120000, 300000],
     },
-    maxNotesPerRequest: {
-        label: "🗒️ Máx. páginas no notebook",
-        shortDescription: "Cap de páginas por pedido.",
-        longDescription: "Máximo de páginas que o notebook do turno pode armazenar antes de recusar novas notas.",
-        presets: [50, 100, 150, 200, 300, 500],
-    },
-    noteExpiryRequests: {
-        label: "🧹 Expiração do notebook",
-        shortDescription: "Pedidos mantidos por thread.",
-        longDescription: "Quantos pedidos recentes por thread mantêm as páginas do notebook antes da limpeza automática.",
-        presets: [1, 3, 5, 8, 12, 20],
-    },
     longTaskMaxToolCalls: {
         label: "🛠️ Long task: máx. ferramentas",
         shortDescription: "Cap de ferramentas ao entrar em long-task.",
@@ -242,29 +215,6 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
     },
 };
 
-const COMPACTION_SETTING_META: Record<CompactionSettingKey, CompactionSettingMeta> = {
-    triggerFraction: {
-        label: "🧱 Trigger da Tier-2",
-        shortDescription: "Percentagem do contexto para resumir o miolo.",
-        longDescription: "Quando o prompt atinge esta percentagem da janela total, a Tier-2 resume o bloco do meio em vez de apenas truncar.",
-        presets: [0.6, 0.7, 0.8, 0.85, 0.9, 0.95],
-        formatValue: (value) => `${Math.round(value * 100)}%`,
-    },
-    inputTriggerFraction: {
-        label: "✂️ Trigger da Tier-0",
-        shortDescription: "Percentagem do input para compactação de entrada.",
-        longDescription: "Percentagem da janela total a partir da qual a compactação de entrada tenta reduzir prompts pesados antes da chamada ao modelo.",
-        presets: [0.2, 0.3, 0.4, 0.5, 0.6],
-        formatValue: (value) => `${Math.round(value * 100)}%`,
-    },
-    inputMaxTokens: {
-        label: "📦 Teto absoluto da Tier-0",
-        shortDescription: "Ceiling absoluto do prompt antes de compactar.",
-        longDescription: "Limite absoluto aproximado de tokens de entrada para disparar compactação, mesmo em modelos com janelas gigantes.",
-        presets: [8000, 10000, 12000, 16000, 20000, 30000],
-    },
-};
-
 const SETTINGS_CONTAINER_ACCENT = 0xd1d5db;
 const TAB_LABEL_PAD = 0;
 
@@ -286,25 +236,6 @@ function padTabLabel(label: string): string {
 
 function getPlainRuntimeLabel(key: RuntimeSettingKey): string {
     return RUNTIME_SETTING_META[key].label.replace(/^[^\p{L}\p{N}]+/u, "").trim();
-}
-
-function getCompactionSettingValue(
-    settings: BotSettings,
-    key: CompactionSettingKey,
-): number {
-    return settings.compaction[key];
-}
-
-export function buildCompactionSettingPatch(
-    current: BotSettings,
-    key: CompactionSettingKey,
-    value: number,
-): Partial<BotSettings> {
-    return { compaction: { ...current.compaction, [key]: value } };
-}
-
-function formatCompactionValue(key: CompactionSettingKey, value: number): string {
-    return COMPACTION_SETTING_META[key].formatValue?.(value) ?? formatNumber(value);
 }
 
 function buildPriceLines(profileName: string): string[] {
@@ -494,13 +425,10 @@ export function buildSettingsPanel(
         const compactionProfileName = compactionSettings.summarizerModel;
         const compactionProfile = profileConfig.profiles[compactionProfileName];
         const compactionLabel = compactionProfile?.label || compactionProfileName;
-        const compactionKeys = Object.keys(COMPACTION_SETTING_META) as CompactionSettingKey[];
 
         const compactionInfoLines = [
             `Modelo de compactação: \`${compactionLabel} ☑️\``,
-            ...compactionKeys.map(
-                (key) => `${COMPACTION_SETTING_META[key].label.replace(/^[^\p{L}\p{N}]+/u, "").trim()}: \`${formatCompactionValue(key, getCompactionSettingValue(settings, key))}\``
-            ),
+            `Trigger: \`${Math.round(compactionSettings.triggerFraction * 100)}%\` do contexto`,
         ];
 
         const compactionModelOptions = Object.entries(profileConfig.profiles)
@@ -536,23 +464,6 @@ export function buildSettingsPanel(
                                 compactionModelOptions.length > 0
                                     ? compactionModelOptions
                                     : [{ label: "Nenhum modelo elegível", value: "_none" }]
-                            )
-                    )
-                )
-                .addActionRowComponents(
-                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-                        new StringSelectMenuBuilder()
-                            .setCustomId(`${idPrefix}:compaction`)
-                            .setPlaceholder("Ajustar parâmetro de compactação")
-                            .addOptions(
-                                compactionKeys.map((key) => {
-                                    const meta = COMPACTION_SETTING_META[key];
-                                    return {
-                                        label: meta.label.slice(0, 100),
-                                        value: key,
-                                        description: `${meta.shortDescription} Atual: ${formatCompactionValue(key, getCompactionSettingValue(settings, key))}`.slice(0, 100),
-                                    };
-                                })
                             )
                     )
                 )
@@ -694,55 +605,6 @@ export function buildRuntimeValueSelect(
     };
 }
 
-export function buildCompactionValueSelect(
-    key: CompactionSettingKey,
-    currentValue: number,
-    options: SettingsPanelOptions = {}
-) {
-    const idPrefix = options.idPrefix ?? "settings";
-    const meta = COMPACTION_SETTING_META[key];
-    const presets = meta.presets.includes(currentValue)
-        ? meta.presets
-        : [...meta.presets, currentValue].sort((a, b) => a - b);
-
-    return {
-        components: [
-            new ContainerBuilder()
-                .setAccentColor(SETTINGS_CONTAINER_ACCENT)
-                .addTextDisplayComponents(
-                    new TextDisplayBuilder().setContent(`## ${meta.label}`),
-                    new TextDisplayBuilder().setContent(
-                        [
-                            `**Descrição:** ${meta.longDescription}`,
-                            `**Valor atual:** ${formatCompactionValue(key, currentValue)}`,
-                        ].join("\n")
-                    )
-                )
-                .addActionRowComponents(
-                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-                        new StringSelectMenuBuilder()
-                            .setCustomId(`${idPrefix}:compaction:set:${key}`)
-                            .setPlaceholder("Escolher valor")
-                            .addOptions(
-                                presets.map((v) => ({
-                                    label: formatCompactionValue(key, v),
-                                    value: String(v),
-                                    default: v === currentValue,
-                                }))
-                            )
-                    )
-                ),
-            new ActionRowBuilder<ButtonBuilder>().addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`${idPrefix}:tab:compaction`)
-                    .setLabel("Voltar à compactação")
-                    .setStyle(ButtonStyle.Secondary)
-            ),
-        ],
-        flags: MessageFlags.IsComponentsV2 as const,
-    };
-}
-
 export default {
     data: new SlashCommandBuilder()
         .setName("settings")
@@ -775,8 +637,6 @@ export function handleSettingsInteraction(customId: string): {
         | "tab_personality"
         | "model_select"
         | "compaction_model_select"
-        | "compaction_pick"
-        | "compaction_set"
         | "runtime_pick"
         | "runtime_set"
         | "personality_select"
@@ -784,7 +644,6 @@ export function handleSettingsInteraction(customId: string): {
         | "reset"
         | null;
     key?: RuntimeSettingKey;
-    compactionKey?: CompactionSettingKey;
 } {
     if (customId === "settings:tab:model") return { type: "tab_model" };
     if (customId === "settings:tab:runtime") return { type: "tab_runtime" };
@@ -794,7 +653,6 @@ export function handleSettingsInteraction(customId: string): {
     if (customId === "settings:personality:select") return { type: "personality_select" };
     if (customId === "settings:model:select") return { type: "model_select" };
     if (customId === "settings:compaction:model") return { type: "compaction_model_select" };
-    if (customId === "settings:compaction") return { type: "compaction_pick" };
     if (customId === "settings:runtime") return { type: "runtime_pick" };
     if (customId === "settings:auto-approve-writes:toggle") return { type: "auto_approve_writes_toggle" };
     if (customId === "settings:reset") return { type: "reset" };
@@ -802,12 +660,6 @@ export function handleSettingsInteraction(customId: string): {
         return {
             type: "runtime_set",
             key: customId.slice("settings:runtime:set:".length) as RuntimeSettingKey,
-        };
-    }
-    if (customId.startsWith("settings:compaction:set:")) {
-        return {
-            type: "compaction_set",
-            compactionKey: customId.slice("settings:compaction:set:".length) as CompactionSettingKey,
         };
     }
     return { type: null };
@@ -825,8 +677,6 @@ export function parseSettingsInteraction(
         | "tab_personality"
         | "model_select"
         | "compaction_model_select"
-        | "compaction_pick"
-        | "compaction_set"
         | "runtime_pick"
         | "runtime_set"
         | "personality_select"
@@ -834,7 +684,6 @@ export function parseSettingsInteraction(
         | "reset"
         | null;
     key?: RuntimeSettingKey;
-    compactionKey?: CompactionSettingKey;
 } {
     if (customId === `${idPrefix}:tab:model`) return { type: "tab_model" };
     if (customId === `${idPrefix}:tab:runtime`) return { type: "tab_runtime" };
@@ -844,7 +693,6 @@ export function parseSettingsInteraction(
     if (customId === `${idPrefix}:personality:select`) return { type: "personality_select" };
     if (customId === `${idPrefix}:model:select`) return { type: "model_select" };
     if (customId === `${idPrefix}:compaction:model`) return { type: "compaction_model_select" };
-    if (customId === `${idPrefix}:compaction`) return { type: "compaction_pick" };
     if (customId === `${idPrefix}:runtime`) return { type: "runtime_pick" };
     if (customId === `${idPrefix}:auto-approve-writes:toggle`) return { type: "auto_approve_writes_toggle" };
     if (customId === `${idPrefix}:reset`) return { type: "reset" };
@@ -852,12 +700,6 @@ export function parseSettingsInteraction(
         return {
             type: "runtime_set",
             key: customId.slice(`${idPrefix}:runtime:set:`.length) as RuntimeSettingKey,
-        };
-    }
-    if (customId.startsWith(`${idPrefix}:compaction:set:`)) {
-        return {
-            type: "compaction_set",
-            compactionKey: customId.slice(`${idPrefix}:compaction:set:`.length) as CompactionSettingKey,
         };
     }
     return { type: null };

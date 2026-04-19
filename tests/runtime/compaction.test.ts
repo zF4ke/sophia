@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { shouldCompact, resolveCompactionProfile, compactMessages } from "@/runtime/compaction";
-import { shouldCompactInput } from "@/runtime/inputCompaction";
 import { SettingsService } from "@/app/SettingsService";
 import { ModelGateway } from "@/ai/ModelGateway";
 import type { ToolChatMessage } from "@/ai/ModelGateway";
@@ -179,55 +178,5 @@ describe("compactMessages", () => {
 
         expect(result.compacted).toBe(false);
         expect(msgs.length).toBe(originalLength); // Unchanged.
-    });
-});
-
-describe("shouldCompactInput", () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-    });
-
-    it("returns false when both fraction and absoluteMax are zero/missing", () => {
-        (SettingsService.load as ReturnType<typeof vi.fn>).mockReturnValue({
-            compaction: { inputTriggerFraction: 0, inputMaxTokens: 0 },
-        });
-        expect(shouldCompactInput(50000, 100000)).toBe(false);
-    });
-
-    it("triggers on ratio-based ceiling for small context windows", () => {
-        (SettingsService.load as ReturnType<typeof vi.fn>).mockReturnValue({
-            compaction: { inputTriggerFraction: 0.4, inputMaxTokens: 0 },
-        });
-        expect(shouldCompactInput(40000, 100000)).toBe(true);
-        expect(shouldCompactInput(39999, 100000)).toBe(false);
-    });
-
-    it("triggers on absolute ceiling even when ratio would not fire", () => {
-        // 1M context window: ratio triggers at 400K, but absoluteMax triggers at 12K
-        (SettingsService.load as ReturnType<typeof vi.fn>).mockReturnValue({
-            compaction: { inputTriggerFraction: 0.4, inputMaxTokens: 12000 },
-        });
-        // 15K tokens — ratio says no (15K < 400K), but absolute says yes (15K >= 12K)
-        expect(shouldCompactInput(15000, 1000000)).toBe(true);
-        // 11K tokens — neither fires
-        expect(shouldCompactInput(11000, 1000000)).toBe(false);
-    });
-
-    it("uses whichever ceiling fires first", () => {
-        // Small context window: ratio triggers at 4K, absolute at 12K
-        // Ratio should fire first here
-        (SettingsService.load as ReturnType<typeof vi.fn>).mockReturnValue({
-            compaction: { inputTriggerFraction: 0.4, inputMaxTokens: 12000 },
-        });
-        expect(shouldCompactInput(4000, 10000)).toBe(true);
-        expect(shouldCompactInput(3999, 10000)).toBe(false);
-    });
-
-    it("returns false for invalid contextWindow", () => {
-        (SettingsService.load as ReturnType<typeof vi.fn>).mockReturnValue({
-            compaction: { inputTriggerFraction: 0.4, inputMaxTokens: 12000 },
-        });
-        expect(shouldCompactInput(15000, 0)).toBe(false);
-        expect(shouldCompactInput(15000, -1)).toBe(false);
     });
 });

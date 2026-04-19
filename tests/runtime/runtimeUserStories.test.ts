@@ -75,7 +75,6 @@ describe("runtime user stories", () => {
         vi.spyOn(DiscordMemoryService, "getKnownChannelsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
-        vi.spyOn(DiscordMemoryService, "pruneExpiredThreadNotes").mockResolvedValue({ removed: 0 });
         // Default stall classifier: not a stall
         vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall: false });
     });

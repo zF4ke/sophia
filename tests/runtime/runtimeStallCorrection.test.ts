@@ -3,7 +3,6 @@ import { ModelGateway, type ToolChatResult } from "@/ai/ModelGateway";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { Runtime } from "@/runtime/Runtime";
 import type { TurnInput } from "@/runtime/contracts";
-import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 
 function createInput(overrides: Partial<TurnInput> = {}): TurnInput {
     return {
@@ -60,37 +59,11 @@ function makeStartLongTaskResult(args: Record<string, unknown>): ToolChatResult 
     };
 }
 
-function makeToolCallResult(calls: Array<{ name: string; args: Record<string, unknown> }>): ToolChatResult {
-    return {
-        content: null,
-        toolCalls: calls.map((c) => ({
-            id: `tc-${++toolCallCounter}`,
-            type: "function" as const,
-            function: { name: c.name, arguments: JSON.stringify(c.args) },
-        })),
-        finishReason: "tool_calls",
-        model: "test-model",
-        durationMs: 10,
-        usage: null,
-    };
-}
-
 function makeMalformedMarkupResult(content: string): ToolChatResult {
     return {
         content,
         toolCalls: [],
         finishReason: "stop",
-        model: "test-model",
-        durationMs: 10,
-        usage: null,
-    };
-}
-
-function makeLengthBlankResult(): ToolChatResult {
-    return {
-        content: null,
-        toolCalls: [],
-        finishReason: "length",
         model: "test-model",
         durationMs: 10,
         usage: null,
@@ -109,7 +82,6 @@ describe("runtime stall correction", () => {
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
-        vi.spyOn(DiscordMemoryService, "pruneExpiredThreadNotes").mockResolvedValue({ removed: 0 });
         // Default stall classifier: not a stall (tests override when needed)
         vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall: false });
     });
@@ -193,33 +165,6 @@ describe("runtime stall correction", () => {
         expect(result.answer).toBe("Consegui continuar normalmente.");
         expect(generateSpy).toHaveBeenCalledTimes(2);
     });
-
-    it("retries with stripped context when finishReason=length returns empty output", async () => {
-        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
-            // First call: model returns nothing due to context bloat
-            .mockResolvedValueOnce(makeLengthBlankResult())
-            // Second call: model answers with stripped context
-            .mockResolvedValueOnce(makeFinishResult("Ta rindo demais mesmo kkk"));
-
-        const result = await Runtime.answer(createInput({ question: "ta rindo demais viu" }));
-
-        expect(result.answer).toBe("Ta rindo demais mesmo kkk");
-        expect(generateSpy).toHaveBeenCalledTimes(2);
-    });
-
-    it("does not retry more than once on repeated finishReason=length", async () => {
-        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
-            // First call: empty
-            .mockResolvedValueOnce(makeLengthBlankResult())
-            // Second call: still empty after stripping
-            .mockResolvedValueOnce(makeLengthBlankResult());
-
-        const result = await Runtime.answer(createInput({ question: "ta rindo demais viu" }));
-
-        // Should stop with no answer after one retry
-        expect(result.answer).toBe("");
-        expect(generateSpy).toHaveBeenCalledTimes(2);
-    });
 });
 
 describe("runtime start_long_task interception", () => {
@@ -234,7 +179,6 @@ describe("runtime start_long_task interception", () => {
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
-        vi.spyOn(DiscordMemoryService, "pruneExpiredThreadNotes").mockResolvedValue({ removed: 0 });
         // Default classifier: not a stall (long-task tests manage their own overrides)
         vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall: false });
     });
@@ -275,7 +219,7 @@ describe("runtime start_long_task interception", () => {
             // Third attempt accepted (corrections exhausted)
             .mockResolvedValueOnce(makeFinishResult("Não consegui coletar as mensagens."));
 
-        const result = await Runtime.answer(createInput({ question: "Faça uma varredura grande no canal" }));
+        const result = await Runtime.answer(createInput({ question: "Colete 2000 mensagens" }));
 
         expect(result.answer).toBe("Não consegui coletar as mensagens.");
         // start_long_task + 3 finish attempts = 4 calls
@@ -315,110 +259,5 @@ describe("runtime start_long_task interception", () => {
         const result = await Runtime.answer(createInput({ question: "Big task" }));
 
         expect(result.answer).toBe("Done.");
-    });
-
-    it("rejects finish when a corpus-size request has not retrieved enough messages yet", async () => {
-        const originalGet = CapabilityRegistry.get.bind(CapabilityRegistry);
-        const retrieveRun = vi.fn()
-            .mockResolvedValueOnce({
-                tool: "retrieve_messages",
-                summary: "ordered history evidence; 1000 history and 0 semantic result(s) from cached Discord history.",
-                data: {
-                    targetChannelIds: ["c1"],
-                    mode: "history",
-                    historyMessageCount: 1000,
-                    accumulatedUniqueCount: 1000,
-                    continuation: {
-                        continuationAvailable: true,
-                        history: {
-                            continuationAvailable: true,
-                            perChannelOldestMessageId: { c1: "m-oldest-1" },
-                        },
-                    },
-                    exhaustion: { historyExhausted: false },
-                },
-            })
-            .mockResolvedValueOnce({
-                tool: "retrieve_messages",
-                summary: "ordered history evidence; 20000 history and 0 semantic result(s) from cached Discord history.",
-                data: {
-                    targetChannelIds: ["c1"],
-                    mode: "history",
-                    historyMessageCount: 1000,
-                    accumulatedUniqueCount: 20000,
-                    continuation: {
-                        continuationAvailable: false,
-                        history: {
-                            continuationAvailable: false,
-                            perChannelOldestMessageId: { c1: null },
-                        },
-                    },
-                    exhaustion: { historyExhausted: true },
-                },
-            });
-
-        vi.spyOn(CapabilityRegistry, "get").mockImplementation((id) => {
-            const cap = originalGet(id);
-            if (id === "retrieve_messages") {
-                return { ...cap, run: retrieveRun };
-            }
-            return cap;
-        });
-
-        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
-            .mockResolvedValueOnce(makeToolCallResult([
-                { name: "retrieve_messages", args: { channelIds: ["c1"], mode: "history", order: "oldest" } },
-            ]))
-            .mockResolvedValueOnce(makeFinishResult("Já deu para analisar.")) // should be rejected
-            .mockResolvedValueOnce(makeToolCallResult([
-                { name: "retrieve_messages", args: { channelIds: ["c1"], mode: "history", order: "oldest", cursor: { history: { perChannelOldestMessageId: { c1: "m-oldest-1" }, continuationAvailable: true }, continuationAvailable: true } } },
-            ]))
-            .mockResolvedValueOnce(makeFinishResult("Agora sim."));
-
-        const result = await Runtime.answer(createInput({
-            question: "Faça uma psico-analise com base em 20000 mensagens do chat do One Person.",
-        }));
-
-        expect(result.answer).toBe("Agora sim.");
-        expect(generateSpy).toHaveBeenCalledTimes(4);
-    });
-
-    it("rejects finish for corpus-size requests when retrieve_messages was never called", async () => {
-        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
-            .mockResolvedValueOnce(makeFinishResult("Vou fazer com base no que lembro."))
-            .mockResolvedValueOnce(makeToolCallResult([
-                { name: "retrieve_messages", args: { channelIds: ["c1"], mode: "history" } },
-            ]))
-            .mockResolvedValueOnce(makeFinishResult("Agora com pesquisa."));
-
-        const originalGet = CapabilityRegistry.get.bind(CapabilityRegistry);
-        vi.spyOn(CapabilityRegistry, "get").mockImplementation((id) => {
-            const cap = originalGet(id);
-            if (id === "retrieve_messages") {
-                return {
-                    ...cap,
-                    run: vi.fn().mockResolvedValue({
-                        tool: "retrieve_messages",
-                        summary: "ordered history evidence; 50 history and 0 semantic result(s) from cached Discord history.",
-                        data: {
-                            targetChannelIds: ["c1"],
-                            mode: "history",
-                            historyMessageCount: 50,
-                            accumulatedUniqueCount: 50,
-                            continuation: { continuationAvailable: false, history: { continuationAvailable: false, perChannelOldestMessageId: { c1: null } } },
-                            exhaustion: { historyExhausted: true },
-                        },
-                    }),
-                };
-            }
-            return cap;
-        });
-
-        const result = await Runtime.answer(createInput({
-            question: "Analisa com base em 20000 mensagens.",
-        }));
-
-        expect(result.answer).toBe("Agora com pesquisa.");
-        expect(generateSpy).toHaveBeenCalledTimes(3);
     });
 });

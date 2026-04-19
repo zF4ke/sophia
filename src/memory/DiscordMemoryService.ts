@@ -1334,32 +1334,6 @@ export class DiscordMemoryService {
         return { seq: nextSeq };
     }
 
-    public static async updateRequestNote(options: {
-        requestId: string;
-        seq: number;
-        body: string;
-        label?: string | null;
-    }): Promise<{ updated: boolean }> {
-        await this.ensureInitialized();
-        const client = OperationalStore.getClient();
-        const setClauses = ["body = :body", "created_timestamp = :ts"];
-        const args: InArgs = {
-            requestId: options.requestId,
-            seq: options.seq,
-            body: options.body,
-            ts: now(),
-        };
-        if (options.label !== undefined) {
-            setClauses.push("label = :label");
-            args.label = options.label;
-        }
-        const result = await client.execute({
-            sql: `UPDATE request_notes SET ${setClauses.join(", ")} WHERE request_id = :requestId AND seq = :seq AND kind = 'note'`,
-            args,
-        });
-        return { updated: Number(result.rowsAffected ?? 0) > 0 };
-    }
-
     public static async upsertRequestPlan(options: {
         requestId: string;
         threadId: string;
@@ -1520,59 +1494,6 @@ export class DiscordMemoryService {
             args,
         });
         return { removed: Number(result.rowsAffected ?? 0) };
-    }
-
-    /**
-     * Delete notes whose request_id is older than the most recent `keepRequests`
-     * distinct request_ids on the same thread. Plans are kept — only kind='note' is pruned.
-     */
-    public static async pruneExpiredThreadNotes(options: {
-        threadId: string;
-        keepRequests: number;
-    }): Promise<{ removed: number }> {
-        if (options.keepRequests <= 0) return { removed: 0 };
-        await this.ensureInitialized();
-        const client = OperationalStore.getClient();
-
-        // Find the most recent N distinct request_ids on this thread,
-        // ordered by the latest note timestamp within each request.
-        const recentRows = (
-            await client.execute({
-                sql: `
-                    SELECT request_id, MAX(created_timestamp) AS latest_ts
-                    FROM request_notes
-                    WHERE thread_id = :threadId AND kind = 'note'
-                    GROUP BY request_id
-                    ORDER BY latest_ts DESC
-                `,
-                args: { threadId: options.threadId },
-            })
-        ).rows as Array<Record<string, unknown>>;
-
-        // If there are fewer requests than the limit, nothing to prune.
-        if (recentRows.length <= options.keepRequests) {
-            return { removed: 0 };
-        }
-
-        const keepIds = new Set(
-            recentRows.slice(0, options.keepRequests).map((r) => String(r.request_id)),
-        );
-
-        // Delete notes from requests outside the keep set.
-        const expiredIds = recentRows
-            .slice(options.keepRequests)
-            .map((r) => String(r.request_id));
-
-        let removed = 0;
-        for (const reqId of expiredIds) {
-            if (keepIds.has(reqId)) continue;
-            const res = await client.execute({
-                sql: `DELETE FROM request_notes WHERE request_id = :requestId AND kind = 'note'`,
-                args: { requestId: reqId },
-            });
-            removed += Number(res.rowsAffected ?? 0);
-        }
-        return { removed };
     }
 
     public static async recordConversationMessages(options: {

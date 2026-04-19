@@ -84,14 +84,12 @@ Deep retrieval does not mean deep prompt stuffing. Sophia may inspect thousands 
 
 Context management has two tiers:
 - **Tier-1 (truncation)**: oldest tool-result messages are dropped when prompt tokens exceed a safe fraction of the context window.
-- **Tier-2 (compaction)**: when Tier-1 is not enough, the middle block of messages is summarised by the model selected in `/settings` → `Compactação` and replaced with a single `<compaction_summary>` system message. The Tier-2 trigger is configurable in settings.
-- **Tier-0 (input compaction)**: before the call, bulky prompts can be compacted early based on a configurable input-window fraction or an absolute token ceiling. This prevents casual turns from carrying oversized evidence/tool baggage on huge-window models.
+- **Tier-2 (compaction)**: when Tier-1 is not enough, the middle block of messages is summarised by the model selected in `/settings` → `Compactação` and replaced with a single `<compaction_summary>` system message. Load-bearing scratchpad tool calls (note_add, plan_update) are preserved verbatim.
 
 For long tasks (`start_long_task`), the runtime also provides:
-- **Scratchpad tools** (`note_add`, `note_list`, `note_read`, `note_update`, `note_clear`, `plan_update`): a per-request notebook stored in libSQL. The plan is re-injected into the system prompt every loop iteration, and notebook pages survive compaction.
+- **Scratchpad tools** (`note_add`, `note_list`, `note_clear`, `plan_update`): per-request notes stored in libSQL. The plan is re-injected into the system prompt every loop iteration so it survives compaction.
 - **Doom-loop detection**: sliding window detects repeated identical tool calls → nudge → force finish.
 - **Progress-required tracking**: after N non-progress calls, the model is nudged to record findings or change approach.
-- **Notebook pruning**: notebook pages auto-expire after the configured number of recent requests per thread; plans are preserved.
 
 ## Storage
 

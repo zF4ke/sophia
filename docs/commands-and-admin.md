@@ -21,7 +21,7 @@ These all route to the same conversation runtime.
 ## Operator Commands
 
 - `/nth` — read indexed historical messages by position
-- `/index` — manage backfill and repair; subcommands: `status`, `clear`, `repair`, `backfill_channel`, `backfill_category`, `crawl_status`, `crawl_stop`, `crawl_pause`, `crawl_resume`
+- `/index` — manage backfill and repair; subcommands: `status`, `clear`, `repair`, `backfill_channel`, `backfill_category`
 - `/debug toggle` — enable or disable the debug panel for the current guild
 - `/debug logs` — browse recent model-output logs in an interactive panel
 - `/superchannels` — manage protected channels used by destructive-action blocking
@@ -38,10 +38,7 @@ These all route to the same conversation runtime.
 
 `/settings` opens an interactive panel with:
 - **Model tab** — dedicated model selector with context window and OpenRouter pricing
-- **Runtime tab** — context, retrieval, notebook, loop, and approval tuning
-- **Compactação tab** — compaction model plus Tier-2/Tier-0 trigger controls
-- **Long task tab** — elevated budgets and inline retrieval crawl controls used by `start_long_task`
-- **Personalidade tab** — `default`, `mixed`, and `classic` tone selection
+- **Runtime tab** — 11 tuning knobs for context retention, retrieval, loop guardrails, and approval
 - **Auto-Approve Writes toggle** — skip approval for non-destructive write actions
 - **Reset to Defaults** — restore all settings to factory defaults
 
@@ -55,30 +52,11 @@ These all route to the same conversation runtime.
 | Prior Evidence Slice | Evidence items carried to next turn | 16, 32, 48, 64 |
 | Default Retrieval Page | Rows per `retrieve_messages` call | 25, 50, 75, 100, 150 |
 | Around-Message Window | Neighbors loaded around a hit | 8, 15, 25, 40 |
-| Max Notebook Pages | Notebook pages allowed per request | 50, 100, 150, 200, 300, 500 |
-| Notebook Expiry | Recent requests kept per thread before note pruning | 1, 3, 5, 8, 12, 20 |
 | Max Tool Calls | Hard cap per turn | 2–30 |
 | Repeated Call Guard | Same args retry limit | 1, 2, 3 |
 | Latency Budget | Wall-clock timeout per turn | 10s–5m |
 | Escalation Fetch Limit | Live refresh cap for retries | 50, 100, 150, 250, 400, 600, 800, 1000 |
 | Approval Timeout | Admin approval wait time | 30s–5m |
-
-### Compaction Parameters
-
-| Setting | Description | Presets |
-|---------|-------------|---------|
-| Tier-2 Trigger | Context-window fraction that triggers middle-block summarisation | 60%–95% |
-| Tier-0 Trigger | Context-window fraction that triggers input compaction before the call | 20%–60% |
-| Tier-0 Absolute Ceiling | Absolute approximate prompt-token ceiling that forces input compaction even on huge-window models | 8k, 10k, 12k, 16k, 20k, 30k |
-
-### Long Task Parameters
-
-| Setting | Description | Presets |
-|---------|-------------|---------|
-| Max Tool Calls | Elevated cap after `start_long_task` | 50–1000 |
-| Max Latency Budget | Elevated wall-clock budget after `start_long_task` | 120s–1800s |
-| Evidence Floor | Minimum evidence slice preserved for long tasks | 64, 96, 128, 192, 256 |
-| Inline Crawl Batches | Synchronous backfill batches `retrieve_messages` may ingest when history is partial | 0, 1, 3, 5, 10 |
 
 ## Approval System
 
@@ -135,5 +113,5 @@ Slash-command visibility is configurable in `/access`. Unless an admin has expli
 | `/debug` | Admin |
 | `/access` | Admin |
 | `/settings` | Admin |
-| `/nth` | Admin by default; can be made public in `/access` |
-| `/ping` | Admin by default; can be made public in `/access` |
+| `/nth` | Public |
+| `/ping` | Public |

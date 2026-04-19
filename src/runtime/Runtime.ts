@@ -32,6 +32,17 @@ import { type DiscordToolName, DISCORD_TOOL_NAMES, T } from "@/shared/discordToo
 import type { DiscordToolEvidenceRole } from "@/shared/discordTools";
 import { isMutatingTool, describeApproval, getToolEffect } from "@/tools/registry";
 import { detectStallPromise, DoomLoopDetector, ProgressTracker } from "@/runtime/stallGuard";
+import {
+    buildForcedRetrieveArgs,
+    buildRejectionMessage,
+    createOrUpdate as updateCorpusTask,
+    incompleteFallback as corpusIncompleteFallback,
+    isIncomplete as corpusIsIncomplete,
+    recordViolation as recordCorpusViolation,
+    shouldForceContinuation as corpusShouldForceContinuation,
+    shouldRejectFinish as corpusShouldRejectFinish,
+    type CorpusTaskState,
+} from "@/runtime/corpusTaskState";
 import { compactMessages, shouldCompact } from "@/runtime/compaction";
 import { compactInput, shouldCompactInput } from "@/runtime/inputCompaction";
 import { countTokens } from "@/shared/tokenizer";
@@ -190,47 +201,14 @@ function sanitizeAnswer(answer: string | null | undefined): string {
 
 function extractRequestedCorpusSize(question: string): number | null {
     const normalized = question.toLowerCase();
-
-    const compactMatch = normalized.match(/\b(\d+(?:[.,]\d+)?)\s*k\b/);
-    if (compactMatch) {
-        const value = Number(compactMatch[1].replace(",", "."));
-        if (Number.isFinite(value) && value > 0) {
-            return Math.round(value * 1000);
-        }
-    }
-
-    const explicitMatch = normalized.match(/\b([\d][\d\s.,]*)\s*(?:mensagens|messages)\b/);
-    if (!explicitMatch) return null;
-
-    const digitsOnly = explicitMatch[1].replace(/\D/g, "");
-    if (!digitsOnly) return null;
-    const value = Number(digitsOnly);
-    return Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function getRetrievedCorpusCount(record: ToolInvocationRecord): number {
-    if (record.tool !== T.retrieve_messages || !record.output?.data || typeof record.output.data !== "object") {
-        return 0;
-    }
-
-    const data = record.output.data as Record<string, unknown>;
-    const accumulated = Number(data.accumulatedUniqueCount || 0);
-    if (Number.isFinite(accumulated) && accumulated > 0) {
-        return accumulated;
-    }
-
-    const historyCount = Number(record.retrievalSummary?.historyMessageCount || 0);
-    return Number.isFinite(historyCount) && historyCount > 0 ? historyCount : 0;
-}
-
-function getLatestSuccessfulRetrieveRecord(toolHistory: ToolInvocationRecord[]): ToolInvocationRecord | null {
-    for (let i = toolHistory.length - 1; i >= 0; i -= 1) {
-        const record = toolHistory[i];
-        if (record.tool === T.retrieve_messages && !record.blocked) {
-            return record;
-        }
-    }
-    return null;
+    const match = normalized.match(
+        /\b(?:últimas|ultimas|last|based on|baseado em|com base em)?\s*(\d{1,3}(?:[.,]\d{3})+|\d+)\s*(k)?\s*(?:mensagens|messages)\b/i,
+    );
+    if (!match) return null;
+    const numeric = match[1].replace(/[.,]/g, "");
+    const base = Number(numeric);
+    if (!Number.isFinite(base) || base <= 0) return null;
+    return match[2] ? base * 1000 : base;
 }
 
 async function synthesizeAnswer(
@@ -351,6 +329,7 @@ export class Runtime {
             maxEvidenceSlice: config.runtime.maxEvidenceSlice,
         };
         const settings = SettingsService.load();
+        const requestedCorpusSize = extractRequestedCorpusSize(input.question);
 
         const traceEvents: RuntimeTraceEvent[] = [];
         const toolHistory: ToolInvocationRecord[] = [];
@@ -362,6 +341,7 @@ export class Runtime {
         const evidenceRolesThisTurn = new Set<DiscordToolEvidenceRole>();
         const doomLoopDetector = new DoomLoopDetector();
         const progressTracker = new ProgressTracker();
+        let corpusTask: CorpusTaskState | undefined;
 
         // Long-task caps come from configurable settings (runtime.longTask.*).
         const LONG_TASK_MAX_CALLS = config.runtime.longTask.maxToolCalls;
@@ -384,18 +364,6 @@ export class Runtime {
             });
 
             trace("ingest_turn", `trigger=${input.trigger}; conversation=${input.conversation.kind}; requester=${input.requesterDisplayName}`);
-
-            // ── 1b. Prune expired thread notes ──
-            const noteExpiry = settings.runtime.noteExpiryRequests;
-            if (noteExpiry > 0) {
-                const { removed } = await DiscordMemoryService.pruneExpiredThreadNotes({
-                    threadId,
-                    keepRequests: noteExpiry,
-                });
-                if (removed > 0) {
-                    trace("note_expiry", `Pruned ${removed} expired note(s) (keep=${noteExpiry}).`);
-                }
-            }
 
             // ── 2. Load memory (recent turns, channel context, prior evidence) ──
             const recentTurns = await DiscordMemoryService.getRecentRuntimeRunsAsync(
@@ -558,7 +526,137 @@ export class Runtime {
             let cumulativePromptTokens = 0;
             let cumulativeCompletionTokens = 0;
             let malformedToolCallCorrections = 0;
-            let lengthRetried = false;
+
+            /**
+             * Runtime-driven forced continuation: when the unified corpus guard
+             * has rejected the model twice, stop asking it to retry and invoke
+             * retrieve_messages ourselves. Updates corpusTask from the real
+             * result and pushes a synthetic assistant+tool message pair into
+             * the conversation so the model sees the new page on the next turn.
+             */
+            const forceCorpusContinuation = async (): Promise<boolean> => {
+                if (!corpusShouldForceContinuation(corpusTask)) return false;
+                // Local budget gate — never spend a forced call past the
+                // tool-count or latency cap. If we're out of budget, fall
+                // through to the deterministic incomplete-progress fallback.
+                if (totalToolCalls >= constraints.maxToolCalls) {
+                    trace("corpus_force_continuation_skipped", `tool budget exhausted (${totalToolCalls}/${constraints.maxToolCalls}).`);
+                    return false;
+                }
+                const elapsedMs = getActiveElapsedMs();
+                if (elapsedMs >= constraints.maxLatencyBudgetMs) {
+                    trace("corpus_force_continuation_skipped", `latency budget exhausted (${elapsedMs}ms/${constraints.maxLatencyBudgetMs}ms).`);
+                    return false;
+                }
+                const capability = CapabilityRegistry.get(T.retrieve_messages);
+                if (!capability) return false;
+                const forcedArgs = buildForcedRetrieveArgs(corpusTask);
+                const syntheticCallId = `forced_${randomUUID()}`;
+                trace(
+                    "corpus_force_continuation",
+                    `Runtime forcing retrieve_messages: collected=${corpusTask.collected}/${corpusTask.requested}.`,
+                );
+                const toolStartedAt = Date.now();
+                try {
+                    const output = await capability.run(
+                        {
+                            guild: input.guild || null,
+                            question: input.question,
+                            currentChannelId: channelId,
+                            requestId,
+                            threadId,
+                            onProgress: async (tn, summary) => {
+                                trace("tool_progress", `${tn}: ${summary}`);
+                                await input.debugSession?.setToolProgress?.(tn, summary);
+                            },
+                        },
+                        forcedArgs,
+                    );
+                    const toolDurationMs = Date.now() - toolStartedAt;
+                    const evidenceItems = extractEvidence(output);
+                    const learned = evidenceItems.map((i) => i.content).join(" | ") || output.summary;
+                    const retrieval = getRetrievalSummary(output);
+                    const record: ToolInvocationRecord = {
+                        tool: T.retrieve_messages,
+                        arguments: forcedArgs,
+                        summary: output.summary,
+                        learned,
+                        confidenceImproved: evidenceItems.some((i) => i.strength !== "weak"),
+                        output,
+                        durationMs: toolDurationMs,
+                        retrievalSummary: retrieval,
+                    };
+                    totalToolCalls += 1;
+                    toolHistory.push(record);
+                    evidence.push(...evidenceItems);
+                    for (const item of evidenceItems) evidenceRolesThisTurn.add(item.evidenceRole);
+
+                    trace("tool_result", `${T.retrieve_messages} (forced): ${output.summary}`);
+
+                    // Persist the forced tool run just like a normal one so
+                    // the operational store, traces, and debug surfaces stay
+                    // in sync with what actually happened.
+                    await DiscordMemoryService.recordToolRun(
+                        requestId,
+                        guildId,
+                        channelId,
+                        actorId,
+                        input.question,
+                        T.retrieve_messages,
+                        JSON.stringify(forcedArgs),
+                        output.summary,
+                        learned,
+                        JSON.stringify(output),
+                        record.confidenceImproved,
+                        toolDurationMs,
+                    );
+                    await input.debugSession?.setToolResult(T.retrieve_messages, output.summary);
+                    if (retrieval) {
+                        await input.debugSession?.setRetrievalSummary?.(retrieval);
+                    }
+
+                    // Update state from the real retrieval result and clear the
+                    // unified violation counter so the model gets a fresh chance.
+                    corpusTask = updateCorpusTask(
+                        corpusTask,
+                        retrieval,
+                        forcedArgs,
+                        settings.runtime.retrievalHistoryLimit,
+                        requestedCorpusSize,
+                    );
+                    if (corpusTask) corpusTask.guardViolations = 0;
+                    trace(
+                        "corpus_task",
+                        `(forced) collected=${corpusTask?.collected}/${corpusTask?.requested} continuationAvailable=${corpusTask?.continuationAvailable} historyExhausted=${corpusTask?.historyExhausted}`,
+                    );
+
+                    messages.push({
+                        role: "assistant",
+                        content: null,
+                        tool_calls: [{
+                            id: syntheticCallId,
+                            type: "function",
+                            function: {
+                                name: T.retrieve_messages,
+                                arguments: JSON.stringify(forcedArgs),
+                            },
+                        }],
+                    });
+                    const resultPayload = output.errorMessage
+                        ? JSON.stringify({ error: output.errorMessage })
+                        : JSON.stringify({ summary: output.summary, data: output.data });
+                    messages.push({
+                        role: "tool",
+                        tool_call_id: syntheticCallId,
+                        content: truncateToolResult(resultPayload),
+                    });
+                    return true;
+                } catch (err) {
+                    const message = (err as { message?: unknown })?.message;
+                    trace("corpus_force_continuation_error", typeof message === "string" ? message : "unknown");
+                    return false;
+                }
+            };
 
             const getActiveElapsedMs = () =>
                 Math.max(0, Date.now() - startedAt - pausedLatencyMs);
@@ -660,60 +758,29 @@ export class Runtime {
                         }
                         continue;
                     }
+                    if (result.content && corpusShouldRejectFinish(corpusTask)) {
+                        recordCorpusViolation(corpusTask);
+                        trace(
+                            "corpus_guard",
+                            `Rejected raw-text answer: collected=${corpusTask.collected}/${corpusTask.requested} (violation ${corpusTask.guardViolations}).`,
+                        );
+                        messages.push({
+                            role: "assistant",
+                            content: result.content,
+                        });
+                        messages.push({
+                            role: "system",
+                            content: buildRejectionMessage(corpusTask),
+                        });
+                        await forceCorpusContinuation();
+                        continue;
+                    }
                     if (result.content) {
                         answer = result.content;
                         stopReason = totalToolCalls > 0 ? "evidence_sufficient" : "direct_answer";
-                        trace("model_response", `No tool calls. finishReason=${result.finishReason}`);
-                        break;
+                    } else {
+                        stopReason = "no_useful_next_step";
                     }
-
-                    // Empty output with finishReason=length → context bloat caused the
-                    // model to produce nothing. Rebuild a minimal message set: stripped
-                    // system prompt + original user question (drop accumulated tool messages).
-                    if (result.finishReason === "length" && !lengthRetried) {
-                        lengthRetried = true;
-                        const minimalFields = {
-                            recentTurns: "No recent conversation turns.",
-                            channelContext: "(context stripped due to output limit — answer the question directly)",
-                            priorEvidence: "None.",
-                            toolContext: "None.",
-                        };
-                        messages.length = 0;
-                        messages.push(
-                            { role: "system", content: renderSystemPrompt(minimalFields) },
-                            { role: "user", content: input.question },
-                        );
-
-                        // Re-inject plan + compact note digest so research-heavy
-                        // turns keep their accumulated evidence across the retry.
-                        try {
-                            const planBody = await DiscordMemoryService.getRequestPlan(requestId);
-                            const noteRecords = await DiscordMemoryService.listRequestNotes({
-                                requestId,
-                                kind: "note",
-                            });
-                            const parts: string[] = [];
-                            if (planBody) parts.push(`Current plan:\n${planBody}`);
-                            if (noteRecords.length > 0) {
-                                const digest = noteRecords.map((n) => {
-                                    const tag = n.label ? `[${n.label}]` : `[#${n.seq}]`;
-                                    const preview = n.body.length > 300
-                                        ? n.body.slice(0, 300) + "…"
-                                        : n.body;
-                                    return `${tag} ${preview}`;
-                                }).join("\n");
-                                parts.push(`Note digest (${noteRecords.length} notes):\n${digest}`);
-                            }
-                            if (parts.length > 0) {
-                                messages.push({ role: "system", content: parts.join("\n\n") });
-                            }
-                        } catch { /* non-fatal — retry proceeds without state */ }
-
-                        trace("length_retry", `finishReason=length with empty output — rebuilt minimal message set (dropped ${totalToolCalls} accumulated tool exchanges, re-injected plan+notes).`);
-                        continue;
-                    }
-
-                    stopReason = "no_useful_next_step";
                     trace("model_response", `No tool calls. finishReason=${result.finishReason}`);
                     break;
                 }
@@ -807,6 +874,24 @@ export class Runtime {
                         );
 
                         await input.debugSession?.setToolResult(toolName, output.summary);
+                        if (toolName === T.retrieve_messages && retrieval) {
+                            const prevViolations = corpusTask?.guardViolations ?? 0;
+                            corpusTask = updateCorpusTask(
+                                corpusTask,
+                                retrieval,
+                                parsedArgs,
+                                settings.runtime.retrievalHistoryLimit,
+                                requestedCorpusSize,
+                            );
+                            if (corpusTask) {
+                                // Preserve the unified violation counter across updates.
+                                corpusTask.guardViolations = prevViolations;
+                                trace(
+                                    "corpus_task",
+                                    `collected=${corpusTask.collected}/${corpusTask.requested} continuationAvailable=${corpusTask.continuationAvailable} historyExhausted=${corpusTask.historyExhausted}`,
+                                );
+                            }
+                        }
                         await input.debugSession?.setRetrievalSummary?.(retrieval || {
                             mode: "history",
                             cacheHit: false,
@@ -1003,53 +1088,24 @@ export class Runtime {
                     if (toolName === "finish") {
                         answer = (parsedArgs.answer as string) || result.content || "";
 
-                        const requestedCorpusSize = extractRequestedCorpusSize(input.question);
-                        if (requestedCorpusSize != null) {
-                            const retrieveRuns = toolHistory.filter(
-                                (record) => record.tool === T.retrieve_messages && !record.blocked,
+                        // ── Corpus task guard: reject finish while under explicit target ──
+                        if (corpusShouldRejectFinish(corpusTask)) {
+                            recordCorpusViolation(corpusTask);
+                            const rejection = buildRejectionMessage(corpusTask);
+                            trace(
+                                "corpus_guard",
+                                `Rejected finish: collected=${corpusTask.collected}/${corpusTask.requested} (violation ${corpusTask.guardViolations}).`,
                             );
-                            const latestRetrieve = getLatestSuccessfulRetrieveRecord(toolHistory);
-                            const collectedCorpus = retrieveRuns.reduce(
-                                (max, record) => Math.max(max, getRetrievedCorpusCount(record)),
-                                0,
-                            );
-
-                            if (!retrieveRuns.length) {
-                                const correction =
-                                    `The user asked for analysis based on ${requestedCorpusSize} messages, ` +
-                                    "but you have not called retrieve_messages yet. Call retrieve_messages now " +
-                                    "with the correct filters and paginate before finishing.";
-                                trace("finish_guard", `Rejected finish: corpus request for ${requestedCorpusSize} messages with zero retrieve_messages calls.`);
-                                messages.push({
-                                    role: "tool",
-                                    tool_call_id: tc.id,
-                                    content: JSON.stringify({ error: correction }),
-                                });
-                                answer = "";
-                                continue;
-                            }
-
-                            const continuationAvailable =
-                                latestRetrieve?.retrievalSummary?.historyContinuationAvailable
-                                ?? latestRetrieve?.retrievalSummary?.continuationAvailable
-                                ?? false;
-                            const historyExhausted =
-                                latestRetrieve?.retrievalSummary?.historyExhausted ?? false;
-
-                            if (collectedCorpus < requestedCorpusSize && continuationAvailable && !historyExhausted) {
-                                const correction =
-                                    `You collected only ${collectedCorpus} of the requested ${requestedCorpusSize} messages. ` +
-                                    "Continuation is still available, so do not finish yet. Call retrieve_messages again " +
-                                    "with the returned cursor and keep paginating until you reach the requested corpus or true exhaustion.";
-                                trace("finish_guard", `Rejected finish: collected ${collectedCorpus}/${requestedCorpusSize} messages with continuation still available.`);
-                                messages.push({
-                                    role: "tool",
-                                    tool_call_id: tc.id,
-                                    content: JSON.stringify({ error: correction }),
-                                });
-                                answer = "";
-                                continue;
-                            }
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: JSON.stringify({ error: rejection }),
+                            });
+                            answer = "";
+                            // After the threshold, the runtime stops asking the model
+                            // nicely and executes retrieve_messages itself.
+                            await forceCorpusContinuation();
+                            continue;
                         }
 
                         // ── Stall guard: detect empty-promise answers ──
@@ -1489,8 +1545,20 @@ export class Runtime {
                 // Model never called finish — synthesize from what was found
                 if (!stopReason) stopReason = "insufficient_evidence";
 
+                // Corpus task incomplete → do NOT synthesize a "finished" answer
+                // from model-authored notes (which may contradict runtime facts).
+                // Return a deterministic incomplete-progress string instead.
+                if (corpusIsIncomplete(corpusTask)) {
+                    answer = corpusIncompleteFallback(corpusTask);
+                    confidence = "insufficient";
+                    trace(
+                        "corpus_incomplete_fallback",
+                        `collected=${corpusTask.collected}/${corpusTask.requested} — returning deterministic incomplete-progress string.`,
+                    );
+                }
+
                 // For long tasks, try to build answer from plan + notes.
-                if (longTaskGrantedThisTurn) {
+                if (!answer && longTaskGrantedThisTurn) {
                     try {
                         const planBody = await DiscordMemoryService.getRequestPlan(requestId);
                         const notes = await DiscordMemoryService.listRequestNotes({

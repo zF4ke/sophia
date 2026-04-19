@@ -22,7 +22,6 @@ export interface BotSettings {
         approvalTimeoutMs: number;
         autoApproveWrites: boolean;
         maxNotesPerRequest: number;
-        noteExpiryRequests: number;
         longTask: {
             maxToolCalls: number;
             maxLatencyBudgetMs: number;
@@ -34,7 +33,6 @@ export interface BotSettings {
         summarizerModel: string;
         triggerFraction: number;
         inputTriggerFraction: number;
-        inputMaxTokens: number;
     };
     personality: "default" | "mixed" | "classic";
     protectedChannelIds: string[];
@@ -108,7 +106,6 @@ const DEFAULT_SETTINGS: BotSettings = {
         approvalTimeoutMs: 60_000,
         autoApproveWrites: false,
         maxNotesPerRequest: 200,
-        noteExpiryRequests: 5,
         longTask: {
             maxToolCalls: 200,
             maxLatencyBudgetMs: 600_000,
@@ -117,10 +114,9 @@ const DEFAULT_SETTINGS: BotSettings = {
         },
     },
     compaction: {
-        summarizerModel: "gpt5nano",
+        summarizerModel: "gemini31flashlite",
         triggerFraction: 0.85,
         inputTriggerFraction: 0.4,
-        inputMaxTokens: 12000,
     },
     personality: "default",
     protectedChannelIds: DEFAULT_PROTECTED_CHANNEL_IDS,
@@ -179,9 +175,7 @@ export class SettingsService {
 
             const needsSave =
                 parsed.modelProfile !== merged.modelProfile ||
-                (parsed.compaction as Partial<BotSettings["compaction"]> | undefined)?.summarizerModel !== merged.compaction.summarizerModel ||
-                JSON.stringify(parsed.runtime) !== JSON.stringify(merged.runtime) ||
-                JSON.stringify(parsed.compaction) !== JSON.stringify(merged.compaction);
+                (parsed.compaction as Partial<BotSettings["compaction"]> | undefined)?.summarizerModel !== merged.compaction.summarizerModel;
             if (needsSave) {
                 this.save(merged);
             }

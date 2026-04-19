@@ -53,8 +53,6 @@ const TOOL_NAMES = [
     // ── Scratchpad ──
     "note_add",
     "note_list",
-    "note_read",
-    "note_update",
     "note_clear",
     "plan_update",
 ] as const;

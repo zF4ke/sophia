@@ -46,7 +46,7 @@ import { deleteMessagesTool } from "./deleteMessages";
 import { deleteChannelTool } from "./deleteChannel";
 import { deleteRoleTool } from "./deleteRole";
 import { startLongTaskTool } from "./startLongTask";
-import { noteAddTool, noteListTool, noteReadTool, noteUpdateTool, noteClearTool, planUpdateTool } from "./notes";
+import { noteAddTool, noteListTool, noteClearTool, planUpdateTool } from "./notes";
 
 // ── Aggregated tool list ────────────────────────────────────────────
 
@@ -94,8 +94,6 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     // ── Scratchpad ──
     noteAddTool,
     noteListTool,
-    noteReadTool,
-    noteUpdateTool,
     noteClearTool,
     planUpdateTool,
 ];

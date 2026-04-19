@@ -10,7 +10,7 @@ Sophia turns your Discord server into a searchable, manageable workspace. Ask he
 
 **Deep Server Search** — Search through your entire Discord history with intelligent retrieval. Sophia indexes messages locally for fast lookups and automatically fetches live history when needed.
 
-**37 Built-in Tools** — From retrieving messages and resolving members to creating channels, managing roles, editing messages, random message sampling, and long-task notebook workflows. The model decides which tools to use based on your request.
+**33 Built-in Tools** — From retrieving messages and resolving members to creating channels, managing roles, editing messages, and planning multi-step tasks. The model decides which tools to use based on your request.
 
 **Admin Approval System** — Write actions (create channel, send message, manage roles) require admin approval. Destructive actions (delete channel, clear messages) require approval *plus* confirmation. Multiple destructive actions are batched into a single approval card grouped by Discord category.
 
@@ -79,7 +79,7 @@ npm run dev
 
 | Command | Description |
 |---------|-------------|
-| `/settings` | Tabbed panel to select model, runtime, compaction, long-task, and personality settings |
+| `/settings` | Tabbed panel to select model and tune runtime |
 | `/index` | Manage message indexing — backfill channels/categories, check status, repair |
 | `/debug` | Control debug mode and open the logs panel |
 | `/superchannels` | Manage protected channels that block destructive actions |
@@ -88,22 +88,22 @@ npm run dev
 
 ## Tools
 
-Sophia has **37 tools** organized by capability:
+Sophia has **33 tools** organized by capability:
 
 | Category | Tools |
 |----------|-------|
-| **Retrieval** | `retrieve_messages`, `search_messages`, `random_channel_message` |
+| **Retrieval** | `retrieve_messages`, `search_messages` |
 | **Discovery** | `list_guild_structure`, `get_guild_context`, `resolve_channel_targets` |
 | **Members** | `resolve_member_identity`, `get_member_profile`, `list_members` |
 | **Roles** | `get_role_info`, `list_roles`, `create_role`, `edit_role`, `manage_member_roles` |
 | **Threads** | `list_threads`, `read_thread_messages` |
 | **Utilities** | `measure_text_length`, `evaluate_math` |
-| **Write** | `create_channel`, `create_category`, `create_thread`, `move_channel`, `move_category`, `send_message`, `edit_message`, `create_role`, `edit_channel`, `edit_role` |
-| **Destructive** | `clear_messages`, `delete_messages`, `delete_channel`, `delete_role` |
+| **Write** | `create_channel`, `create_category`, `create_thread`, `move_channel`, `move_category`, `send_message`, `edit_message` |
+| **Destructive** | `clear_messages`, `delete_messages`, `delete_channel`, `edit_channel` |
 | **Control** | `start_long_task` |
-| **Scratchpad** | `plan_update`, `note_add`, `note_list`, `note_read`, `note_update`, `note_clear` |
+| **Scratchpad** | `plan_update`, `note_add`, `note_list`, `note_clear` |
 
-Write tools require admin approval. Destructive tools require approval + confirmation dialog. Scratchpad tools act as a per-request notebook and persist through context compaction for multi-step tasks.
+Write tools require admin approval. Destructive tools require approval + confirmation dialog. Scratchpad tools persist data across context compaction for multi-step tasks.
 
 ## Model Profiles
 
@@ -131,12 +131,8 @@ All runtime tuning is done through `/settings` or `storage/settings.json`:
 
 - **Context retention** — recent turns, channel messages, prior evidence slice
 - **Retrieval** — history page size, context window, crawl limits
-- **Notebook retention** — max notebook pages per request and automatic note expiry after N thread requests
 - **Loop guardrails** — max tool calls (2–30), latency budget (10s–5m), repeated call guard
 - **Approval** — timeout duration (30s–5m), auto-approve writes toggle
-- **Compaction** — summarizer model, Tier-2 trigger fraction, Tier-0 trigger fraction, absolute Tier-0 input ceiling
-- **Long task** — elevated tool/latency caps, evidence floor, inline crawl batches
-- **Personality** — `default`, `mixed`, `classic`
 - **Model profile** — switch model in `/settings` model tab
 
 ## Hardcoded Knobs

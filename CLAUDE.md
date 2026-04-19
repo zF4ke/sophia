@@ -81,8 +81,6 @@ These capability ids are prompt- and runtime-stable:
 - `start_long_task`
 - `note_add`
 - `note_list`
-- `note_read`
-- `note_update`
 - `note_clear`
 - `plan_update`
 
@@ -106,10 +104,7 @@ Runtime prompts live under `resources/prompts/` and stay external to code:
 
 - `resources/prompts/system/base.md`
 - `resources/prompts/system/personality.md`
-- `resources/prompts/system/personality_mixed_override.md` (applied when `personality = "mixed"`)
-- `resources/prompts/system/personality_classic_override.md` (applied when `personality = "classic"`)
 - `resources/prompts/runtime/agent_loop.md`
-- `resources/prompts/runtime/stall_classifier.md`
 
 The stable prompt catalog is:
 
