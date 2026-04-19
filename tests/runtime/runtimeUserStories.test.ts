@@ -72,8 +72,12 @@ describe("runtime user stories", () => {
         vi.spyOn(DiscordMemoryService, "getRecentRuntimeRunsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
+        vi.spyOn(DiscordMemoryService, "getKnownChannelsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
+        vi.spyOn(DiscordMemoryService, "pruneExpiredThreadNotes").mockResolvedValue({ removed: 0 });
+        // Default stall classifier: not a stall
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall: false });
     });
 
     it("answers a follow-up directly from reused prior retrieval evidence without rerunning tools", async () => {
@@ -370,6 +374,7 @@ describe("runtime user stories", () => {
                     guildId: "g1",
                     name: "reflexoes",
                     type: "0",
+                    position: null,
                     parentCategoryId: "cat-1",
                     parentCategoryName: "Text",
                     isReadable: true,
@@ -388,6 +393,7 @@ describe("runtime user stories", () => {
                 guildId: "g1",
                 name: "Text",
                 type: "4",
+                position: null,
                 parentCategoryId: null,
                 parentCategoryName: null,
                 isReadable: false,
@@ -401,6 +407,7 @@ describe("runtime user stories", () => {
                 guildId: "g1",
                 name: "reflexoes",
                 type: "0",
+                position: null,
                 parentCategoryId: "cat-1",
                 parentCategoryName: "Text",
                 isReadable: true,
@@ -533,6 +540,7 @@ describe("runtime user stories", () => {
                     guildId: "g1",
                     name: "ideas",
                     type: "0",
+                    position: null,
                     parentCategoryId: "cat-projects",
                     parentCategoryName: "Projects",
                     isReadable: true,
@@ -551,6 +559,7 @@ describe("runtime user stories", () => {
                 guildId: "g1",
                 name: "Projects",
                 type: "4",
+                position: null,
                 parentCategoryId: null,
                 parentCategoryName: null,
                 isReadable: false,
@@ -564,6 +573,7 @@ describe("runtime user stories", () => {
                 guildId: "g1",
                 name: "ideas",
                 type: "0",
+                position: null,
                 parentCategoryId: "cat-projects",
                 parentCategoryName: "Projects",
                 isReadable: true,
@@ -612,6 +622,7 @@ describe("runtime user stories", () => {
                     guildId: "g1",
                     name: "Serviços",
                     type: "4",
+                    position: null,
                     parentCategoryId: null,
                     parentCategoryName: null,
                     isReadable: false,
@@ -630,6 +641,7 @@ describe("runtime user stories", () => {
                 guildId: "g1",
                 name: "Serviços",
                 type: "4",
+                position: null,
                 parentCategoryId: null,
                 parentCategoryName: null,
                 isReadable: false,
@@ -643,6 +655,7 @@ describe("runtime user stories", () => {
                 guildId: "g1",
                 name: "bot-commands",
                 type: "0",
+                position: null,
                 parentCategoryId: "cat-services",
                 parentCategoryName: "Serviços",
                 isReadable: true,
@@ -656,6 +669,7 @@ describe("runtime user stories", () => {
                 guildId: "g1",
                 name: "automation",
                 type: "0",
+                position: null,
                 parentCategoryId: "cat-services",
                 parentCategoryName: "Serviços",
                 isReadable: true,

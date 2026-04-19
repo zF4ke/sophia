@@ -90,13 +90,19 @@ function buildCursorMap(
     channelIds: string[],
     historyMessages: RetrievedChunk[],
     previous: Record<string, string | null>,
-    crawlOldestByChannel: Record<string, string | null>
+    crawlOldestByChannel: Record<string, string | null>,
+    order: "newest" | "oldest" = "newest"
 ): Record<string, string | null> {
     const next = { ...previous };
     for (const channelId of channelIds) {
         const channelRows = historyMessages.filter((row) => row.channelId === channelId);
         if (channelRows.length) {
-            next[channelId] = channelRows[0]?.messageId || null;
+            // Newest-first: cursor = oldest row in page (first, since results are chronological).
+            // Oldest-first: cursor = newest row in page (last, since results are chronological).
+            const boundary = order === "oldest"
+                ? channelRows[channelRows.length - 1]
+                : channelRows[0];
+            next[channelId] = boundary?.messageId || null;
         } else if (crawlOldestByChannel[channelId]) {
             next[channelId] = crawlOldestByChannel[channelId];
         } else if (!(channelId in next)) {
@@ -208,6 +214,7 @@ export class UnifiedMessageRetrieval {
         authorId?: string;
         limit?: number;
         mode?: RetrievalMode;
+        order?: "newest" | "oldest";
         beforeTimestamp?: number | null;
         afterTimestamp?: number | null;
         aroundMessageId?: string;
@@ -324,6 +331,7 @@ export class UnifiedMessageRetrieval {
         }
 
         const limit = Math.max(1, options.limit ?? 20);
+        const order: "newest" | "oldest" = options.order === "oldest" ? "oldest" : "newest";
         const mode = options.mode ?? (options.channelIds?.length || options.currentChannelId ? "history" : "mixed");
         const scopedChannelIds =
             options.channelIds?.length
@@ -349,7 +357,7 @@ export class UnifiedMessageRetrieval {
             semanticCursor,
         };
 
-        async function fetchHistoryMessages(options: {
+        async function fetchHistoryMessages(fetchOpts: {
             guildId: string | null;
             channelIds: string[];
             authorId: string | null;
@@ -358,8 +366,9 @@ export class UnifiedMessageRetrieval {
             perChannelOldestMessageId: Record<string, string | null>;
             excludedMessageIds?: string[];
             limit: number;
+            order?: "newest" | "oldest";
         }): Promise<RetrievedChunk[]> {
-            return (await DiscordMemoryService.getChannelHistoryPageAsync(options)).map<RetrievedChunk>((message) => ({
+            return (await DiscordMemoryService.getChannelHistoryPageAsync(fetchOpts)).map<RetrievedChunk>((message) => ({
                 messageId: message.id,
                 channelId: message.channelId,
                 channelName: message.channelName,
@@ -390,6 +399,7 @@ export class UnifiedMessageRetrieval {
                       perChannelOldestMessageId: historyCursor,
                       excludedMessageIds: options.excludedMessageIds,
                       limit,
+                      order,
                   });
         let semanticMatches =
             mode === "history"
@@ -460,6 +470,7 @@ export class UnifiedMessageRetrieval {
                               perChannelOldestMessageId: historyCursor,
                               excludedMessageIds: options.excludedMessageIds,
                               limit,
+                              order,
                           });
                 semanticMatches =
                     mode === "history"
@@ -526,6 +537,7 @@ export class UnifiedMessageRetrieval {
                         perChannelOldestMessageId: historyCursor,
                         excludedMessageIds: options.excludedMessageIds,
                         limit,
+                        order,
                     });
                     if (!semanticMatches.length && mode !== "history") {
                         semanticMatches = await DiscordMemoryService.searchMessagesAsync(
@@ -587,6 +599,7 @@ export class UnifiedMessageRetrieval {
                         perChannelOldestMessageId: historyCursor,
                         excludedMessageIds: options.excludedMessageIds,
                         limit,
+                        order,
                     });
                     sourceOrigin = historyMessages.length ? "cache_after_refresh" : "live_refresh";
                 }
@@ -607,6 +620,7 @@ export class UnifiedMessageRetrieval {
                     afterTimestamp: options.afterTimestamp ?? null,
                     perChannelOldestMessageId: historyCursor,
                     limit,
+                    order,
                 });
                 if (retriedWithoutExcluded.length) {
                     historyMessages = retriedWithoutExcluded;
@@ -624,6 +638,7 @@ export class UnifiedMessageRetrieval {
                     afterTimestamp: options.afterTimestamp ?? null,
                     perChannelOldestMessageId: {},
                     limit,
+                    order,
                 });
                 if (retriedWithoutCursor.length) {
                     historyMessages = retriedWithoutCursor;
@@ -642,7 +657,8 @@ export class UnifiedMessageRetrieval {
             searchedChannelIds,
             historyMessages,
             historyCursor,
-            crawlOldestByChannel
+            crawlOldestByChannel,
+            order
         );
         const semanticContinuationCursor = buildSemanticCursor(semanticMatches);
         const historyExhaustion = await buildExhaustion(

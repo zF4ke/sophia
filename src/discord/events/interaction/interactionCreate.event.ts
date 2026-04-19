@@ -5,6 +5,7 @@ import { handleApprovalInteraction } from "@/discord/approval/approvalInteractio
 import { handleDebugLogsInteraction } from "@/discord/commands/system/debugLogsInteractions";
 import { handleDebugPanelInteraction } from "@/discord/debug/debugPanelInteractions";
 import { handleSettingsPanelInteraction } from "@/discord/commands/system/settings/settingsInteractions";
+import { handleUiTestSettingsInteraction } from "@/discord/commands/system/uitest/settings";
 import { SecurityService } from "@/security/SecurityService";
 
 export = {
@@ -50,6 +51,15 @@ export = {
                 interaction.isStringSelectMenu()
             ) {
                 if (await handleSettingsPanelInteraction(interaction)) {
+                    return;
+                }
+            }
+
+            if (
+                interaction.isButton() ||
+                interaction.isStringSelectMenu()
+            ) {
+                if (await handleUiTestSettingsInteraction(interaction)) {
                     return;
                 }
             }

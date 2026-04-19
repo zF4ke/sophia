@@ -19,7 +19,8 @@ export type StopReason =
     | "confidence_plateau"
     | "execution_stopped_by_admin"
     | "no_useful_next_step"
-    | "insufficient_evidence";
+    | "insufficient_evidence"
+    | "stalled_promise";
 export type RetrievalSourceOrigin = "none" | "cache" | "live_refresh" | "cache_after_refresh";
 export type EvidenceStrength = "strong" | "weak" | "metadata";
 export type ToolArgumentValue =
@@ -56,6 +57,7 @@ export interface ChannelContextMessage {
 
 export interface ConversationTurnSummary {
     requestId: string;
+    requesterDisplayName: string | null;
     question: string;
     answer: string;
     classificationMode: string;
@@ -86,6 +88,13 @@ export interface TurnInput {
         startTyping(): Promise<void>;
         stop(): Promise<void>;
     } | null;
+    /**
+     * Optional channel-side progress notifier. When set, Runtime pushes
+     * short human-readable status updates (e.g. "Procurando mensagens
+     * do João…") during long tool calls so the user sees live progress.
+     * Best-effort: failures are swallowed by the caller.
+     */
+    progressNotifier?: ((summary: string) => Promise<void>) | null;
 }
 
 export type SideEffectLevel = "none" | "write" | "destructive";
@@ -276,6 +285,7 @@ export interface RuntimeDebugSession {
     setConfidence?(confidence: GroundedAnswerMode): Promise<void>;
     setTraceEvent?(label: string, detail: string, timestamp?: number): Promise<void>;
     setTokenUsage?(promptTokens: number, completionTokens: number, contextUsagePercent: number | null): Promise<void>;
+    setNotesSnapshot?(notes: Array<{ seq: number; label: string | null; bodyPreview: string; wordCount: number }>, planPreview: string | null): Promise<void>;
     setGenerating(): Promise<void>;
     finishSuccess(summary?: string): Promise<void>;
     finishError(error: unknown): Promise<void>;

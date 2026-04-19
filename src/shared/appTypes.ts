@@ -17,12 +17,21 @@ export type SupportedInteraction =
     | ModalSubmitInteraction;
 
 export interface ModelProfile {
+    label?: string;
     chatModel: string;
     embeddingModel: string;
     temperature: number;
     maxOutputTokens: number;
     contextWindow: number;
     parallelToolCalls?: boolean;
+    pricing?: {
+        inputPerMillionUsd?: number;
+        outputPerMillionUsd?: number;
+        cacheReadPerMillionUsd?: number;
+        webSearchPerCallUsd?: number;
+        source?: string;
+        updatedAt?: string;
+    };
 }
 
 export type WebMode = "off" | "auto" | "required";
@@ -52,6 +61,12 @@ export interface AppConfig {
         escalationFetchLimit: number;
         retrievalHistoryLimit: number;
         retrievalContextWindow: number;
+        longTask: {
+            maxToolCalls: number;
+            maxLatencyBudgetMs: number;
+            evidenceSliceFloor: number;
+            retrievalInlineCrawlBatches: number;
+        };
     };
 }
 
@@ -248,6 +263,7 @@ export interface GuildStructureEntry {
     name: string;
     channelTopic?: string | null;
     type: string;
+    position: number | null;
     parentCategoryId: string | null;
     parentCategoryName: string | null;
     isReadable: boolean;

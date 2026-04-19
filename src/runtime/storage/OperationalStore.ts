@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { pathToFileURL } from "url";
-import { createClient, type Client, type InArgs } from "@libsql/client";
+import type { Client, InArgs } from "@libsql/client";
 import { getAppConfig } from "@/app/AppConfig";
 import { FileSystemService } from "@/shared/storage/FileSystemService";
 import { OPERATIONAL_SCHEMA_VERSION } from "@/runtime/storage/schema";
@@ -67,6 +67,7 @@ export class OperationalStore {
         if (!this.client) {
             const dbPath = getAppConfig().runtime.operationalDbPath;
             FileSystemService.ensureDirectoryExists(path.dirname(dbPath));
+            const { createClient } = require("@libsql/client") as typeof import("@libsql/client");
             this.client = createClient({
                 url: pathToFileURL(dbPath).toString(),
             });
@@ -103,55 +104,65 @@ export class OperationalStore {
         await this.ensureOptionalColumns(client);
     }
 
+    // Additive migrations: every column that may have been added after a table's initial
+    // CREATE TABLE IF NOT EXISTS statement must be re-declared here so existing databases
+    // gain it on startup without being wiped. Only append — never remove entries.
+    private static readonly ADDITIVE_COLUMNS: ReadonlyArray<{
+        table: string;
+        column: string;
+        type: string;
+    }> = [
+        { table: "channels", column: "channel_topic", type: "TEXT" },
+        // runtime_runs: cover every non-PK column as nullable, so legacy DBs that
+        // predate any of them get migrated on startup instead of being reset.
+        { table: "runtime_runs", column: "channel_id", type: "TEXT" },
+        { table: "runtime_runs", column: "actor_id", type: "TEXT" },
+        { table: "runtime_runs", column: "requester_display_name", type: "TEXT" },
+        { table: "runtime_runs", column: "trigger", type: "TEXT" },
+        { table: "runtime_runs", column: "classification_mode", type: "TEXT" },
+        { table: "runtime_runs", column: "runtime_mode", type: "TEXT" },
+        { table: "runtime_runs", column: "stop_reason", type: "TEXT" },
+        { table: "runtime_runs", column: "confidence", type: "TEXT" },
+        { table: "runtime_runs", column: "question", type: "TEXT" },
+        { table: "runtime_runs", column: "answer", type: "TEXT" },
+        { table: "runtime_runs", column: "created_timestamp", type: "INTEGER" },
+    ];
+
     private static async ensureOptionalColumns(client: Client): Promise<void> {
-        try {
-            await client.execute(`ALTER TABLE channels ADD COLUMN channel_topic TEXT`);
-        } catch (error) {
-            const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-            if (!message.includes("duplicate column name")) {
-                throw error;
+        for (const { table, column, type } of OperationalStore.ADDITIVE_COLUMNS) {
+            try {
+                await client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+            } catch (error) {
+                const message = error instanceof Error
+                    ? error.message.toLowerCase()
+                    : String(error).toLowerCase();
+                // "duplicate column name" → already present. "no such table" → table missing
+                // on a fresh DB; CREATE TABLE IF NOT EXISTS below already includes the column.
+                if (
+                    !message.includes("duplicate column name")
+                    && !message.includes("no such table")
+                ) {
+                    throw error;
+                }
             }
         }
     }
 
     private static async shouldResetExistingDatabase(
-        client: Client,
+        _client: Client,
         dbPath: string
     ): Promise<boolean> {
         if (!fs.existsSync(dbPath)) {
             return false;
         }
 
-        const tables = (
-            await client.execute(`
-                SELECT name
-                FROM sqlite_master
-                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-            `)
-        ).rows as Array<Record<string, unknown>>;
-
-        if (!tables.length) {
-            return false;
-        }
-
-        const tableNames = new Set(tables.map((row) => String(row.name)));
-        if (!tableNames.has("runtime_metadata") || !tableNames.has("runtime_runs")) {
-            return true;
-        }
-
-        const version = await querySingleValue(
-            client,
-            `SELECT value FROM runtime_metadata WHERE key = 'operational_schema_version'`
-        );
-        if (version !== OPERATIONAL_SCHEMA_VERSION) {
-            return true;
-        }
-
-        const runtimeRunColumns = (
-            await client.execute(`PRAGMA table_info(runtime_runs)`)
-        ).rows as Array<Record<string, unknown>>;
-        const columnNames = new Set(runtimeRunColumns.map((row) => String(row.name)));
-        return !columnNames.has("trigger");
+        // Never reset on version mismatch. Migrations are additive:
+        // `CREATE TABLE IF NOT EXISTS` creates any missing tables, and
+        // `ensureOptionalColumns` adds any missing columns to existing tables.
+        // A destructive reset wipes millions of ingested messages — not acceptable
+        // as a side effect of a schema version bump. If a future change genuinely
+        // requires a reset, do it explicitly through a one-off migration, not here.
+        return false;
     }
 
     private static async resetDatabaseContents(client: Client): Promise<boolean> {
@@ -261,6 +272,21 @@ export class OperationalStore {
                 exhausted INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS crawl_queue (
+                channel_id TEXT PRIMARY KEY,
+                guild_id TEXT,
+                priority INTEGER NOT NULL DEFAULT 0,
+                reason TEXT,
+                enqueued_at INTEGER NOT NULL,
+                state TEXT NOT NULL DEFAULT 'queued',
+                messages_ingested INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                last_activity_at INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_crawl_queue_state_priority
+            ON crawl_queue(state, priority DESC, enqueued_at ASC);
+
             CREATE TABLE IF NOT EXISTS tool_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 request_id TEXT NOT NULL,
@@ -284,6 +310,7 @@ export class OperationalStore {
                 guild_id TEXT,
                 channel_id TEXT,
                 actor_id TEXT NOT NULL,
+                requester_display_name TEXT,
                 trigger TEXT,
                 classification_mode TEXT NOT NULL,
                 runtime_mode TEXT NOT NULL,
@@ -361,6 +388,23 @@ export class OperationalStore {
                 occurred_at INTEGER NOT NULL,
                 created_timestamp INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS request_notes (
+                request_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                label TEXT,
+                body TEXT NOT NULL,
+                created_timestamp INTEGER NOT NULL,
+                PRIMARY KEY (request_id, seq)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_request_notes_request_kind
+            ON request_notes(request_id, kind);
+
+            CREATE INDEX IF NOT EXISTS idx_request_notes_thread_time
+            ON request_notes(thread_id, created_timestamp DESC);
 
             CREATE VIRTUAL TABLE IF NOT EXISTS message_chunks_fts
             USING fts5(content, content='message_chunks', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');

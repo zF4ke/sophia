@@ -33,7 +33,6 @@ Sophia runs on one conversational runtime and one unified Discord retrieval pipe
 - Capability execution is registry-driven, not hardcoded per tool in the core runtime.
 - Write and destructive tool calls pass through an approval gate before execution. Destructive calls additionally require a confirmation dialog. Multiple destructive calls in the same response are batched into one approval card grouped by Discord category.
 - `retrieve_messages` is the main message-evidence capability. `resolve_member_identity` handles exact member and bot resolution with same-guild historical fallback. `list_guild_structure` and `resolve_channel_targets` provide current-guild discovery. `get_member_profile` returns rich profile data including roles, join date, account creation date, nickname, bot status, Nitro/premium status, and avatar. `list_members` supports offset-based pagination (default page size 20) with an optional name/username fragment filter — omitting the filter returns all members. `get_guild_context` provides live guild-level metadata. `get_role_info` provides role details. `list_threads` and `read_thread_messages` support thread discovery and reading.
-- `/find` stays separate as a specialized retrieval workflow built on the same primitives.
 
 ## Active Runtime Flow
 
@@ -42,16 +41,18 @@ Sophia runs on one conversational runtime and one unified Discord retrieval pipe
 3. Load memory (recent turns, channel context, prior evidence from persisted tool runs)
 4. Build unified system prompt (`runtime/agent_loop`)
 5. While-loop: model calls tools via native function calling, runtime executes them and feeds results back
-6. Write/destructive tool calls pass through the approval gate before execution
-7. Model calls `finish` with the final answer, or runtime produces a conversational fallback
-8. Persist runtime run, tool runs, and trace events
+6. `start_long_task` intercepted if present (raises budget caps; never dispatched to capability layer)
+7. Write/destructive tool calls pass through the approval gate before execution
+8. On `finish`, stall guard checks for empty-promise answers and re-prompts once if detected
+9. Model calls `finish` with the final answer, or runtime produces a conversational fallback
+10. Persist runtime run, tool runs, and trace events
 
 ## Approval Layer
 
 The approval layer sits between the model's tool call and the capability handler:
 
 - **Write tools** (`create_channel`, `create_category`, `create_thread`, `move_channel`, `manage_member_roles`, `send_message`): require admin approval via an approval card with Aceitar/Recusar buttons. Can be auto-approved when `autoApproveWrites` is enabled.
-- **Destructive tools** (`clear_messages`, `delete_channel`): always require admin approval plus a confirmation dialog. Multiple destructive calls in the same response are grouped into a batch approval card organized by Discord category.
+- **Destructive tools** (`clear_messages`, `delete_messages`, `delete_channel`): always require admin approval plus a confirmation dialog. Multiple destructive calls in the same response are grouped into a batch approval card organized by Discord category.
 
 Approval cards show the tool name, description, side-effect level badge, and timeout countdown. Batch cards include a category select menu when actions span multiple Discord categories.
 
@@ -80,6 +81,17 @@ The retrieval path is:
 That keeps Discord search cheap, durable, and continuously improving.
 
 Deep retrieval does not mean deep prompt stuffing. Sophia may inspect thousands of stored messages over multiple tool calls, but only a bounded working set goes into the live model context: recent turns, recent channel context, capped prior evidence, and the latest loop messages. Older tool outputs are pruned when prompt usage approaches the selected model profile context window.
+
+Context management has two tiers:
+- **Tier-1 (truncation)**: oldest tool-result messages are dropped when prompt tokens exceed a safe fraction of the context window.
+- **Tier-2 (compaction)**: when Tier-1 is not enough, the middle block of messages is summarised by the model selected in `/settings` → `Compactação` and replaced with a single `<compaction_summary>` system message. The Tier-2 trigger is configurable in settings.
+- **Tier-0 (input compaction)**: before the call, bulky prompts can be compacted early based on a configurable input-window fraction or an absolute token ceiling. This prevents casual turns from carrying oversized evidence/tool baggage on huge-window models.
+
+For long tasks (`start_long_task`), the runtime also provides:
+- **Scratchpad tools** (`note_add`, `note_list`, `note_read`, `note_update`, `note_clear`, `plan_update`): a per-request notebook stored in libSQL. The plan is re-injected into the system prompt every loop iteration, and notebook pages survive compaction.
+- **Doom-loop detection**: sliding window detects repeated identical tool calls → nudge → force finish.
+- **Progress-required tracking**: after N non-progress calls, the model is nudged to record findings or change approach.
+- **Notebook pruning**: notebook pages auto-expire after the configured number of recent requests per thread; plans are preserved.
 
 ## Storage
 

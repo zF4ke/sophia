@@ -83,6 +83,9 @@ describe("approval gate", () => {
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
+        vi.spyOn(DiscordMemoryService, "pruneExpiredThreadNotes").mockResolvedValue({ removed: 0 });
+        // Default stall classifier: not a stall
+        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall: false });
     });
 
     it("calls approvalGate for write tools and proceeds when approved", async () => {

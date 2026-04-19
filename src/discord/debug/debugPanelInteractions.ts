@@ -32,7 +32,7 @@ export async function handleDebugPanelInteraction(
     if (!SecurityService.isAdmin(interaction.user.id)) {
         try {
             await interaction.reply({
-                content: "❌ You don't have permission to use this panel.",
+                content: "❌ Apenas administradores podem usar este painel.",
             });
         } catch (error) {
             if (!isUnknownInteractionError(error)) {
@@ -48,7 +48,7 @@ export async function handleDebugPanelInteraction(
     await interaction.update({
         ...renderDebugControlPanel(
             enabled,
-            enabled ? "Debug mode enabled." : "Debug mode disabled."
+            enabled ? "Modo debug ativado." : "Modo debug desativado."
         ),
         flags: MessageFlags.IsComponentsV2,
     });

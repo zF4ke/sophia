@@ -4,6 +4,7 @@ import type {
     DebugSessionReporter,
     DebugTimelineEntry,
     DebugTraceState,
+    NoteSnapshotEntry,
 } from "@/discord/debug/types";
 import type { GroundedAnswerMode } from "@/shared/appTypes";
 import type { RetrievalSummary, RuntimeMode, StopReason, TurnTrigger } from "@/runtime/contracts";
@@ -66,6 +67,8 @@ export class DebugSession implements DebugSessionReporter {
             cumulativePromptTokens: 0,
             cumulativeCompletionTokens: 0,
             contextUsagePercent: null,
+            notesSnapshot: [],
+            planPreview: null,
         };
         DebugSession.sessions.set(message.id, this);
     }
@@ -191,6 +194,21 @@ export class DebugSession implements DebugSessionReporter {
 
     public async setTraceEvent(label: string, detail: string, timestamp?: number): Promise<void> {
         await this.mutate(label, detail, undefined, [], timestamp);
+    }
+
+    public async setNotesSnapshot(
+        notes: NoteSnapshotEntry[],
+        planPreview: string | null,
+    ): Promise<void> {
+        const totalWords = notes.reduce((sum, n) => sum + n.wordCount, 0);
+        await this.mutate(
+            "Notes",
+            `${notes.length} note(s), ${totalWords.toLocaleString()} words`,
+            (state) => {
+                state.notesSnapshot = notes;
+                state.planPreview = planPreview;
+            }
+        );
     }
 
     public async setGenerating(): Promise<void> {

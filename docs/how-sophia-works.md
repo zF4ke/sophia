@@ -302,7 +302,6 @@ That separation matters because a category name alone is not enough to explain w
 - delete channels permanently (with admin approval + confirmation)
 - batch multiple destructive actions into a single approval card grouped by Discord category
 - auto-approve non-destructive write actions when configured
-- run `/find` as a specialized retrieval workflow
 
 ## Common Wiring Patterns
 

@@ -22,6 +22,8 @@ import {
 } from "./panelIds";
 import { fetchUserLabel, type AccessPanelData } from "./panelData";
 import type { AccessPanelState, AccessPanelView } from "./panelTypes";
+import { ACCESS_POLICY_TARGET_DESCRIPTIONS, type AccessPolicyTarget } from "@/security/policyTargets";
+import { SecurityService } from "@/security/SecurityService";
 import type { BotClient } from "@/shared/appTypes";
 import type { CommandConfig } from "@/security/types";
 
@@ -77,6 +79,9 @@ async function buildOverviewBody(
     const publicCommands = panelData.commandNames.filter((commandName) =>
         getCommandConfig(panelData, commandName).isPublic
     ).length;
+    const enabledTriggers = panelData.triggerNames.filter((triggerName) =>
+        getCommandConfig(panelData, triggerName).isPublic
+    ).length;
     const sampleAdmins = await Promise.all(
         panelData.admins.slice(0, 3).map((admin) => fetchUserLabel(client, admin.userId))
     );
@@ -85,6 +90,7 @@ async function buildOverviewBody(
         `**Administradores:** ${panelData.admins.length}`,
         `**Moderadores:** ${panelData.moderators.length}`,
         `**Comandos públicos:** ${publicCommands}/${panelData.commandNames.length}`,
+        `**Triggers permitidos:** ${enabledTriggers}/${panelData.triggerNames.length}`,
         `**Admins recentes:** ${sampleAdmins.length ? sampleAdmins.join(", ") : "nenhum"}`,
     ].join("\n");
 }
@@ -120,17 +126,36 @@ function buildCommandBody(
     ].join("\n");
 }
 
+function buildTriggerBody(
+    panelData: AccessPanelData,
+    triggerName: AccessPolicyTarget,
+): string {
+    const config = getCommandConfig(panelData, triggerName);
+    const labels = SecurityService.getPolicyTargetLabels();
+    return [
+        `**Trigger:** \`${labels[triggerName]}\``,
+        `**Estado:** ${config.isPublic ? "Permitido" : "Bloqueado"}`,
+        `**Descrição:** ${ACCESS_POLICY_TARGET_DESCRIPTIONS[triggerName]}`,
+        `**Limites:** padrão ${config.rateLimits.default} · moderador ${config.rateLimits.moderator} · admin ${config.rateLimits.admin}`,
+    ].join("\n");
+}
+
 function buildCommandSelectRow(
     panelData: AccessPanelData,
     selectedCommand: string
 ): ActionRowBuilder<StringSelectMenuBuilder> {
+    const labels = SecurityService.getPolicyTargetLabels();
     const menu = new StringSelectMenuBuilder()
         .setCustomId(ACCESS_COMMAND_SELECT_ID)
-        .setPlaceholder("Escolher comando")
+        .setPlaceholder("Escolher comando ou trigger")
         .addOptions(
-            panelData.commandNames.slice(0, 25).map((commandName) =>
+            [...panelData.triggerNames, ...panelData.commandNames].slice(0, 25).map((commandName) =>
                 new StringSelectMenuOptionBuilder()
-                    .setLabel(`/${commandName}`)
+                    .setLabel(
+                        panelData.triggerNames.includes(commandName as AccessPolicyTarget)
+                            ? labels[commandName as AccessPolicyTarget]
+                            : `/${commandName}`
+                    )
                     .setValue(commandName)
                     .setDefault(commandName === selectedCommand)
             )
@@ -217,10 +242,11 @@ export async function buildAccessPanel(
     panelData: AccessPanelData,
     state: AccessPanelState
 ): Promise<{ components: [ContainerBuilder, ...AccessRow[]] }> {
+    const policyNames = [...panelData.triggerNames, ...panelData.commandNames];
     const selectedCommand =
-        state.selectedCommand && panelData.commandNames.includes(state.selectedCommand)
+        state.selectedCommand && policyNames.includes(state.selectedCommand)
             ? state.selectedCommand
-            : panelData.commandNames[0];
+            : policyNames[0];
     const titleByView: Record<AccessPanelView, string> = {
         overview: "## Painel de acesso",
         admins: "## Administradores",
@@ -270,7 +296,9 @@ export async function buildAccessPanel(
 
     if (state.view === "commands") {
         body = selectedCommand
-            ? buildCommandBody(panelData, selectedCommand)
+            ? panelData.triggerNames.includes(selectedCommand as AccessPolicyTarget)
+                ? buildTriggerBody(panelData, selectedCommand as AccessPolicyTarget)
+                : buildCommandBody(panelData, selectedCommand)
             : "Nenhum comando carregado.";
 
         if (selectedCommand) {

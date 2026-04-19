@@ -9,6 +9,12 @@ import { SecurityService } from "@/security/SecurityService";
 import { getAccessLimitsModalId } from "@/discord/commands/system/access/panelIds";
 import { refreshPanel } from "@/discord/commands/system/access/handlers/panelRefresh";
 import type { AccessHandlerContext } from "@/discord/commands/system/access/handlers/types";
+import { isAccessPolicyTarget } from "@/security/policyTargets";
+
+function formatTargetLabel(commandName: string): string {
+    const labels = SecurityService.getPolicyTargetLabels();
+    return isAccessPolicyTarget(commandName) ? labels[commandName] : `/${commandName}`;
+}
 
 function buildLimitsModal(
     commandName: string,
@@ -16,7 +22,7 @@ function buildLimitsModal(
 ): ModalBuilder {
     return new ModalBuilder()
         .setCustomId(getAccessLimitsModalId(commandName))
-        .setTitle(`Limites: /${commandName}`)
+        .setTitle(`Limites: ${formatTargetLabel(commandName)}`)
         .addComponents(
             new ActionRowBuilder<TextInputBuilder>().addComponents(
                 new TextInputBuilder()
@@ -65,7 +71,7 @@ export async function handleAccessButton(
         await refreshPanel(interaction, context, {
             view: "commands",
             selectedCommand: commandName,
-            notice: `/${commandName} agora é ${isPublic ? "público" : "privado"}.`,
+            notice: `${formatTargetLabel(commandName)} agora está ${isPublic ? "permitido" : "bloqueado"}.`,
         });
         return true;
     }

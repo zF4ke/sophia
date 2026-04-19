@@ -16,29 +16,24 @@ import type { BotClient } from "@/shared/appTypes";
 export = {
     data: new SlashCommandBuilder()
         .setName("debug")
-        .setDescription("Debug tools for Sophia")
+        .setDescription("Controlo de debug da Sophia")
         .setContexts(0, 1, 2)
         .setIntegrationTypes(0)
         .setDMPermission(false)
         .addSubcommand((sub) =>
-            sub.setName("toggle").setDescription("Toggle debug mode on/off")
+            sub.setName("toggle").setDescription("Enable or disable debug mode")
         )
         .addSubcommand((sub) =>
             sub
                 .setName("logs")
-                .setDescription("Browse model call logs in a navigable panel")
-                .addStringOption((opt) =>
-                    opt
-                        .setName("date")
-                        .setDescription("Log date (YYYY-MM-DD). Defaults to today.")
-                )
+                .setDescription("Abrir painel de logs do modelo")
         ),
     async execute(interaction: ChatInputCommandInteraction, _client: BotClient) {
         await SecurityService.initialize();
 
         if (!SecurityService.isAdmin(interaction.user.id)) {
             await interaction.reply({
-                content: "❌ You don't have permission to use this command.",
+                content: "❌ Apenas administradores podem usar este comando.",
                 flags: MessageFlags.Ephemeral,
             });
             return;
@@ -56,10 +51,7 @@ export = {
 
         if (sub === "logs") {
             await interaction.deferReply();
-
-            const dateStr = interaction.options.getString("date");
-            const preferredFile = dateStr ? `model-output-${dateStr}.jsonl` : null;
-            const state = createInitialDebugLogsPanelState(interaction.user.id, preferredFile);
+            const state = createInitialDebugLogsPanelState(interaction.user.id);
             const reply = await interaction.editReply(buildDebugLogsPanel(state));
             rememberDebugLogsPanelState(reply.id, state);
         }

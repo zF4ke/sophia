@@ -71,6 +71,7 @@ export type TokenUsage = {
 export type ToolChatResult = {
     content: string | null;
     toolCalls: ToolCall[];
+    malformedToolCallText?: string | null;
     finishReason: string;
     model: string;
     durationMs: number;
@@ -79,6 +80,7 @@ export type ToolChatResult = {
 
 export class ModelGateway {
     private static client: OpenAI | null = null;
+    private static readonly MALFORMED_COMPLETION_RETRIES = 1;
 
     private static getClient(): OpenAI {
         if (!this.client) {
@@ -127,6 +129,10 @@ export class ModelGateway {
             webStatus,
             webSearchRequests,
         });
+
+        if (normalizedOutput && this.containsInvokeMarkup(normalizedOutput)) {
+            throw new Error(`Model emitted raw tool markup during text generation (${traceLabel}).`);
+        }
 
         if (!normalizedOutput) {
             throw new EmptyModelOutputError(traceLabel);
@@ -209,11 +215,16 @@ export class ModelGateway {
             tools: options.tools,
         };
 
-        const completion = await client.chat.completions.create(request as any);
+        const completion = await this.createChatCompletionWithValidation(
+            client,
+            request,
+            traceLabel,
+            profile.chatModel
+        );
         const durationMs = Math.max(0, Date.now() - startedAt);
         const choice = completion.choices[0];
-        const content = choice?.message?.content || null;
-        const toolCalls: ToolCall[] = (choice?.message?.tool_calls ?? []).map((tc: any) => ({
+        const rawContent = this.normalizeAssistantContent(choice?.message?.content);
+        const structuredToolCalls: ToolCall[] = (choice?.message?.tool_calls ?? []).map((tc: any) => ({
             id: tc.id,
             type: "function" as const,
             function: {
@@ -221,6 +232,12 @@ export class ModelGateway {
                 arguments: tc.function.arguments,
             },
         }));
+        const malformedToolCallText =
+            structuredToolCalls.length === 0 && rawContent && this.containsInvokeMarkup(rawContent)
+                ? rawContent
+                : null;
+        const toolCalls = structuredToolCalls;
+        const content = malformedToolCallText ? null : rawContent;
         const finishReason = choice?.finish_reason || "stop";
 
         ModelTraceLogger.log({
@@ -253,7 +270,7 @@ export class ModelGateway {
             }
             : null;
 
-        return { content, toolCalls, finishReason, model: profile.chatModel, durationMs, usage };
+        return { content, toolCalls, malformedToolCallText, finishReason, model: profile.chatModel, durationMs, usage };
     }
 
     public static async embedTexts(texts: string[]): Promise<number[][]> {
@@ -316,7 +333,12 @@ export class ModelGateway {
             ];
         }
 
-        const completion = await client.chat.completions.create(request as any);
+        const completion = await this.createChatCompletionWithValidation(
+            client,
+            request,
+            options.traceContext?.traceLabel || "unlabeled_text_generation",
+            profile.chatModel
+        );
         const webSearchRequests = Math.max(
             0,
             Number((completion as any)?.usage?.server_tool_use?.web_search_requests ?? 0)
@@ -333,6 +355,60 @@ export class ModelGateway {
         };
     }
 
+    private static async createChatCompletionWithValidation(
+        client: OpenAI,
+        request: Record<string, unknown>,
+        traceLabel: string,
+        model: string
+    ) {
+        let lastMalformedPayload: unknown = null;
+
+        for (let attempt = 0; attempt <= this.MALFORMED_COMPLETION_RETRIES; attempt += 1) {
+            const completion = await client.chat.completions.create(request as any);
+            if (Array.isArray((completion as any)?.choices) && (completion as any).choices.length > 0) {
+                return completion;
+            }
+
+            lastMalformedPayload = completion;
+        }
+
+        throw new Error(
+            `Model provider returned no choices for ${model} (${traceLabel}). Payload=${this.safeSerialize(lastMalformedPayload)}`
+        );
+    }
+
+    private static safeSerialize(value: unknown): string {
+        try {
+            return JSON.stringify(value);
+        } catch {
+            return String(value);
+        }
+    }
+
+    private static containsInvokeMarkup(value: string): boolean {
+        return /<invoke\s+name="[^"]+"\s*>/i.test(value) && /<\/invoke>/i.test(value);
+    }
+
+    private static normalizeAssistantContent(content: unknown): string | null {
+        if (typeof content === "string") {
+            return content;
+        }
+        if (Array.isArray(content)) {
+            const text = content
+                .map((item) => {
+                    if (typeof item === "string") return item;
+                    if (item && typeof item === "object" && "text" in item && typeof (item as any).text === "string") {
+                        return (item as any).text;
+                    }
+                    return "";
+                })
+                .join("\n")
+                .trim();
+            return text || null;
+        }
+        return null;
+    }
+
     private static getQuestionPreview(
         messages: ChatMessage[],
         traceContext?: ModelTraceContext
@@ -347,4 +423,3 @@ export class ModelGateway {
         return lastUserMessage ? lastUserMessage.content.trim().slice(0, 200) : null;
     }
 }
-

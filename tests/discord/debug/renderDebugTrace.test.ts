@@ -31,6 +31,8 @@ function makeState(overrides: Partial<DebugTraceState> = {}): DebugTraceState {
         cumulativePromptTokens: 0,
         cumulativeCompletionTokens: 0,
         contextUsagePercent: null,
+        notesSnapshot: [],
+        planPreview: null,
         ...overrides,
     };
 }
@@ -129,5 +131,39 @@ describe("renderDebugTrace", () => {
         expect(rendered).toContain("62.5%");
         expect(rendered).toContain("Tokens");
         expect(rendered).toContain("Context");
+    });
+
+    it("renders notes scratchpad when notes exist", () => {
+        const containers = renderDebugTrace(makeState({
+            notesSnapshot: [
+                { seq: 1, label: "phase-1", bodyPreview: "Found 200 messages about topic X", wordCount: 42 },
+                { seq: 2, label: null, bodyPreview: "User spoke mostly in Portuguese", wordCount: 18 },
+            ],
+            planPreview: "Goal: Analyze linguistic evolution. Progress: 2/5 pages scanned.",
+        }));
+        const rendered = JSON.stringify(
+            containers.map((c) => c.toJSON())
+        );
+
+        expect(rendered).toContain("Scratchpad");
+        expect(rendered).toContain("2");
+        expect(rendered).toContain("60");
+        expect(rendered).toContain("phase-1");
+        expect(rendered).toContain("Found 200 messages");
+        expect(rendered).toContain("42w");
+        expect(rendered).toContain("Plan");
+        expect(rendered).toContain("Analyze linguistic evolution");
+    });
+
+    it("does not render scratchpad when no notes or plan exist", () => {
+        const containers = renderDebugTrace(makeState({
+            notesSnapshot: [],
+            planPreview: null,
+        }));
+        const rendered = JSON.stringify(
+            containers.map((c) => c.toJSON())
+        );
+
+        expect(rendered).not.toContain("Scratchpad");
     });
 });

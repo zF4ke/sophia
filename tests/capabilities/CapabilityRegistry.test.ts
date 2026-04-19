@@ -3,6 +3,7 @@ import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 import { DiscordGuildDiscoveryService } from "@/discord/live/DiscordGuildDiscoveryService";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
+import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 
 describe("CapabilityRegistry", () => {
     beforeEach(() => {
@@ -12,6 +13,7 @@ describe("CapabilityRegistry", () => {
     });
 
     it("executes retrieve_messages through the unified retrieval pipeline", async () => {
+        vi.spyOn(DiscordMemoryService, "getKnownChannelsAsync").mockResolvedValue([]);
         vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
             query: "what did alice say in reflexoes",
             mode: "mixed",
@@ -209,6 +211,7 @@ describe("CapabilityRegistry", () => {
                         guildId: "g1",
                         name: "reflexoes",
                         type: "0",
+                        position: null,
                         parentCategoryId: "cat-1",
                         parentCategoryName: "Text",
                         isReadable: true,
@@ -251,6 +254,7 @@ describe("CapabilityRegistry", () => {
                 guildId: "g1",
                 name: "General",
                 type: "4",
+                position: null,
                 parentCategoryId: null,
                 parentCategoryName: null,
                 isReadable: false,
@@ -264,6 +268,7 @@ describe("CapabilityRegistry", () => {
                 guildId: "g1",
                 name: "general",
                 type: "0",
+                position: null,
                 parentCategoryId: "cat-1",
                 parentCategoryName: "General",
                 isReadable: true,

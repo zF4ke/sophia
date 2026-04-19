@@ -21,6 +21,10 @@ export type CapabilityContext = {
     question: string;
     currentChannelId?: string | null;
     onProgress?: (toolName: string, summary: string) => Promise<void> | void;
+    /** Per-turn request id (ULID / UUID). Scratchpad tools use this to scope notes. */
+    requestId?: string | null;
+    /** Conversation thread id. Enables opt-in reading of prior requests' notes. */
+    threadId?: string | null;
 };
 
 // ── Tool effect classification ──────────────────────────────────────

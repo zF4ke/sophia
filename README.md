@@ -10,7 +10,7 @@ Sophia turns your Discord server into a searchable, manageable workspace. Ask he
 
 **Deep Server Search** — Search through your entire Discord history with intelligent retrieval. Sophia indexes messages locally for fast lookups and automatically fetches live history when needed.
 
-**21 Built-in Tools** — From retrieving messages and resolving members to creating channels, managing roles, and sending messages. The model decides which tools to use based on your request.
+**37 Built-in Tools** — From retrieving messages and resolving members to creating channels, managing roles, editing messages, random message sampling, and long-task notebook workflows. The model decides which tools to use based on your request.
 
 **Admin Approval System** — Write actions (create channel, send message, manage roles) require admin approval. Destructive actions (delete channel, clear messages) require approval *plus* confirmation. Multiple destructive actions are batched into a single approval card grouped by Discord category.
 
@@ -26,7 +26,7 @@ Sophia turns your Discord server into a searchable, manageable workspace. Ask he
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20.12+ (for `process.loadEnvFile()`)
 - A Discord bot token
 - An [OpenRouter](https://openrouter.ai/) API key
 
@@ -73,46 +73,43 @@ npm run dev
 
 | Command | Description |
 |---------|-------------|
-| `/find` | Targeted retrieval with topic, channel, and author filters |
 | `/nth` | Read the N-th historical message from an indexed channel |
 
 ### Admin
 
 | Command | Description |
 |---------|-------------|
-| `/settings` | Interactive panel to configure runtime parameters and model profile |
+| `/settings` | Tabbed panel to select model, runtime, compaction, long-task, and personality settings |
 | `/index` | Manage message indexing — backfill channels/categories, check status, repair |
-| `/debug` | Toggle debug mode or view model output logs |
+| `/debug` | Control debug mode and open the logs panel |
+| `/superchannels` | Manage protected channels that block destructive actions |
 | `/access` | Manage admin and moderator access |
 | `/ping` | Health check with latency info |
 
 ## Tools
 
-Sophia has **21 tools** organized by capability:
+Sophia has **37 tools** organized by capability:
 
 | Category | Tools |
 |----------|-------|
-| **Retrieval** | `retrieve_messages` |
+| **Retrieval** | `retrieve_messages`, `search_messages`, `random_channel_message` |
 | **Discovery** | `list_guild_structure`, `get_guild_context`, `resolve_channel_targets` |
-| **Members** | `resolve_member_identity`, `get_member_profile`, `list_members`, `get_role_info` |
+| **Members** | `resolve_member_identity`, `get_member_profile`, `list_members` |
+| **Roles** | `get_role_info`, `list_roles`, `create_role`, `edit_role`, `manage_member_roles` |
 | **Threads** | `list_threads`, `read_thread_messages` |
 | **Utilities** | `measure_text_length`, `evaluate_math` |
-| **Write** | `create_channel`, `create_category`, `create_thread`, `move_channel`, `manage_member_roles`, `send_message` |
-| **Destructive** | `clear_messages`, `delete_channel` |
+| **Write** | `create_channel`, `create_category`, `create_thread`, `move_channel`, `move_category`, `send_message`, `edit_message`, `create_role`, `edit_channel`, `edit_role` |
+| **Destructive** | `clear_messages`, `delete_messages`, `delete_channel`, `delete_role` |
+| **Control** | `start_long_task` |
+| **Scratchpad** | `plan_update`, `note_add`, `note_list`, `note_read`, `note_update`, `note_clear` |
 
-Write tools require admin approval. Destructive tools require approval + confirmation dialog.
+Write tools require admin approval. Destructive tools require approval + confirmation dialog. Scratchpad tools act as a per-request notebook and persist through context compaction for multi-step tasks.
 
 ## Model Profiles
 
-Three pre-configured profiles, switchable via `/settings`:
+Model profiles are defined in `resources/models/model-profiles.json` and selected in `/settings` (tab **Model**). There are currently 17 profiles spanning Google, OpenAI, DeepSeek, Mistral, MiniMax, xAI, and free-tier models. The default is `gemini25flashlite`.
 
-| Profile | Model | Context Window |
-|---------|-------|----------------|
-| **fast** (default) | Gemini 3.1 Flash Lite | 1M tokens |
-| **smarter** | MiniMax M2.7 | 190K tokens |
-| **alt** | DeepSeek V3.2 | 160K tokens |
-
-All models are accessed through OpenRouter. No models are hardcoded — profiles are defined in `resources/models/model-profiles.json`.
+Pricing shown in `/settings` comes from the `pricing` metadata in `resources/models/model-profiles.json` (values synced from OpenRouter). Add new profiles by editing the JSON file — no code changes needed.
 
 ## How It Works
 
@@ -134,9 +131,23 @@ All runtime tuning is done through `/settings` or `storage/settings.json`:
 
 - **Context retention** — recent turns, channel messages, prior evidence slice
 - **Retrieval** — history page size, context window, crawl limits
+- **Notebook retention** — max notebook pages per request and automatic note expiry after N thread requests
 - **Loop guardrails** — max tool calls (2–30), latency budget (10s–5m), repeated call guard
 - **Approval** — timeout duration (30s–5m), auto-approve writes toggle
-- **Model profile** — switch between fast/smarter/alt
+- **Compaction** — summarizer model, Tier-2 trigger fraction, Tier-0 trigger fraction, absolute Tier-0 input ceiling
+- **Long task** — elevated tool/latency caps, evidence floor, inline crawl batches
+- **Personality** — `default`, `mixed`, `classic`
+- **Model profile** — switch model in `/settings` model tab
+
+## Hardcoded Knobs
+
+These values are intentionally hardcoded and where to change them:
+
+- Default protected channel IDs: `src/app/SettingsService.ts` (`DEFAULT_PROTECTED_CHANNEL_IDS`)
+- Runtime default values (tool limits, budgets, retrieval defaults, approval timeout): `src/app/SettingsService.ts` (`DEFAULT_SETTINGS.runtime`)
+- Context prune threshold ratio (`0.80`): `src/runtime/Runtime.ts` (`CONTEXT_HEADROOM_RATIO`)
+- OpenRouter base URL: `src/app/AppConfig.ts` (`openRouterBaseUrl`)
+- Model catalog, labels, context and pricing metadata: `resources/models/model-profiles.json`
 
 ## Scripts
 
@@ -145,8 +156,10 @@ All runtime tuning is done through `/settings` or `storage/settings.json`:
 | `npm start` | Run the bot |
 | `npm run dev` | Development mode with auto-reload |
 | `npm run check` | Typecheck + run all deterministic tests |
+| `npm run typecheck` | TypeScript type check only |
 | `npm run test` | Fast deterministic test suite |
 | `npm run test:live` | Real-model tests (requires API key) |
+| `npm run test:all` | Deterministic + live tests combined |
 | `npm run clean` | Reset all storage to defaults |
 
 ## Documentation

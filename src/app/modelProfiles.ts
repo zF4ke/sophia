@@ -6,6 +6,7 @@ const FALLBACK_MODEL_PROFILES: ModelProfileConfig = {
     defaultProfile: "free-elephant",
     profiles: {
         gemini31flashlite: {
+            label: "Gemini 3.1 Flash Lite",
             chatModel: "google/gemini-3.1-flash-lite-preview",
             embeddingModel: "openai/text-embedding-3-small",
             temperature: 0.5,
@@ -14,6 +15,7 @@ const FALLBACK_MODEL_PROFILES: ModelProfileConfig = {
             parallelToolCalls: false,
         },
         minimax27: {
+            label: "MiniMax M2.7",
             chatModel: "minimax/minimax-m2.7",
             embeddingModel: "openai/text-embedding-3-small",
             temperature: 0.5,
@@ -22,6 +24,7 @@ const FALLBACK_MODEL_PROFILES: ModelProfileConfig = {
             parallelToolCalls: false,
         },
         deepseek32: {
+            label: "DeepSeek V3.2",
             chatModel: "deepseek/deepseek-v3.2",
             embeddingModel: "openai/text-embedding-3-small",
             temperature: 0.5,
@@ -30,6 +33,7 @@ const FALLBACK_MODEL_PROFILES: ModelProfileConfig = {
             parallelToolCalls: false,
         },
         "free-nvidia": {
+            label: "Nemotron 3 Nano (free)",
             chatModel: "nvidia/nemotron-3-nano-30b-a3b:free",
             embeddingModel: "openai/text-embedding-3-small",
             temperature: 0.5,
@@ -38,6 +42,7 @@ const FALLBACK_MODEL_PROFILES: ModelProfileConfig = {
             parallelToolCalls: false,
         },
         "free-elephant": {
+            label: "Elephant Alpha (free)",
             chatModel: "openrouter/elephant-alpha",
             embeddingModel: "openai/text-embedding-3-small",
             temperature: 0.5,
@@ -46,21 +51,71 @@ const FALLBACK_MODEL_PROFILES: ModelProfileConfig = {
             parallelToolCalls: false,
         },
         grok41: {
+            label: "Grok 4.1 Fast",
             chatModel: "x-ai/grok-4.1-fast",
             embeddingModel: "openai/text-embedding-3-small",
             temperature: 0.5,
             maxOutputTokens: 1200,
             contextWindow: 2_000_000,
             parallelToolCalls: false,
+            pricing: {
+                inputPerMillionUsd: 0.2,
+                outputPerMillionUsd: 0.5,
+                source: "openrouter",
+                updatedAt: "2026-04-16",
+            },
+        },
+        gpt5nano: {
+            label: "GPT-5 Nano",
+            chatModel: "openai/gpt-5-nano",
+            embeddingModel: "openai/text-embedding-3-small",
+            temperature: 0.5,
+            maxOutputTokens: 1200,
+            contextWindow: 400_000,
+            parallelToolCalls: false,
+            pricing: {
+                inputPerMillionUsd: 0.05,
+                outputPerMillionUsd: 0.4,
+                cacheReadPerMillionUsd: 0.01,
+                source: "openrouter",
+                updatedAt: "2026-04-16",
+            },
+        },
+        gpt41nano: {
+            label: "GPT-4.1 Nano",
+            chatModel: "openai/gpt-4.1-nano",
+            embeddingModel: "openai/text-embedding-3-small",
+            temperature: 0.5,
+            maxOutputTokens: 1200,
+            contextWindow: 1_000_000,
+            parallelToolCalls: false,
+            pricing: {
+                inputPerMillionUsd: 0.1,
+                outputPerMillionUsd: 0.4,
+                cacheReadPerMillionUsd: 0.025,
+                webSearchPerCallUsd: 0.01,
+                source: "openrouter",
+                updatedAt: "2026-04-16",
+            },
+        },
+        gpt54nano: {
+            label: "GPT-5.4 Nano",
+            chatModel: "openai/gpt-5.4-nano",
+            embeddingModel: "openai/text-embedding-3-small",
+            temperature: 0.5,
+            maxOutputTokens: 1200,
+            contextWindow: 400_000,
+            parallelToolCalls: false,
+            pricing: {
+                inputPerMillionUsd: 0.2,
+                outputPerMillionUsd: 1.25,
+                cacheReadPerMillionUsd: 0.02,
+                webSearchPerCallUsd: 0.01,
+                source: "openrouter",
+                updatedAt: "2026-04-16",
+            },
         },
     },
-};
-
-const LEGACY_MODEL_PROFILE_ALIASES: Record<string, string> = {
-    fast: "gemini31flashlite",
-    smarter: "minimax27",
-    alt: "deepseek32",
-    cheap: "free-elephant",
 };
 
 function isValidModelProfileConfig(value: unknown): value is ModelProfileConfig {
@@ -96,11 +151,6 @@ export function resolveModelProfileName(
 
     if (normalizedName && config.profiles[normalizedName]) {
         return normalizedName;
-    }
-
-    const legacyAlias = normalizedName ? LEGACY_MODEL_PROFILE_ALIASES[normalizedName] : undefined;
-    if (legacyAlias && config.profiles[legacyAlias]) {
-        return legacyAlias;
     }
 
     return config.defaultProfile;

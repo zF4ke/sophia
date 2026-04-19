@@ -4,6 +4,7 @@ import {
     SlashCommandBuilder,
 } from "discord.js";
 import { DebugService } from "@/discord/debug/DebugService";
+import { ProgressStatusService } from "@/discord/responding/ProgressStatus";
 import { ResponseActivityService } from "@/discord/responding/ResponseActivityIndicator";
 import { UIService } from "@/discord/ui/UIService";
 import { EMOJIS } from "@/discord/constants";
@@ -33,6 +34,7 @@ export = {
     async execute(interaction: ChatInputCommandInteraction, _client: BotClient) {
         let debugSession = null;
         let activityIndicator = null;
+        let progressStatus = null;
 
         try {
             if (!SecurityService.isAdmin(interaction.user.id)) {
@@ -51,11 +53,17 @@ export = {
             activityIndicator = await ResponseActivityService.startForInteraction(interaction);
             await activityIndicator.startThinking();
             debugSession = await DebugService.startForInteraction(interaction, message);
+            progressStatus = interaction.channel
+                ? ProgressStatusService.startForChannel(interaction.channel)
+                : null;
 
             const input = await ConversationAdapter.fromInteraction({
                 interaction,
                 question: message,
                 debugSession,
+                progressNotifier: progressStatus
+                    ? (summary: string) => progressStatus!.notify(summary)
+                    : null,
             });
             const result = await Runtime.answer(input);
             await activityIndicator.startTyping();
@@ -81,6 +89,7 @@ export = {
                 )
             );
         } finally {
+            await progressStatus?.finalize();
             await activityIndicator?.stop();
         }
     },

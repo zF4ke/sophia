@@ -13,6 +13,13 @@ export interface DebugTimelineEntry {
     timestamp: number;
 }
 
+export interface NoteSnapshotEntry {
+    seq: number;
+    label: string | null;
+    bodyPreview: string;
+    wordCount: number;
+}
+
 export interface DebugTraceState {
     questionPreview: string;
     status: "running" | "completed" | "failed";
@@ -34,6 +41,8 @@ export interface DebugTraceState {
     cumulativePromptTokens: number;
     cumulativeCompletionTokens: number;
     contextUsagePercent: number | null;
+    notesSnapshot: NoteSnapshotEntry[];
+    planPreview: string | null;
 }
 
 export type DebugSessionReporter = RuntimeDebugSession;

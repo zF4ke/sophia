@@ -36,6 +36,20 @@ async function deleteSqliteFamily(filePath: string): Promise<void> {
     }
 }
 
+function getPathSize(filePath: string): number {
+    if (!fs.existsSync(filePath)) {
+        return 0;
+    }
+    return fs.statSync(filePath).size;
+}
+
+function getSqliteFamilySize(filePath: string): number {
+    return ["", "-wal", "-shm"].reduce(
+        (total, suffix) => total + getPathSize(`${filePath}${suffix}`),
+        0,
+    );
+}
+
 function clearDirectoryContents(dirPath: string): void {
     if (!fs.existsSync(dirPath)) {
         return;
@@ -62,6 +76,8 @@ export class RuntimeStorageService {
         return {
             operationalDbPath: config.runtime.operationalDbPath,
             checkpointDbPath: config.runtime.checkpointDbPath,
+            operationalDbSizeBytes: getSqliteFamilySize(config.runtime.operationalDbPath),
+            checkpointDbSizeBytes: getSqliteFamilySize(config.runtime.checkpointDbPath),
             operationalSchemaVersion: OPERATIONAL_SCHEMA_VERSION,
             runtimeDir,
             logsDir: path.join(AppPaths.storageRoot, "logs"),
@@ -84,6 +100,5 @@ export class RuntimeStorageService {
         FileSystemService.ensureDirectoryExists(path.join(AppPaths.storageRoot, "logs"));
     }
 }
-
 
 

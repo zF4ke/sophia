@@ -32,10 +32,10 @@ Current runtime capabilities and workflows:
 
 ### Destructive (approval + confirmation required)
 - `clear_messages`
+- `delete_messages`
 - `delete_channel`
 
 ### Workflows
-- `/find` specialized workflow
 
 ## Single-Tool Stories
 
@@ -147,15 +147,19 @@ Current runtime capabilities and workflows:
 - After the admin clicks "Aceitar", a confirmation dialog appears: "Esta ação é destrutiva. Tens a certeza?"
 - The admin must click "Confirmar" to execute. This cannot be auto-approved.
 
+### `delete_messages`
+
+- As an admin, I can ask Sophia to delete one or more specific messages by ID from a channel (e.g. by replying/quoting a message, or by pointing at content keywords or an author).
+- Sophia should first locate the target message IDs with `search_messages` or `retrieve_messages`, never fabricate IDs.
+- Same destructive approval + confirmation flow as `clear_messages`.
+- Each message is deleted individually, so it works for messages of any age (not subject to the 14-day bulk-delete limit).
+- If some IDs fail to delete (already gone, permission denied, etc.), Sophia reports how many succeeded and which failed.
+
 ### `delete_channel`
 
 - As an admin, I can ask Sophia to permanently delete a channel.
 - Same destructive approval + confirmation flow as `clear_messages`.
 
-### `/find`
-
-- As an operator, I can run `/find` directly with a topic plus optional author/channel/category targeting.
-- `/find` should reuse the same shared member/channel/category resolution primitives as the main runtime.
 
 ## Composition Stories
 
@@ -206,9 +210,6 @@ Current runtime capabilities and workflows:
 - User follows up with `continue` or `de novo`.
 - Runtime should continue the same scoped read instead of restarting discovery or rereading duplicate messages.
 
-### `/find` with scoped search
-
-- Operator runs `/find topic:\"deployment anxiety\" author:\"One Person\" target:\"#reflexoes\"`
 - Workflow resolves author and target scope first.
 - Retrieval runs with exact `authorId` and exact resolved `channelIds`.
 - Results come back from the same cache-first/live-refresh retrieval stack used by the main runtime.
@@ -267,3 +268,5 @@ Current runtime capabilities and workflows:
 - Destructive tool calls always require admin approval plus confirmation, regardless of settings.
 - Multiple destructive calls in the same response should be batched into one approval card grouped by Discord category.
 - After an approved action, Sophia should confirm what was done using the concrete identifiers from tool output (channel mentions, role names, etc.).
+- If the model tries to call `finish` with a promise phrase ("vou verificar", "let me check") but no productive tool actually ran, the runtime rejects the finish once and tells the model to call tools instead (stall guard).
+- For complex multi-step operations that exceed default budgets, the model should call `start_long_task` early in the turn to raise the tool-call and latency limits to the operator-configured values from `/settings` → `Long task`.

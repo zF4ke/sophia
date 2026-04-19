@@ -64,6 +64,10 @@ export function asGuildStructureEntries(
                     ? null
                     : String(item.channelTopic),
             type: String(item.type || "unknown"),
+            position:
+                item.position != null
+                    ? Number(item.position)
+                    : null,
             parentCategoryId:
                 item.parentCategoryId == null
                     ? null
@@ -148,7 +152,7 @@ export function buildStructureEvidenceItems(
             tool: T.list_guild_structure,
             summary,
             content: isCategoryStructureEntry(entry)
-                ? `Category ${entry.name}. Viewable=${entry.isViewable ? "yes" : "no"}.`
+                ? `Category ${entry.name}${entry.position != null ? ` (position ${entry.position})` : ""}. Viewable=${entry.isViewable ? "yes" : "no"}.`
                 : `Channel #${entry.name}${entry.parentCategoryName ? ` in ${entry.parentCategoryName}` : ""}.${formatTopic(entry.channelTopic)} Readable=${entry.isReadable ? "yes" : "no"}. Indexed=${entry.isIndexed ? "yes" : "no"}.`,
             evidenceRole: "discovery_only" as const,
             strength: "metadata" as const,
@@ -183,7 +187,7 @@ export function buildStructureEvidenceItems(
             evidence.push({
                 tool: T.list_guild_structure,
                 summary,
-                content: `Category ${entry.name}. Visible channels under ${entry.name}: ${childPhrase}. Readable children: ${readableChildren.length}. Indexed children: ${indexedChildren.length}.`,
+                content: `Category ${entry.name}${entry.position != null ? ` (position ${entry.position})` : ""}. Visible channels under ${entry.name}: ${childPhrase}. Readable children: ${readableChildren.length}. Indexed children: ${indexedChildren.length}.`,
                 evidenceRole: "discovery_only" as const,
                 strength: "metadata",
                 sourceOrigin: "none",

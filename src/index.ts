@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("node:process").loadEnvFile();
 
 import { bootstrapRuntime } from "@/app/bootstrapRuntime";
 import { createClient } from "@/app/createClient";

@@ -30,6 +30,8 @@ The model sees these capabilities as native function-calling tools:
 
 ### Read & Discovery Tools
 - `retrieve_messages` — cache-first scoped history search with semantic lane, pagination, time bounds, author filters
+- `search_messages` — Discord-native indexed search with totals/offset paging for fast discovery
+- `random_channel_message` — sample one or more random already-ingested messages from a channel
 - `resolve_member_identity` — resolve members by ID, username, nickname, display name (batch)
 - `list_guild_structure` — list readable channels/categories + cached-only remembered entries
 - `resolve_channel_targets` — resolve channel/category names, IDs, mentions; expands categories to child channels
@@ -49,15 +51,24 @@ The model sees these capabilities as native function-calling tools:
 - `create_category` — create a new category
 - `create_thread` — create a thread in a channel
 - `move_channel` — move a channel to a different category/position
+- `move_category` — move a category to a different position
 - `manage_member_roles` — add/remove roles from a member
 - `send_message` — send a message to a channel or thread
+- `edit_message` — edit an existing bot-authored message
+- `create_role` — create a role
+- `edit_channel` — update channel metadata
+- `edit_role` — update role metadata
 
 ### Destructive Tools (require approval + confirmation)
 - `clear_messages` — delete messages from a channel
+- `delete_messages` — bulk delete selected messages
 - `delete_channel` — permanently delete a channel
+- `delete_role` — permanently delete a role
 
 ### Control
 - `finish` — delivers the final answer and exits the loop
+- `start_long_task` — declares the current task needs an elevated tool-call/latency budget (runtime-intercepted, never dispatched to capability layer)
+- `note_add`, `note_list`, `note_read`, `note_update`, `note_clear`, `plan_update` — per-request notebook and plan tools used for long multi-step work
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`. Capability handlers are registered in `src/capabilities/CapabilityRegistry.ts`.
 
@@ -96,10 +107,18 @@ For strict scoped reads (author/time bounded), retrieval performs guarded empty-
 ## Runtime Guardrails
 
 Hard limits:
-- max tool calls per turn (configurable, default 6, range 2–30)
+- max tool calls per turn (configurable, default 25; raiseable to the configured long-task cap via `start_long_task`)
 - repeated-call guard (same tool + same arguments blocked)
-- latency budget (configurable, default 20s, range 10s–5m)
-- context overflow pruning (old tool outputs are pruned when approaching the context window)
+- latency budget (configurable, default 120s; raiseable to the configured long-task cap via `start_long_task`)
+- context overflow pruning (Tier-1 truncation + Tier-0/Tier-2 compaction when configured thresholds are hit)
+
+### Stall Guard
+
+When the model calls `finish`, the runtime checks for empty-promise stalling: if the answer contains a promise phrase (PT/EN) but no productive tool ran and no productive evidence was produced in the turn, the finish is rejected once and the model is told to call tools instead. At most 1 correction per turn.
+
+### Long-Task Budget
+
+The `start_long_task` tool allows the model to self-declare that a task needs more budget. The runtime intercepts the call (it is never dispatched to the capability layer) and raises `maxToolCalls`, `maxLatencyBudgetMs`, and the effective evidence floor to the values configured in `/settings` → `Long task`. Idempotent per turn.
 
 ## Context Retention
 

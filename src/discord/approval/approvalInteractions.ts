@@ -42,6 +42,17 @@ export const APPROVAL_MODAL_PREFIX = "approval:modal:";
 export const BATCH_CONFIRM_APPROVE_PREFIX = "batch:confirm_approve:";
 export const BATCH_CONFIRM_CANCEL_PREFIX = "batch:confirm_cancel:";
 
+function buildBatchDecisions(
+    request: BatchApprovalRequest,
+    decision: BatchItemDecision
+): Record<string, BatchItemDecision> {
+    const out: Record<string, BatchItemDecision> = {};
+    for (const item of request.items) {
+        out[item.toolCallId] = decision;
+    }
+    return out;
+}
+
 function isUnknownInteractionError(error: unknown): boolean {
     return Boolean(
         error &&
@@ -394,10 +405,7 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
 
     // ── Batch confirm approve (after destructive confirmation) ──
     if (isConfirmApprove) {
-        const allDecisions: Record<string, BatchItemDecision> = {};
-        for (const item of pending.request.items) {
-            allDecisions[item.toolCallId] = "approved";
-        }
+        const allDecisions = buildBatchDecisions(pending.request, "approved");
         resolvePendingBatchApproval(batchId, {
             decisions: allDecisions,
             decidedBy: interaction.user.id,
@@ -415,10 +423,7 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
 
     // ── Batch confirm cancel (back out of destructive confirmation) ──
     if (isConfirmCancel) {
-        const allDecisions: Record<string, BatchItemDecision> = {};
-        for (const item of pending.request.items) {
-            allDecisions[item.toolCallId] = "denied";
-        }
+        const allDecisions = buildBatchDecisions(pending.request, "denied");
         resolvePendingBatchApproval(batchId, {
             decisions: allDecisions,
             decidedBy: interaction.user.id,
@@ -459,8 +464,6 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
         return true;
     }
 
-    const allDecisions: Record<string, BatchItemDecision> = {};
-
     if (isApproveAll) {
         // Show destructive confirmation before batch-approving
         await showBatchDestructiveConfirm(interaction, pending.request, batchId);
@@ -468,9 +471,7 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
     }
 
     if (isDenyAll) {
-        for (const item of pending.request.items) {
-            allDecisions[item.toolCallId] = "denied";
-        }
+        const allDecisions = buildBatchDecisions(pending.request, "denied");
         resolvePendingBatchApproval(batchId, {
             decisions: allDecisions,
             decidedBy: interaction.user.id,
@@ -487,9 +488,7 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
     }
 
     if (isStop) {
-        for (const item of pending.request.items) {
-            allDecisions[item.toolCallId] = "denied";
-        }
+        const allDecisions = buildBatchDecisions(pending.request, "denied");
         resolvePendingBatchApproval(batchId, {
             decisions: allDecisions,
             haltExecution: true,
@@ -570,10 +569,7 @@ async function handleBatchModalSubmit(interaction: ModalSubmitInteraction): Prom
     }
 
     const correctionText = interaction.fields.getTextInputValue("correction_text").trim();
-    const allDenied: Record<string, BatchItemDecision> = {};
-    for (const item of pending.request.items) {
-        allDenied[item.toolCallId] = "denied";
-    }
+    const allDenied = buildBatchDecisions(pending.request, "denied");
 
     resolvePendingBatchApproval(batchId, {
         decisions: allDenied,

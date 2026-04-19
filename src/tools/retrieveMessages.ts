@@ -3,6 +3,12 @@ import { T } from "@/shared/discordTools";
 import { getAppConfig } from "@/app/AppConfig";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { DiscordBackfillCrawler } from "@/discord/live/DiscordBackfillCrawler";
+import {
+    fetchAndIngestBatch,
+    resumeBeforeId,
+} from "@/discord/live/DiscordBackfillService";
+import { ChannelType } from "discord.js";
 import type {
     ActiveRetrievalSession,
     EvidenceItem,
@@ -61,6 +67,17 @@ export type RetrievalPayload = {
     afterTimestamp?: number | null;
     excludedMessageIds?: string[];
     channelTopics?: Record<string, string>;
+    partialIndex?: Record<
+        string,
+        {
+            reason: string;
+            exhausted: boolean;
+            oldestIndexedTimestamp: number | null;
+            oldestIndexedMessageId: string | null;
+            backgroundCrawl: { queued: boolean };
+        }
+    >;
+    partialIndexHints?: string[];
     retrievalDiagnostics?: {
         scopedEmptyRetryAttempted?: boolean;
         retryStrategy?: string;
@@ -239,6 +256,17 @@ const parameters = {
             description:
                 "Retrieval mode. 'history' = chronological order (best for reading through a channel like a file). 'semantic' = relevance-ranked search. 'mixed' = both lanes. Default: mixed.",
         },
+        order: {
+            type: "string",
+            enum: ["newest", "oldest"],
+            description:
+                "Chronological direction for history mode. 'newest' (default) returns most recent first. 'oldest' returns messages from the start of the channel forward — useful for answering 'what did people say in the beginning?'. When the channel has not been fully indexed yet, results include a `partialIndex` block and a background crawl is triggered so you can keep calling retrieve_messages to progress through older history.",
+        },
+        fromDate: {
+            type: "string",
+            description:
+                "ISO8601 date/timestamp or numeric Unix ms. Anchor for chronological reads. With order='oldest', returns messages at or after this date. With order='newest', returns messages at or before this date. Equivalent to setting afterTimestamp (oldest) or beforeTimestamp (newest) but accepts human-readable dates.",
+        },
         limit: {
             type: "number",
             description:
@@ -320,6 +348,8 @@ export const retrieveMessagesTool: ToolDefinition = {
                 )
                 .optional(),
             mode: retrievalModeSchema.optional(),
+            order: z.enum(["newest", "oldest"]).optional(),
+            fromDate: z.union([z.string(), z.number()]).optional(),
             cursor: z
                 .object({
                     history: z
@@ -388,6 +418,19 @@ export const retrieveMessagesTool: ToolDefinition = {
             afterTimestamp: z.number().nullable(),
             excludedMessageIds: z.array(z.string()),
             channelTopics: z.record(z.string(), z.string()).optional(),
+            partialIndex: z
+                .record(
+                    z.string(),
+                    z.object({
+                        reason: z.string(),
+                        exhausted: z.boolean(),
+                        oldestIndexedTimestamp: z.number().nullable(),
+                        oldestIndexedMessageId: z.string().nullable(),
+                        backgroundCrawl: z.object({ queued: z.boolean() }),
+                    }),
+                )
+                .optional(),
+            partialIndexHints: z.array(z.string()).optional(),
         }),
         sideEffectLevel: "none",
         authRequirements: [],
@@ -485,6 +528,45 @@ export const retrieveMessagesTool: ToolDefinition = {
                 args.limit ||
                     getAppConfig().runtime.retrievalHistoryLimit,
             );
+
+            // ── Parse order + fromDate ────────────────────────────────
+            const order: "newest" | "oldest" =
+                args.order === "oldest" ? "oldest" : "newest";
+            let fromDateMs: number | null = null;
+            if (args.fromDate != null) {
+                if (typeof args.fromDate === "number") {
+                    fromDateMs = Number.isFinite(args.fromDate) ? args.fromDate : null;
+                } else if (typeof args.fromDate === "string" && args.fromDate.trim()) {
+                    const asNumber = Number(args.fromDate);
+                    if (Number.isFinite(asNumber) && asNumber > 10_000_000_000) {
+                        fromDateMs = asNumber;
+                    } else {
+                        const parsed = Date.parse(args.fromDate);
+                        if (Number.isFinite(parsed)) {
+                            fromDateMs = parsed;
+                        }
+                    }
+                }
+            }
+
+            // Translate order+fromDate into before/afterTimestamp.
+            // Explicit beforeTimestamp/afterTimestamp take precedence.
+            let beforeTsArg =
+                typeof args.beforeTimestamp === "number"
+                    ? args.beforeTimestamp
+                    : undefined;
+            let afterTsArg =
+                typeof args.afterTimestamp === "number"
+                    ? args.afterTimestamp
+                    : undefined;
+            if (fromDateMs != null) {
+                if (order === "oldest" && afterTsArg == null) {
+                    afterTsArg = fromDateMs;
+                } else if (order === "newest" && beforeTsArg == null) {
+                    beforeTsArg = fromDateMs;
+                }
+            }
+
             const result = await UnifiedMessageRetrieval.retrieve({
                 guild: context.guild,
                 question: query,
@@ -492,14 +574,9 @@ export const retrieveMessagesTool: ToolDefinition = {
                 channelIds,
                 authorId,
                 mode,
-                beforeTimestamp:
-                    typeof args.beforeTimestamp === "number"
-                        ? args.beforeTimestamp
-                        : undefined,
-                afterTimestamp:
-                    typeof args.afterTimestamp === "number"
-                        ? args.afterTimestamp
-                        : undefined,
+                order,
+                beforeTimestamp: beforeTsArg,
+                afterTimestamp: afterTsArg,
                 aroundMessageId:
                     typeof args.aroundMessageId === "string" &&
                     args.aroundMessageId.trim()
@@ -510,6 +587,116 @@ export const retrieveMessagesTool: ToolDefinition = {
                 limit: effectiveLimit,
                 onProgress: context.onProgress,
             });
+
+            // ── Partial-index detection + background crawl escalation ─
+            const partialIndex: Record<
+                string,
+                {
+                    reason: string;
+                    exhausted: boolean;
+                    oldestIndexedTimestamp: number | null;
+                    oldestIndexedMessageId: string | null;
+                    backgroundCrawl: { queued: boolean };
+                }
+            > = {};
+            const partialHints: string[] = [];
+            try {
+            const targetChannelIdsForPartial = Array.isArray(result.targetChannelIds)
+                ? result.targetChannelIds
+                : [];
+
+            const longTaskCfg = getAppConfig().runtime.longTask;
+            const inlineBatchBudget = Math.max(0, longTaskCfg.retrievalInlineCrawlBatches ?? 0);
+
+            for (const channelId of targetChannelIdsForPartial) {
+                const states = await DiscordMemoryService.getChannelCrawlStateAsync(channelId);
+                const state = states[0];
+                if (state?.exhausted) continue;
+
+                const channelHistory = (result.historyMessages || []).filter(
+                    (row) => row.channelId === channelId
+                );
+                const oldestIndexedMessageId = state?.oldestFetchedMessageId ?? null;
+                const returnedSmallerThanLimit = channelHistory.length < effectiveLimit;
+                const channelNotFullyIndexed = !state || state.exhausted === false;
+
+                // True oldest indexed boundary for the channel (from crawl
+                // state snowflake, not from the current page).
+                const oldestIndexedTimestamp = oldestIndexedMessageId
+                    ? Number(BigInt(oldestIndexedMessageId) >> BigInt(22)) + 1420070400000
+                    : null;
+
+                // Escalation triggers:
+                // 1. Page incomplete + channel not fully indexed (any direction).
+                // 2. oldest-first with afterTimestamp older than the indexed
+                //    boundary — even a full page can silently miss earlier history.
+                const anchorOlderThanBoundary =
+                    order === "oldest" &&
+                    channelNotFullyIndexed &&
+                    afterTsArg != null &&
+                    oldestIndexedTimestamp != null &&
+                    afterTsArg < oldestIndexedTimestamp;
+
+                const shouldEscalate =
+                    (returnedSmallerThanLimit && channelNotFullyIndexed) ||
+                    anchorOlderThanBoundary;
+
+                if (!shouldEscalate) continue;
+
+                // Enqueue background crawl so follow-up calls see more history.
+                await DiscordBackfillCrawler.enqueue(channelId, {
+                    reason: "retrieve_messages partial-index escalation",
+                    priority: 2,
+                    guildId: context.guild?.id ?? null,
+                }).catch(() => {});
+
+                // Inline crawl a few batches synchronously so this same call can
+                // return older messages.
+                if (inlineBatchBudget > 0 && context.guild) {
+                    try {
+                        const live = context.guild.channels.cache.get(channelId);
+                        if (
+                            live &&
+                            (live.type === ChannelType.GuildText ||
+                                live.type === ChannelType.PublicThread ||
+                                live.type === ChannelType.PrivateThread ||
+                                live.type === ChannelType.GuildAnnouncement)
+                        ) {
+                            let before = await resumeBeforeId(channelId);
+                            for (let i = 0; i < inlineBatchBudget; i += 1) {
+                                const batch = await fetchAndIngestBatch(
+                                    live as Parameters<typeof fetchAndIngestBatch>[0],
+                                    before,
+                                    100
+                                );
+                                before = batch.nextBeforeId;
+                                if (batch.reachedEnd && batch.ingested === 0) break;
+                            }
+                        }
+                    } catch {
+                        /* swallow — background crawl is already queued */
+                    }
+                }
+
+                partialIndex[channelId] = {
+                    reason: "older-history-not-yet-indexed",
+                    exhausted: false,
+                    oldestIndexedTimestamp,
+                    oldestIndexedMessageId,
+                    backgroundCrawl: { queued: true },
+                };
+
+                const channelName =
+                    channelHistory[0]?.channelName ??
+                    context.guild?.channels?.cache?.get(channelId)?.name ??
+                    channelId;
+                partialHints.push(
+                    `Older messages in #${channelName} are still being indexed; call retrieve_messages again (optionally with a slightly newer fromDate or without the oldest anchor) to continue — the background crawl is extending history.`
+                );
+            }
+            } catch {
+                // Never let partial-index escalation block retrieval results.
+            }
             const channelTopics: Record<string, string> = {};
             const targetChannelIds = Array.isArray(result.targetChannelIds) ? result.targetChannelIds : [];
 
@@ -522,7 +709,7 @@ export const retrieveMessagesTool: ToolDefinition = {
 
             for (const channelId of targetChannelIds) {
                 let topic: string | null = null;
-                const liveChannel = context.guild?.channels.cache.get(channelId);
+                const liveChannel = context.guild?.channels?.cache?.get(channelId);
                 if (liveChannel && "topic" in liveChannel) {
                     const liveTopic = (liveChannel as typeof liveChannel & { topic?: unknown }).topic;
                     if (typeof liveTopic === "string" && liveTopic.trim()) {
@@ -545,6 +732,9 @@ export const retrieveMessagesTool: ToolDefinition = {
             const outputData = {
                 ...result,
                 channelTopics,
+                ...(Object.keys(partialIndex).length
+                    ? { partialIndex, partialIndexHints: partialHints }
+                    : {}),
             } as unknown as RetrievalPayload &
                 Record<string, unknown>;
 
@@ -570,12 +760,16 @@ export const retrieveMessagesTool: ToolDefinition = {
                 ? `No messages found (live refresh attempted — channel may be empty or unindexed).${diagnosticsSuffix}`
                 : `No messages in cache yet — channel may not be indexed.${diagnosticsSuffix}`;
 
+            const partialSuffix = outputData.partialIndexHints?.length
+                ? ` Partial index: ${outputData.partialIndexHints.length} channel(s) still being crawled — call retrieve_messages again to progress.`
+                : "";
+
             return {
                 tool: T.retrieve_messages,
                 summary: Array.isArray(outputData.combinedResults) &&
                     outputData.combinedResults.length
-                    ? `${qualityLabel}; ${outputData.historyMessageCount} history and ${outputData.semanticMatchCount} semantic result(s) ${outputData.liveEscalated ? "after refreshing Discord history" : "from cached Discord history"}.${diagnosticsSuffix}`
-                    : emptyReason,
+                    ? `${qualityLabel}; ${outputData.historyMessageCount} history and ${outputData.semanticMatchCount} semantic result(s) ${outputData.liveEscalated ? "after refreshing Discord history" : "from cached Discord history"}.${diagnosticsSuffix}${partialSuffix}`
+                    : `${emptyReason}${partialSuffix}`,
                 data: outputData,
             };
         },

@@ -36,7 +36,7 @@ export async function handleDebugLogsInteraction(
     await SecurityService.initialize();
     if (!SecurityService.isAdmin(interaction.user.id)) {
         await interaction.reply({
-            content: "❌ You don't have permission to use this panel.",
+            content: "❌ Apenas administradores podem usar este painel.",
             flags: MessageFlags.Ephemeral as const,
         });
         return true;
@@ -45,7 +45,7 @@ export async function handleDebugLogsInteraction(
     const state = getDebugLogsPanelState(interaction.message.id);
     if (!state) {
         await interaction.reply({
-            content: "❌ This debug logs panel expired. Run /debug logs again.",
+            content: "❌ Este painel de logs expirou. Executa /debug logs novamente.",
             flags: MessageFlags.Ephemeral as const,
         });
         return true;

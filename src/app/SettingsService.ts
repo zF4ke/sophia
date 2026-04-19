@@ -21,8 +21,22 @@ export interface BotSettings {
         retrievalContextWindow: number;
         approvalTimeoutMs: number;
         autoApproveWrites: boolean;
+        maxNotesPerRequest: number;
+        noteExpiryRequests: number;
+        longTask: {
+            maxToolCalls: number;
+            maxLatencyBudgetMs: number;
+            evidenceSliceFloor: number;
+            retrievalInlineCrawlBatches: number;
+        };
     };
-    personality: "default" | "classic";
+    compaction: {
+        summarizerModel: string;
+        triggerFraction: number;
+        inputTriggerFraction: number;
+        inputMaxTokens: number;
+    };
+    personality: "default" | "mixed" | "classic";
     protectedChannelIds: string[];
     debug: boolean;
 }
@@ -89,10 +103,24 @@ const DEFAULT_SETTINGS: BotSettings = {
         maxToolRunsContext: 12,
         maxEvidenceSlice: 32,
         escalationFetchLimit: 600,
-        retrievalHistoryLimit: 250,
+        retrievalHistoryLimit: 1000,
         retrievalContextWindow: 15,
         approvalTimeoutMs: 60_000,
         autoApproveWrites: false,
+        maxNotesPerRequest: 200,
+        noteExpiryRequests: 5,
+        longTask: {
+            maxToolCalls: 200,
+            maxLatencyBudgetMs: 600_000,
+            evidenceSliceFloor: 128,
+            retrievalInlineCrawlBatches: 3,
+        },
+    },
+    compaction: {
+        summarizerModel: "gpt5nano",
+        triggerFraction: 0.85,
+        inputTriggerFraction: 0.4,
+        inputMaxTokens: 12000,
     },
     personality: "default",
     protectedChannelIds: DEFAULT_PROTECTED_CHANNEL_IDS,
@@ -104,11 +132,24 @@ let cached: BotSettings | null = null;
 function deepMerge(defaults: BotSettings, overrides: Partial<BotSettings>): BotSettings {
     const result = { ...defaults };
     if (overrides.modelProfile !== undefined) result.modelProfile = overrides.modelProfile;
-    if (overrides.personality !== undefined) result.personality = overrides.personality;
+    if (overrides.personality !== undefined) {
+        const allowed: BotSettings["personality"][] = ["default", "mixed", "classic"];
+        result.personality = allowed.includes(overrides.personality)
+            ? overrides.personality
+            : defaults.personality;
+    }
     if (overrides.protectedChannelIds !== undefined) result.protectedChannelIds = overrides.protectedChannelIds;
     if (overrides.debug !== undefined) result.debug = overrides.debug;
     if (overrides.runtime) {
-        result.runtime = { ...defaults.runtime, ...overrides.runtime };
+        const mergedRuntime = { ...defaults.runtime, ...overrides.runtime };
+        mergedRuntime.longTask = {
+            ...defaults.runtime.longTask,
+            ...((overrides.runtime as Partial<BotSettings["runtime"]>).longTask ?? {}),
+        };
+        result.runtime = mergedRuntime;
+    }
+    if (overrides.compaction) {
+        result.compaction = { ...defaults.compaction, ...overrides.compaction };
     }
     return result;
 }
@@ -119,7 +160,7 @@ export class SettingsService {
 
         if (!fs.existsSync(SETTINGS_PATH)) {
             this.save(DEFAULT_SETTINGS);
-            cached = { ...DEFAULT_SETTINGS, runtime: { ...DEFAULT_SETTINGS.runtime } };
+            cached = { ...DEFAULT_SETTINGS, runtime: { ...DEFAULT_SETTINGS.runtime, longTask: { ...DEFAULT_SETTINGS.runtime.longTask } }, compaction: { ...DEFAULT_SETTINGS.compaction } };
             return cached;
         }
 
@@ -127,16 +168,27 @@ export class SettingsService {
             const raw = fs.readFileSync(SETTINGS_PATH, "utf8");
             const parsed = JSON.parse(raw) as Partial<BotSettings>;
             const merged = deepMerge(DEFAULT_SETTINGS, parsed);
-            merged.modelProfile = resolveModelProfileName(merged.modelProfile, readModelProfiles());
+            const profileConfig = readModelProfiles();
+            merged.modelProfile = resolveModelProfileName(merged.modelProfile, profileConfig);
+
+            // Normalize compaction model: fall back to default if the saved value is invalid.
+            if (!profileConfig.profiles[merged.compaction.summarizerModel]) {
+                merged.compaction.summarizerModel = DEFAULT_SETTINGS.compaction.summarizerModel;
+            }
             cached = merged;
 
-            if (parsed.modelProfile !== merged.modelProfile) {
+            const needsSave =
+                parsed.modelProfile !== merged.modelProfile ||
+                (parsed.compaction as Partial<BotSettings["compaction"]> | undefined)?.summarizerModel !== merged.compaction.summarizerModel ||
+                JSON.stringify(parsed.runtime) !== JSON.stringify(merged.runtime) ||
+                JSON.stringify(parsed.compaction) !== JSON.stringify(merged.compaction);
+            if (needsSave) {
                 this.save(merged);
             }
 
             return cached;
         } catch {
-            cached = { ...DEFAULT_SETTINGS, runtime: { ...DEFAULT_SETTINGS.runtime } };
+            cached = { ...DEFAULT_SETTINGS, runtime: { ...DEFAULT_SETTINGS.runtime, longTask: { ...DEFAULT_SETTINGS.runtime.longTask } }, compaction: { ...DEFAULT_SETTINGS.compaction } };
             return cached;
         }
     }
@@ -160,7 +212,7 @@ export class SettingsService {
     }
 
     public static getDefaults(): BotSettings {
-        return { ...DEFAULT_SETTINGS, runtime: { ...DEFAULT_SETTINGS.runtime } };
+        return { ...DEFAULT_SETTINGS, runtime: { ...DEFAULT_SETTINGS.runtime, longTask: { ...DEFAULT_SETTINGS.runtime.longTask } }, compaction: { ...DEFAULT_SETTINGS.compaction } };
     }
 
     public static invalidateCache(): void {

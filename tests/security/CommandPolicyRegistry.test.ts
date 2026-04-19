@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CommandPolicyRegistry } from "@/security/CommandPolicyRegistry";
+import { ACCESS_POLICY_TARGETS } from "@/security/policyTargets";
 import { SecurityConfigStore } from "@/security/storage/SecurityConfigStore";
 
 describe("CommandPolicyRegistry", () => {
@@ -34,5 +35,18 @@ describe("CommandPolicyRegistry", () => {
             },
         });
         expect(saveSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("treats message triggers like other policy targets with private-by-default limits", () => {
+        const registry = new CommandPolicyRegistry();
+
+        expect(registry.getCommandConfig(ACCESS_POLICY_TARGETS.reply)).toEqual({
+            isPublic: false,
+            rateLimits: {
+                default: 5,
+                admin: 10,
+                moderator: 7,
+            },
+        });
     });
 });

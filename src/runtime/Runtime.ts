@@ -29,13 +29,65 @@ import type {
 } from "@/runtime/contracts";
 import { getToolStrategy } from "@/runtime/tools";
 import { type DiscordToolName, DISCORD_TOOL_NAMES, T } from "@/shared/discordTools";
-import { isMutatingTool, describeApproval } from "@/tools/registry";
+import type { DiscordToolEvidenceRole } from "@/shared/discordTools";
+import { isMutatingTool, describeApproval, getToolEffect } from "@/tools/registry";
+import { detectStallPromise, DoomLoopDetector, ProgressTracker } from "@/runtime/stallGuard";
+import { compactMessages, shouldCompact } from "@/runtime/compaction";
+import { compactInput, shouldCompactInput } from "@/runtime/inputCompaction";
+import { countTokens } from "@/shared/tokenizer";
 import type {
     DiscordToolResult,
     GroundedAnswerMode,
 } from "@/shared/appTypes";
 
 // ── Helpers: evidence extraction, identity formatting, retrieval session ──
+
+/** Known tool-argument field names that must be valid Discord snowflake IDs. */
+const SNOWFLAKE_FIELDS = new Set([
+    "channel_id", "author_id", "member_id", "message_id",
+    "role_id", "thread_id", "mentions", "before", "after",
+    "authorId", "aroundMessageId",
+]);
+
+/** Known tool-argument array fields whose elements are snowflake IDs. */
+const SNOWFLAKE_ARRAY_FIELDS = new Set([
+    "message_ids", "channelIds", "excludedMessageIds", "role_ids",
+]);
+
+/**
+ * Strip non-digit characters from snowflake ID fields in parsed tool arguments.
+ * Mitigates LLM digit-hallucination (e.g. "73c78c50c77c04c582" → "7378507704582").
+ * Only sanitizes values that look like corrupted snowflakes: mixed digit/non-digit
+ * strings whose digit-only result is at least 15 chars (minimum Discord snowflake length).
+ * Mutates `args` in place.
+ */
+function sanitizeSnowflakeArgs(args: ToolArguments): void {
+    for (const key of Object.keys(args)) {
+        const value = args[key];
+        if (SNOWFLAKE_FIELDS.has(key) && typeof value === "string") {
+            const cleaned = value.replace(/\D/g, "");
+            if (cleaned !== value && cleaned.length >= 15) {
+                args[key] = cleaned;
+            }
+        } else if (SNOWFLAKE_ARRAY_FIELDS.has(key) && Array.isArray(value)) {
+            for (let i = 0; i < value.length; i++) {
+                if (typeof value[i] === "string") {
+                    const cleaned = (value[i] as string).replace(/\D/g, "");
+                    if (cleaned !== value[i] && cleaned.length >= 15) {
+                        value[i] = cleaned;
+                    }
+                }
+            }
+        }
+    }
+}
+
+function looksLikeRawToolMarkup(text: string | null | undefined): boolean {
+    if (!text) return false;
+    return /<invoke\s+name="[^"]+"\s*>/i.test(text)
+        || /<[a-z0-9_-]+:tool_call>/i.test(text)
+        || /<\/[a-z0-9_-]+:tool_call>/i.test(text);
+}
 
 function argsSignature(tool: string, args: ToolArguments) {
     return `${tool}:${JSON.stringify(args)}`;
@@ -54,6 +106,39 @@ function extractEvidence(
     if (run.tool === "finish") return [];
     if (isMutatingTool(run.tool)) return [];
     return getToolStrategy(run.tool).extractEvidence(run);
+}
+
+function buildCorrectionNote(correction?: string): string {
+    return correction
+        ? ` Admin correction: "${correction}". Adjust your approach based on this feedback.`
+        : "";
+}
+
+function buildDeniedActionMessage(decidedBy: string, correction?: string): string {
+    const correctionNote = buildCorrectionNote(correction);
+    return `Action NOT executed. Denied by ${decidedBy}.${correctionNote} Do not tell the user this action was completed.`;
+}
+
+function buildStoppedActionMessage(decidedBy: string): string {
+    return `Execution stopped by ${decidedBy}.`;
+}
+
+function createBlockedToolRecord(
+    toolName: DiscordToolName,
+    parsedArgs: ToolArguments,
+    summary: string,
+    learned: string
+): ToolInvocationRecord {
+    return {
+        tool: toolName,
+        arguments: parsedArgs,
+        summary,
+        learned,
+        confidenceImproved: false,
+        output: { tool: toolName, summary, data: null, errorMessage: learned },
+        durationMs: 0,
+        blocked: true,
+    };
 }
 
 function isReusablePromptEvidence(item: EvidenceItem): boolean {
@@ -87,10 +172,10 @@ function summarizeRecentTurns(turns: ConversationTurnSummary[]): string {
     }
 
     return turns
-        .map(
-            (turn, index) =>
-                `${index + 1}. user=${turn.question} | sophia=${turn.answer}`
-        )
+        .map((turn, index) => {
+            const who = turn.requesterDisplayName?.trim() || "user";
+            return `${index + 1}. ${who}: ${turn.question} | sophia: ${turn.answer}`;
+        })
         .join("\n");
 }
 
@@ -101,6 +186,51 @@ function sanitizeAnswer(answer: string | null | undefined): string {
         "I don't have enough Discord evidence to answer that yet.",
     ]);
     return banned.has(normalized) ? "" : normalized;
+}
+
+function extractRequestedCorpusSize(question: string): number | null {
+    const normalized = question.toLowerCase();
+
+    const compactMatch = normalized.match(/\b(\d+(?:[.,]\d+)?)\s*k\b/);
+    if (compactMatch) {
+        const value = Number(compactMatch[1].replace(",", "."));
+        if (Number.isFinite(value) && value > 0) {
+            return Math.round(value * 1000);
+        }
+    }
+
+    const explicitMatch = normalized.match(/\b([\d][\d\s.,]*)\s*(?:mensagens|messages)\b/);
+    if (!explicitMatch) return null;
+
+    const digitsOnly = explicitMatch[1].replace(/\D/g, "");
+    if (!digitsOnly) return null;
+    const value = Number(digitsOnly);
+    return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function getRetrievedCorpusCount(record: ToolInvocationRecord): number {
+    if (record.tool !== T.retrieve_messages || !record.output?.data || typeof record.output.data !== "object") {
+        return 0;
+    }
+
+    const data = record.output.data as Record<string, unknown>;
+    const accumulated = Number(data.accumulatedUniqueCount || 0);
+    if (Number.isFinite(accumulated) && accumulated > 0) {
+        return accumulated;
+    }
+
+    const historyCount = Number(record.retrievalSummary?.historyMessageCount || 0);
+    return Number.isFinite(historyCount) && historyCount > 0 ? historyCount : 0;
+}
+
+function getLatestSuccessfulRetrieveRecord(toolHistory: ToolInvocationRecord[]): ToolInvocationRecord | null {
+    for (let i = toolHistory.length - 1; i >= 0; i -= 1) {
+        const record = toolHistory[i];
+        if (record.tool === T.retrieve_messages && !record.blocked) {
+            return record;
+        }
+    }
+    return null;
 }
 
 async function synthesizeAnswer(
@@ -227,6 +357,16 @@ export class Runtime {
         const evidence: EvidenceItem[] = [];
         let confidence: GroundedAnswerMode = "insufficient";
         let stopReason: StopReason | null = null;
+        let stallCorrectionsUsed = 0;
+        let longTaskGrantedThisTurn = false;
+        const evidenceRolesThisTurn = new Set<DiscordToolEvidenceRole>();
+        const doomLoopDetector = new DoomLoopDetector();
+        const progressTracker = new ProgressTracker();
+
+        // Long-task caps come from configurable settings (runtime.longTask.*).
+        const LONG_TASK_MAX_CALLS = config.runtime.longTask.maxToolCalls;
+        const LONG_TASK_MAX_MS = config.runtime.longTask.maxLatencyBudgetMs;
+        const LONG_TASK_EVIDENCE_FLOOR = config.runtime.longTask.evidenceSliceFloor;
 
         const trace = (label: string, detail: string) => {
             traceEvents.push({ label, detail, timestamp: Date.now() });
@@ -244,6 +384,18 @@ export class Runtime {
             });
 
             trace("ingest_turn", `trigger=${input.trigger}; conversation=${input.conversation.kind}; requester=${input.requesterDisplayName}`);
+
+            // ── 1b. Prune expired thread notes ──
+            const noteExpiry = settings.runtime.noteExpiryRequests;
+            if (noteExpiry > 0) {
+                const { removed } = await DiscordMemoryService.pruneExpiredThreadNotes({
+                    threadId,
+                    keepRequests: noteExpiry,
+                });
+                if (removed > 0) {
+                    trace("note_expiry", `Pruned ${removed} expired note(s) (keep=${noteExpiry}).`);
+                }
+            }
 
             // ── 2. Load memory (recent turns, channel context, prior evidence) ──
             const recentTurns = await DiscordMemoryService.getRecentRuntimeRunsAsync(
@@ -314,27 +466,83 @@ export class Runtime {
                 } catch {
                     personalityOverride = "";
                 }
+            } else if (personality === "mixed") {
+                try {
+                    personalityOverride = PromptRegistry.load("system/personality_mixed_override");
+                } catch {
+                    personalityOverride = "";
+                }
             }
 
-            const systemPrompt = PromptRegistry.render("runtime/agent_loop", {
-                guild_name: input.guild?.name || "DM",
-                guild_id: guildId || "none",
-                channel_name: channelId ? `<#${channelId}>` : "DM",
-                channel_id: channelId || "none",
-                requester_display_name: input.requesterDisplayName,
-                actor_id: actorId,
-                current_date: new Date().toISOString().slice(0, 10),
-                trigger: input.trigger,
-                recent_turns: summarizeRecentTurns(recentTurns),
-                channel_context: formatChannelContext(channelContext),
-                prior_evidence: priorEvidenceSummary,
-                tool_context: formatRecentToolRuns(recentToolRuns),
-                reply_context: input.replyContext
-                    ? `Replying to ${input.replyContext.authorDisplayName}: "${input.replyContext.content}"`
-                    : "Not a reply.",
-                max_tool_calls: String(constraints.maxToolCalls),
-                personality_override: personalityOverride,
+            const contextFields = {
+                recentTurns: summarizeRecentTurns(recentTurns),
+                channelContext: formatChannelContext(channelContext),
+                priorEvidence: priorEvidenceSummary,
+                toolContext: formatRecentToolRuns(recentToolRuns),
+            };
+
+            const renderSystemPrompt = (fields: typeof contextFields): string =>
+                PromptRegistry.render("runtime/agent_loop", {
+                    guild_name: input.guild?.name || "DM",
+                    guild_id: guildId || "none",
+                    channel_name: channelId ? `<#${channelId}>` : "DM",
+                    channel_id: channelId || "none",
+                    requester_display_name: input.requesterDisplayName,
+                    actor_id: actorId,
+                    current_date: new Date().toISOString().slice(0, 10),
+                    trigger: input.trigger,
+                    recent_turns: fields.recentTurns,
+                    channel_context: fields.channelContext,
+                    prior_evidence: fields.priorEvidence,
+                    tool_context: fields.toolContext,
+                    reply_context: input.replyContext
+                        ? `Replying to ${input.replyContext.authorDisplayName}: "${input.replyContext.content}"`
+                        : "Not a reply.",
+                    max_tool_calls: String(constraints.maxToolCalls),
+                    personality_override: personalityOverride,
+                });
+
+            let systemPrompt = renderSystemPrompt(contextFields);
+
+            // ── 3b. Tier-0 input compaction ──
+            // Measure the assembled prompt with a tokenizer. If it's past the
+            // input trigger fraction of the context window, summarise the bulky
+            // context fields (recent turns, channel context, prior evidence,
+            // tool context) into one narrative so tiny social replies don't
+            // carry 30+ evidence items into the model.
+            const preCompactionTokens = countTokens(systemPrompt) + countTokens(input.question);
+            const willCompact = shouldCompactInput(
+                preCompactionTokens,
+                config.modelProfile.contextWindow,
+            );
+            if (willCompact) {
+                await input.debugSession?.setToolRunning?.("compact_context", [
+                    `~${preCompactionTokens} tokens over threshold`,
+                ]);
+            }
+            const compactionOutcome = await compactInput({
+                assembledPrompt: systemPrompt,
+                question: input.question,
+                contextWindow: config.modelProfile.contextWindow,
+                fields: contextFields,
+                traceEvents,
             });
+            if (compactionOutcome.compacted && compactionOutcome.fields) {
+                systemPrompt = renderSystemPrompt(compactionOutcome.fields);
+                trace(
+                    "compaction_tier0_applied",
+                    `Input compacted ${compactionOutcome.promptTokensBefore} → ~${compactionOutcome.promptTokensAfter} tokens.`,
+                );
+                await input.debugSession?.setToolResult?.(
+                    "compact_context",
+                    `${compactionOutcome.promptTokensBefore} → ~${compactionOutcome.promptTokensAfter} tokens`,
+                );
+            } else if (willCompact) {
+                await input.debugSession?.setToolResult?.(
+                    "compact_context",
+                    "skipped (no compactable context or summariser unavailable)",
+                );
+            }
 
             // ── 4. Agent loop ──
             const messages: ToolChatMessage[] = [
@@ -349,6 +557,8 @@ export class Runtime {
             let totalToolCalls = 0;
             let cumulativePromptTokens = 0;
             let cumulativeCompletionTokens = 0;
+            let malformedToolCallCorrections = 0;
+            let lengthRetried = false;
 
             const getActiveElapsedMs = () =>
                 Math.max(0, Date.now() - startedAt - pausedLatencyMs);
@@ -364,6 +574,25 @@ export class Runtime {
                 }
 
                 await input.debugSession?.setPlanning(iteration + 1);
+
+                // ── Plan/notes header: inject transient system message so plan
+                //    survives compaction and is re-seen every iteration. ──
+                let planHeaderIndex: number | null = null;
+                try {
+                    const planBody = await DiscordMemoryService.getRequestPlan(requestId);
+                    if (planBody) {
+                        const notesCount = await DiscordMemoryService.countRequestNotes({
+                            requestId,
+                            kind: "note",
+                        });
+                        const header =
+                            `Current plan:\n${planBody}\n` +
+                            `Notes so far: ${notesCount} (call note_list to read them).`;
+                        messages.push({ role: "system", content: header });
+                        planHeaderIndex = messages.length - 1;
+                    }
+                } catch { /* non-fatal */ }
+
                 const result = await ModelGateway.generateWithTools(messages, {
                     tools: TOOL_DEFINITIONS,
                     traceContext: {
@@ -373,10 +602,23 @@ export class Runtime {
                     },
                 });
 
+                // Remove the transient plan-header so it's re-synthesized next turn.
+                if (planHeaderIndex !== null) {
+                    messages.splice(planHeaderIndex, 1);
+                }
+
                 // Track token usage
                 if (result.usage) {
                     cumulativePromptTokens += result.usage.promptTokens;
                     cumulativeCompletionTokens += result.usage.completionTokens;
+                    const ctxWindow = config.modelProfile.contextWindow;
+                    const pctOfWindow = ctxWindow > 0
+                        ? ((result.usage.promptTokens / ctxWindow) * 100).toFixed(1)
+                        : "?";
+                    trace(
+                        `iter_${iteration}_tokens`,
+                        `prompt=${result.usage.promptTokens} (${pctOfWindow}% of ${ctxWindow}) | completion=${result.usage.completionTokens} | cumulative=${cumulativePromptTokens}/${cumulativeCompletionTokens}`,
+                    );
                 }
 
                 // Context overflow guard — prune old tool outputs if approaching limit
@@ -385,16 +627,93 @@ export class Runtime {
                     if (pruned > 0) {
                         trace("context_prune", `Pruned ${pruned} old tool outputs (prompt tokens: ${result.usage.promptTokens}/${config.modelProfile.contextWindow}).`);
                     }
+
+                    // Tier-2 compaction: if Tier-1 wasn't enough, summarise the middle block.
+                    if (shouldCompact(result.usage.promptTokens, config.modelProfile.contextWindow)) {
+                        const compactionResult = await compactMessages({
+                            messages,
+                            promptTokens: result.usage.promptTokens,
+                            contextWindow: config.modelProfile.contextWindow,
+                            traceEvents,
+                        });
+                        if (compactionResult.compacted) {
+                            trace("compaction_tier2", `Compacted ${compactionResult.removedCount} messages (~${compactionResult.summaryTokenEstimate} token summary).`);
+                        }
+                    }
                 }
 
                 // No tool calls → model produced a text response (shouldn't happen with finish tool, but handle it)
                 if (result.toolCalls.length === 0) {
+                    if (result.malformedToolCallText || looksLikeRawToolMarkup(result.content)) {
+                        malformedToolCallCorrections += 1;
+                        trace("malformed_tool_call", "Model emitted raw invoke markup instead of structured tool_calls.");
+                        messages.push({
+                            role: "system",
+                            content:
+                                "Your previous response emitted raw tool markup instead of a structured function call. " +
+                                "Retry the same next step using proper tool_calls only. Do not output <invoke>, XML, or pseudo-tool syntax.",
+                        });
+                        if (malformedToolCallCorrections >= 2) {
+                            stopReason = "no_useful_next_step";
+                            trace("stop", "Model repeated malformed raw tool markup twice.");
+                            break;
+                        }
+                        continue;
+                    }
                     if (result.content) {
                         answer = result.content;
                         stopReason = totalToolCalls > 0 ? "evidence_sufficient" : "direct_answer";
-                    } else {
-                        stopReason = "no_useful_next_step";
+                        trace("model_response", `No tool calls. finishReason=${result.finishReason}`);
+                        break;
                     }
+
+                    // Empty output with finishReason=length → context bloat caused the
+                    // model to produce nothing. Rebuild a minimal message set: stripped
+                    // system prompt + original user question (drop accumulated tool messages).
+                    if (result.finishReason === "length" && !lengthRetried) {
+                        lengthRetried = true;
+                        const minimalFields = {
+                            recentTurns: "No recent conversation turns.",
+                            channelContext: "(context stripped due to output limit — answer the question directly)",
+                            priorEvidence: "None.",
+                            toolContext: "None.",
+                        };
+                        messages.length = 0;
+                        messages.push(
+                            { role: "system", content: renderSystemPrompt(minimalFields) },
+                            { role: "user", content: input.question },
+                        );
+
+                        // Re-inject plan + compact note digest so research-heavy
+                        // turns keep their accumulated evidence across the retry.
+                        try {
+                            const planBody = await DiscordMemoryService.getRequestPlan(requestId);
+                            const noteRecords = await DiscordMemoryService.listRequestNotes({
+                                requestId,
+                                kind: "note",
+                            });
+                            const parts: string[] = [];
+                            if (planBody) parts.push(`Current plan:\n${planBody}`);
+                            if (noteRecords.length > 0) {
+                                const digest = noteRecords.map((n) => {
+                                    const tag = n.label ? `[${n.label}]` : `[#${n.seq}]`;
+                                    const preview = n.body.length > 300
+                                        ? n.body.slice(0, 300) + "…"
+                                        : n.body;
+                                    return `${tag} ${preview}`;
+                                }).join("\n");
+                                parts.push(`Note digest (${noteRecords.length} notes):\n${digest}`);
+                            }
+                            if (parts.length > 0) {
+                                messages.push({ role: "system", content: parts.join("\n\n") });
+                            }
+                        } catch { /* non-fatal — retry proceeds without state */ }
+
+                        trace("length_retry", `finishReason=length with empty output — rebuilt minimal message set (dropped ${totalToolCalls} accumulated tool exchanges, re-injected plan+notes).`);
+                        continue;
+                    }
+
+                    stopReason = "no_useful_next_step";
                     trace("model_response", `No tool calls. finishReason=${result.finishReason}`);
                     break;
                 }
@@ -418,92 +737,150 @@ export class Runtime {
                     const capability = CapabilityRegistry.get(toolName);
 
                     await input.debugSession?.setToolRunning(toolName, []);
+                    // Notify progress if available
+                    if (input.progressNotifier) {
+                        await input.progressNotifier(`Running ${toolName}…`).catch(() => {});
+                    }
                     const toolStartedAt = Date.now();
-                    const output = await capability.run(
-                        {
-                            guild: input.guild || null,
-                            question: input.question,
-                            currentChannelId: channelId,
-                            onProgress: async (tn, summary) => {
-                                trace("tool_progress", `${tn}: ${summary}`);
-                                await input.debugSession?.setToolProgress?.(tn, summary);
+                    try {
+                        const output = await capability.run(
+                            {
+                                guild: input.guild || null,
+                                question: input.question,
+                                currentChannelId: channelId,
+                                requestId,
+                                threadId,
+                                onProgress: async (tn, summary) => {
+                                    trace("tool_progress", `${tn}: ${summary}`);
+                                    await input.debugSession?.setToolProgress?.(tn, summary);
+                                },
                             },
-                        },
-                        parsedArgs,
-                    );
-                    const toolDurationMs = Date.now() - toolStartedAt;
-                    totalToolCalls += 1;
+                            parsedArgs,
+                        );
+                        const toolDurationMs = Date.now() - toolStartedAt;
+                        totalToolCalls += 1;
 
-                    const evidenceItems = extractEvidence(output);
-                    const learned = evidenceItems.map((item) => item.content).join(" | ") || output.summary;
-                    const retrieval = getRetrievalSummary(output);
+                        const evidenceItems = extractEvidence(output);
+                        const learned = evidenceItems.map((item) => item.content).join(" | ") || output.summary;
+                        const retrieval = getRetrievalSummary(output);
 
-                    const record: ToolInvocationRecord = {
-                        tool: toolName,
-                        arguments: parsedArgs,
-                        summary: output.summary,
-                        learned,
-                        confidenceImproved: evidenceItems.some((item) => item.strength !== "weak"),
-                        output,
-                        durationMs: toolDurationMs,
-                        retrievalSummary: retrieval,
-                    };
-                    toolHistory.push(record);
-                    evidence.push(...evidenceItems);
+                        const record: ToolInvocationRecord = {
+                            tool: toolName,
+                            arguments: parsedArgs,
+                            summary: output.summary,
+                            learned,
+                            confidenceImproved: evidenceItems.some((item) => item.strength !== "weak"),
+                            output,
+                            durationMs: toolDurationMs,
+                            retrievalSummary: retrieval,
+                        };
+                        toolHistory.push(record);
+                        evidence.push(...evidenceItems);
+                        for (const item of evidenceItems) {
+                            evidenceRolesThisTurn.add(item.evidenceRole);
+                        }
 
-                    trace("tool_result", `${toolName}: ${output.summary}`);
+                        trace("tool_result", `${toolName}: ${output.summary}`);
 
-                    const resultPayload = output.errorMessage
-                        ? JSON.stringify({ error: output.errorMessage })
-                        : JSON.stringify({ summary: output.summary, data: output.data });
-                    messages.push({
-                        role: "tool",
-                        tool_call_id: tc.id,
-                        content: truncateToolResult(resultPayload),
-                    });
+                        const resultPayload = output.errorMessage
+                            ? JSON.stringify({ error: output.errorMessage })
+                            : JSON.stringify({ summary: output.summary, data: output.data });
+                        messages.push({
+                            role: "tool",
+                            tool_call_id: tc.id,
+                            content: truncateToolResult(resultPayload),
+                        });
 
-                    await DiscordMemoryService.recordToolRun(
-                        requestId,
-                        guildId,
-                        channelId,
-                        actorId,
-                        input.question,
-                        toolName,
-                        JSON.stringify(parsedArgs),
-                        output.summary,
-                        learned,
-                        JSON.stringify(output),
-                        record.confidenceImproved,
-                        toolDurationMs,
-                    );
+                        await DiscordMemoryService.recordToolRun(
+                            requestId,
+                            guildId,
+                            channelId,
+                            actorId,
+                            input.question,
+                            toolName,
+                            JSON.stringify(parsedArgs),
+                            output.summary,
+                            learned,
+                            JSON.stringify(output),
+                            record.confidenceImproved,
+                            toolDurationMs,
+                        );
 
-                    await input.debugSession?.setToolResult(toolName, output.summary);
-                    await input.debugSession?.setRetrievalSummary?.(retrieval || {
-                        mode: "history",
-                        cacheHit: false,
-                        liveEscalated: false,
-                        searchedChannelIds: [],
-                        fetchedChannelIds: [],
-                        cacheEnriched: false,
-                        evidenceSufficient: false,
-                        strongResultCount: 0,
-                        weakResultCount: 0,
-                        historyMessageCount: 0,
-                        semanticMatchCount: 0,
-                        accumulatedUniqueCount: 0,
-                        sourceOrigin: "none",
-                        continuationAvailable: false,
-                        historyContinuationAvailable: false,
-                        historyCursorByChannel: {},
-                        semanticContinuationAvailable: false,
-                        semanticCursor: null,
-                        exhaustedChannelIds: [],
-                        historyExhausted: false,
-                        semanticExhausted: false,
-                        beforeTimestamp: null,
-                        afterTimestamp: null,
-                        activeChannelIds: [],
-                    });
+                        await input.debugSession?.setToolResult(toolName, output.summary);
+                        await input.debugSession?.setRetrievalSummary?.(retrieval || {
+                            mode: "history",
+                            cacheHit: false,
+                            liveEscalated: false,
+                            searchedChannelIds: [],
+                            fetchedChannelIds: [],
+                            cacheEnriched: false,
+                            evidenceSufficient: false,
+                            strongResultCount: 0,
+                            weakResultCount: 0,
+                            historyMessageCount: 0,
+                            semanticMatchCount: 0,
+                            accumulatedUniqueCount: 0,
+                            sourceOrigin: "none",
+                            continuationAvailable: false,
+                            historyContinuationAvailable: false,
+                            historyCursorByChannel: {},
+                            semanticContinuationAvailable: false,
+                            semanticCursor: null,
+                            exhaustedChannelIds: [],
+                            historyExhausted: false,
+                            semanticExhausted: false,
+                            beforeTimestamp: null,
+                            afterTimestamp: null,
+                            activeChannelIds: [],
+                        });
+                    } catch (error) {
+                        const toolDurationMs = Date.now() - toolStartedAt;
+                        totalToolCalls += 1;
+
+                        const err = error as {
+                            message?: unknown;
+                            code?: unknown;
+                            status?: unknown;
+                            rawError?: unknown;
+                        };
+                        const messageText = typeof err.message === "string"
+                            ? err.message
+                            : "Unknown tool error.";
+                        const codeText = err.code == null ? "" : ` (code: ${String(err.code)})`;
+                        const statusText = err.status == null ? "" : ` (status: ${String(err.status)})`;
+                        const rawText = err.rawError == null
+                            ? ""
+                            : ` Raw: ${JSON.stringify(err.rawError)}`;
+                        const toolErrorText = `Tool ${toolName} failed: ${messageText}${codeText}${statusText}.${rawText}`;
+
+                        trace("tool_error", toolErrorText);
+
+                        const failedOutput = {
+                            tool: toolName,
+                            summary: `Failed to execute ${toolName}.`,
+                            data: null,
+                            errorMessage: toolErrorText,
+                        };
+
+                        messages.push({
+                            role: "tool",
+                            tool_call_id: tc.id,
+                            content: truncateToolResult(JSON.stringify({ error: toolErrorText })),
+                        });
+
+                        toolHistory.push({
+                            tool: toolName,
+                            arguments: parsedArgs,
+                            summary: failedOutput.summary,
+                            learned: toolErrorText,
+                            confidenceImproved: false,
+                            output: failedOutput,
+                            durationMs: toolDurationMs,
+                            blocked: true,
+                        });
+
+                        await input.debugSession?.setToolResult(toolName, failedOutput.summary);
+                    }
                 };
 
                 const getProtectedTargetChannelId = (
@@ -587,9 +964,119 @@ export class Runtime {
                         parsedArgs = {};
                     }
 
+                    // ── Sanitize snowflake ID fields (mitigates LLM digit-hallucination) ──
+                    sanitizeSnowflakeArgs(parsedArgs);
+
+                    // ── Handle "start_long_task" tool (intercepted — never dispatched) ──
+                    if (toolName === "start_long_task") {
+                        if (longTaskGrantedThisTurn) {
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: JSON.stringify({ ok: true, note: "Budget already raised this turn." }),
+                            });
+                            trace("long_task", "Idempotent — budget already raised this turn.");
+                        } else {
+                            // Estimates are ignored — the model cannot reliably predict work size.
+                            // We always raise budgets to the operator-configured long-task caps.
+                            const newMaxCalls = Math.max(constraints.maxToolCalls, LONG_TASK_MAX_CALLS);
+                            const newMaxMs = Math.max(constraints.maxLatencyBudgetMs, LONG_TASK_MAX_MS);
+                            constraints.maxToolCalls = newMaxCalls;
+                            constraints.maxLatencyBudgetMs = newMaxMs;
+                            // Raise per-turn evidence slice so large retrievals aren't dropped.
+                            constraints.maxEvidenceSlice = Math.max(constraints.maxEvidenceSlice, LONG_TASK_EVIDENCE_FLOOR);
+                            longTaskGrantedThisTurn = true;
+                            if (input.progressNotifier) {
+                                await input.progressNotifier("Extending runtime budget for a long task…").catch(() => {});
+                            }
+                            trace("long_task", `Budget raised: calls=${newMaxCalls}, latency=${newMaxMs}ms. reason=${String(parsedArgs.reason ?? "none")}`);
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: JSON.stringify({ ok: true, maxToolCalls: newMaxCalls, maxLatencyBudgetMs: newMaxMs }),
+                            });
+                        }
+                        continue;
+                    }
+
                     // ── Handle "finish" tool ──
                     if (toolName === "finish") {
                         answer = (parsedArgs.answer as string) || result.content || "";
+
+                        const requestedCorpusSize = extractRequestedCorpusSize(input.question);
+                        if (requestedCorpusSize != null) {
+                            const retrieveRuns = toolHistory.filter(
+                                (record) => record.tool === T.retrieve_messages && !record.blocked,
+                            );
+                            const latestRetrieve = getLatestSuccessfulRetrieveRecord(toolHistory);
+                            const collectedCorpus = retrieveRuns.reduce(
+                                (max, record) => Math.max(max, getRetrievedCorpusCount(record)),
+                                0,
+                            );
+
+                            if (!retrieveRuns.length) {
+                                const correction =
+                                    `The user asked for analysis based on ${requestedCorpusSize} messages, ` +
+                                    "but you have not called retrieve_messages yet. Call retrieve_messages now " +
+                                    "with the correct filters and paginate before finishing.";
+                                trace("finish_guard", `Rejected finish: corpus request for ${requestedCorpusSize} messages with zero retrieve_messages calls.`);
+                                messages.push({
+                                    role: "tool",
+                                    tool_call_id: tc.id,
+                                    content: JSON.stringify({ error: correction }),
+                                });
+                                answer = "";
+                                continue;
+                            }
+
+                            const continuationAvailable =
+                                latestRetrieve?.retrievalSummary?.historyContinuationAvailable
+                                ?? latestRetrieve?.retrievalSummary?.continuationAvailable
+                                ?? false;
+                            const historyExhausted =
+                                latestRetrieve?.retrievalSummary?.historyExhausted ?? false;
+
+                            if (collectedCorpus < requestedCorpusSize && continuationAvailable && !historyExhausted) {
+                                const correction =
+                                    `You collected only ${collectedCorpus} of the requested ${requestedCorpusSize} messages. ` +
+                                    "Continuation is still available, so do not finish yet. Call retrieve_messages again " +
+                                    "with the returned cursor and keep paginating until you reach the requested corpus or true exhaustion.";
+                                trace("finish_guard", `Rejected finish: collected ${collectedCorpus}/${requestedCorpusSize} messages with continuation still available.`);
+                                messages.push({
+                                    role: "tool",
+                                    tool_call_id: tc.id,
+                                    content: JSON.stringify({ error: correction }),
+                                });
+                                answer = "";
+                                continue;
+                            }
+                        }
+
+                        // ── Stall guard: detect empty-promise answers ──
+                        if (stallCorrectionsUsed < 2) {
+                            const stallResult = await detectStallPromise({
+                                answer,
+                                toolHistoryThisTurn: toolHistory,
+                                evidenceRoles: evidenceRolesThisTurn,
+                                getToolEffect,
+                                longTaskGranted: longTaskGrantedThisTurn,
+                            });
+                            if (stallResult.stalled) {
+                                stallCorrectionsUsed += 1;
+                                const correction = stallCorrectionsUsed === 1
+                                    ? "Your answer promises action without having done anything. Call the appropriate tools now — use retrieve_messages or search_messages to gather evidence before finishing."
+                                    : "You are STILL finishing without evidence. Do NOT finish yet. Call retrieve_messages or search_messages RIGHT NOW.";
+                                trace("stall_guard", `Stalled on "${stallResult.matchedPhrase}" (correction ${stallCorrectionsUsed}/2).`);
+                                messages.push({
+                                    role: "tool",
+                                    tool_call_id: tc.id,
+                                    content: JSON.stringify({ error: correction }),
+                                });
+                                answer = "";
+                                continue;
+                            }
+                        }
+
                         stopReason = totalToolCalls > 0 ? "evidence_sufficient" : "direct_answer";
                         trace("finish", `Model called finish.`);
                         messages.push({
@@ -720,22 +1207,18 @@ export class Runtime {
                             `${toolName}: waited ${approvalWaitMs}ms for admin approval (excluded from latency budget).`,
                         );
                         if (approvalResult.haltExecution) {
-                            const stopMsg = `Execution stopped by ${approvalResult.decidedBy}.`;
+                            const stopMsg = buildStoppedActionMessage(approvalResult.decidedBy);
                             messages.push({
                                 role: "tool",
                                 tool_call_id: tc.id,
                                 content: JSON.stringify({ error: stopMsg }),
                             });
-                            const stoppedRecord: ToolInvocationRecord = {
-                                tool: toolName,
-                                arguments: parsedArgs,
-                                summary: `Execution stopped by ${approvalResult.decidedBy}.`,
-                                learned: stopMsg,
-                                confidenceImproved: false,
-                                output: { tool: toolName, summary: stopMsg, data: null, errorMessage: stopMsg },
-                                durationMs: 0,
-                                blocked: true,
-                            };
+                            const stoppedRecord = createBlockedToolRecord(
+                                toolName,
+                                parsedArgs,
+                                `Execution stopped by ${approvalResult.decidedBy}.`,
+                                stopMsg
+                            );
                             toolHistory.push(stoppedRecord);
                             trace("stop", `${toolName}: execution stopped by ${approvalResult.decidedBy}`);
                             stopReason = "execution_stopped_by_admin";
@@ -744,25 +1227,22 @@ export class Runtime {
                             break;
                         }
                         if (!approvalResult.approved) {
-                            const correctionNote = approvalResult.correction
-                                ? ` Admin correction: "${approvalResult.correction}". Adjust your approach based on this feedback.`
-                                : "";
-                            const denyMsg = `Action NOT executed. Denied by ${approvalResult.decidedBy}.${correctionNote} Do not tell the user this action was completed.`;
+                            const correctionNote = buildCorrectionNote(approvalResult.correction);
+                            const denyMsg = buildDeniedActionMessage(
+                                approvalResult.decidedBy,
+                                approvalResult.correction
+                            );
                             messages.push({
                                 role: "tool",
                                 tool_call_id: tc.id,
                                 content: JSON.stringify({ error: denyMsg }),
                             });
-                            const deniedRecord: ToolInvocationRecord = {
-                                tool: toolName,
-                                arguments: parsedArgs,
-                                summary: `Denied by ${approvalResult.decidedBy}.${correctionNote}`,
-                                learned: denyMsg,
-                                confidenceImproved: false,
-                                output: { tool: toolName, summary: denyMsg, data: null, errorMessage: denyMsg },
-                                durationMs: 0,
-                                blocked: true,
-                            };
+                            const deniedRecord = createBlockedToolRecord(
+                                toolName,
+                                parsedArgs,
+                                `Denied by ${approvalResult.decidedBy}.${correctionNote}`,
+                                denyMsg
+                            );
                             toolHistory.push(deniedRecord);
                             trace("approval_denied", `${toolName}: denied by ${approvalResult.decidedBy}${approvalResult.correction ? ` (correction: ${approvalResult.correction})` : ""}`);
                             await input.activityIndicator?.startThinking();
@@ -777,7 +1257,50 @@ export class Runtime {
                     }
 
                     // Execute the capability
-                    await executeToolCall(tc, toolName, parsedArgs);
+                    {
+                        // Doom-loop guard: detect repeated identical calls.
+                        const argsHash = JSON.stringify(parsedArgs);
+                        const doomResult = doomLoopDetector.recordCall(toolName, argsHash);
+                        if (doomResult.action === "force_finish") {
+                            trace("doom_loop_force", doomResult.message ?? "Force-finishing due to doom loop.");
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: JSON.stringify({ error: doomResult.message }),
+                            });
+                            stopReason = "confidence_plateau";
+                            loopDone = true;
+                            break;
+                        }
+                        if (doomResult.action === "nudge") {
+                            trace("doom_loop_nudge", doomResult.message ?? "Doom loop nudge.");
+                            // Still execute, but inject a nudge after.
+                        }
+
+                        const evidenceBefore = evidence.length;
+                        await executeToolCall(tc, toolName, parsedArgs);
+                        const producedEvidence = evidence.length > evidenceBefore;
+
+                        // Inject doom-loop nudge after execution.
+                        if (doomResult.action === "nudge") {
+                            messages.push({
+                                role: "system",
+                                content: doomResult.message!,
+                            });
+                        }
+
+                        // Progress-required check (long-task only).
+                        if (longTaskGrantedThisTurn) {
+                            const progressResult = progressTracker.recordCall(toolName, producedEvidence);
+                            if (progressResult.stalled) {
+                                trace("progress_stall", progressResult.message ?? "No progress detected.");
+                                messages.push({
+                                    role: "system",
+                                    content: progressResult.message!,
+                                });
+                            }
+                        }
+                    }
                 }
 
                 // ── Batch destructive approval (after processing all tool calls in this iteration) ──
@@ -804,39 +1327,32 @@ export class Runtime {
                         trace("approval_wait", `${item.toolName}: waited ${singleDestructiveWaitMs}ms for admin approval (excluded from latency budget).`);
 
                         if (approvalResult.haltExecution) {
-                            const stopMsg = `Execution stopped by ${approvalResult.decidedBy}.`;
+                            const stopMsg = buildStoppedActionMessage(approvalResult.decidedBy);
                             messages.push({ role: "tool", tool_call_id: item.tc.id, content: JSON.stringify({ error: stopMsg }) });
-                            const stoppedRecord: ToolInvocationRecord = {
-                                tool: item.toolName,
-                                arguments: item.parsedArgs,
-                                summary: `Execution stopped by ${approvalResult.decidedBy}.`,
-                                learned: stopMsg,
-                                confidenceImproved: false,
-                                output: { tool: item.toolName, summary: stopMsg, data: null, errorMessage: stopMsg },
-                                durationMs: 0,
-                                blocked: true,
-                            };
+                            const stoppedRecord = createBlockedToolRecord(
+                                item.toolName,
+                                item.parsedArgs,
+                                `Execution stopped by ${approvalResult.decidedBy}.`,
+                                stopMsg
+                            );
                             toolHistory.push(stoppedRecord);
                             trace("stop", `${item.toolName}: execution stopped by ${approvalResult.decidedBy}`);
                             stopReason = "execution_stopped_by_admin";
                             loopDone = true;
                             await input.activityIndicator?.startThinking();
                         } else if (!approvalResult.approved) {
-                            const correctionNote = approvalResult.correction
-                                ? ` Admin correction: "${approvalResult.correction}". Adjust your approach based on this feedback.`
-                                : "";
-                            const denyMsg = `Action NOT executed. Denied by ${approvalResult.decidedBy}.${correctionNote} Do not tell the user this action was completed.`;
+                            const correctionNote = buildCorrectionNote(approvalResult.correction);
+                            const denyMsg = buildDeniedActionMessage(
+                                approvalResult.decidedBy,
+                                approvalResult.correction
+                            );
                             messages.push({ role: "tool", tool_call_id: item.tc.id, content: JSON.stringify({ error: denyMsg }) });
-                            const deniedRecord: ToolInvocationRecord = {
-                                tool: item.toolName,
-                                arguments: item.parsedArgs,
-                                summary: `Denied by ${approvalResult.decidedBy}.${correctionNote}`,
-                                learned: denyMsg,
-                                confidenceImproved: false,
-                                output: { tool: item.toolName, summary: denyMsg, data: null, errorMessage: denyMsg },
-                                durationMs: 0,
-                                blocked: true,
-                            };
+                            const deniedRecord = createBlockedToolRecord(
+                                item.toolName,
+                                item.parsedArgs,
+                                `Denied by ${approvalResult.decidedBy}.${correctionNote}`,
+                                denyMsg
+                            );
                             toolHistory.push(deniedRecord);
                             trace("approval_denied", `${item.toolName}: denied by ${approvalResult.decidedBy}${approvalResult.correction ? ` (correction: ${approvalResult.correction})` : ""}`);
                             await input.activityIndicator?.startThinking();
@@ -901,22 +1417,18 @@ export class Runtime {
 
                         if (batchResult.haltExecution) {
                             for (const item of destructiveBatch) {
-                                const stopMsg = `Execution stopped by ${batchResult.decidedBy}.`;
+                                const stopMsg = buildStoppedActionMessage(batchResult.decidedBy);
                                 messages.push({
                                     role: "tool",
                                     tool_call_id: item.tc.id,
                                     content: JSON.stringify({ error: stopMsg }),
                                 });
-                                const stoppedRecord: ToolInvocationRecord = {
-                                    tool: item.toolName,
-                                    arguments: item.parsedArgs,
-                                    summary: stopMsg,
-                                    learned: stopMsg,
-                                    confidenceImproved: false,
-                                    output: { tool: item.toolName, summary: stopMsg, data: null, errorMessage: stopMsg },
-                                    durationMs: 0,
-                                    blocked: true,
-                                };
+                                const stoppedRecord = createBlockedToolRecord(
+                                    item.toolName,
+                                    item.parsedArgs,
+                                    stopMsg,
+                                    stopMsg
+                                );
                                 toolHistory.push(stoppedRecord);
                             }
                             stopReason = "execution_stopped_by_admin";
@@ -945,23 +1457,22 @@ export class Runtime {
                                     } else {
                                         await executeToolCall(item.tc, item.toolName, item.parsedArgs);
                                     }
-                                } else {
-                                    const denyMsg = `Action NOT executed. Denied by ${batchResult.decidedBy}.${batchCorrectionNote} Do not tell the user this action was completed.`;
+                                    } else {
+                                    const denyMsg = buildDeniedActionMessage(
+                                        batchResult.decidedBy,
+                                        batchResult.correction
+                                    );
                                     messages.push({
                                         role: "tool",
                                         tool_call_id: item.tc.id,
                                         content: JSON.stringify({ error: denyMsg }),
                                     });
-                                    const deniedRecord: ToolInvocationRecord = {
-                                        tool: item.toolName,
-                                        arguments: item.parsedArgs,
-                                        summary: `Denied by ${batchResult.decidedBy}.${batchCorrectionNote}`,
-                                        learned: denyMsg,
-                                        confidenceImproved: false,
-                                        output: { tool: item.toolName, summary: denyMsg, data: null, errorMessage: denyMsg },
-                                        durationMs: 0,
-                                        blocked: true,
-                                    };
+                                    const deniedRecord = createBlockedToolRecord(
+                                        item.toolName,
+                                        item.parsedArgs,
+                                        `Denied by ${batchResult.decidedBy}.${batchCorrectionNote}`,
+                                        denyMsg
+                                    );
                                     toolHistory.push(deniedRecord);
                                     trace("batch_item_denied", `${item.toolName}: denied in batch by ${batchResult.decidedBy}${batchResult.correction ? ` (correction: ${batchResult.correction})` : ""}`);
                                 }
@@ -977,12 +1488,50 @@ export class Runtime {
             if (!answer) {
                 // Model never called finish — synthesize from what was found
                 if (!stopReason) stopReason = "insufficient_evidence";
-                confidence = toolHistory.length > 0
-                    ? answerConfidenceForInsufficient({ evidence })
-                    : "insufficient";
-                answer = toolHistory.length > 0
-                    ? await synthesizeAnswer(systemPrompt, input.question, toolHistory, evidence, traceEvents)
-                    : "";
+
+                // For long tasks, try to build answer from plan + notes.
+                if (longTaskGrantedThisTurn) {
+                    try {
+                        const planBody = await DiscordMemoryService.getRequestPlan(requestId);
+                        const notes = await DiscordMemoryService.listRequestNotes({
+                            requestId,
+                            threadId,
+                            includeThreadHistory: false,
+                            kind: "note",
+                        });
+                        if (planBody || notes.length > 0) {
+                            const notesText = notes.slice(-20).map(n => `- ${n.body}`).join("\n");
+                            const contextBlock = [
+                                planBody ? `Plan:\n${planBody}` : null,
+                                notesText ? `Notes:\n${notesText}` : null,
+                            ].filter(Boolean).join("\n\n");
+                            const synthMessages = [
+                                { role: "system" as const, content: systemPrompt },
+                                { role: "user" as const, content: input.question },
+                                { role: "assistant" as const, content: `Here is what I found during my research:\n${contextBlock}` },
+                                { role: "user" as const, content: "Based on that research, answer the original question as concisely as possible. Cite jumpLinks where available. If you truly could not find it, say so in one sentence." },
+                            ];
+                            const synthResult = await ModelGateway.generateText(synthMessages, {
+                                traceContext: { traceLabel: "long_task_synthesis", questionPreview: input.question, traceEvents: [...traceEvents] },
+                            });
+                            const cleaned = sanitizeAnswer(synthResult);
+                            if (cleaned) {
+                                answer = cleaned;
+                                confidence = "best_effort";
+                                trace("long_task_synthesis", `Synthesized answer from plan + ${notes.length} notes.`);
+                            }
+                        }
+                    } catch { /* non-fatal */ }
+                }
+
+                if (!answer) {
+                    confidence = toolHistory.length > 0
+                        ? answerConfidenceForInsufficient({ evidence })
+                        : "insufficient";
+                    answer = toolHistory.length > 0
+                        ? await synthesizeAnswer(systemPrompt, input.question, toolHistory, evidence, traceEvents)
+                        : "";
+                }
             } else {
                 answer = sanitizeAnswer(answer);
                 if (!stopReason) stopReason = "direct_answer";
@@ -999,6 +1548,7 @@ export class Runtime {
                 guildId,
                 channelId,
                 actorId,
+                requesterDisplayName: input.requesterDisplayName || null,
                 trigger: input.trigger,
                 classificationMode: classification.mode,
                 runtimeMode,
@@ -1036,6 +1586,24 @@ export class Runtime {
                 if (REALTIME_TRACE_LABELS.has(event.label)) continue;
                 await input.debugSession?.setTraceEvent?.(event.label, event.detail, event.timestamp);
             }
+
+            // ── 7b. Notes snapshot for debug ──
+            if (input.debugSession?.setNotesSnapshot) {
+                const planBody = await DiscordMemoryService.getRequestPlan(requestId);
+                const noteRecords = await DiscordMemoryService.listRequestNotes({ requestId, kind: "note" });
+                if (noteRecords.length > 0 || planBody) {
+                    const snapshot = noteRecords.map((n) => ({
+                        seq: n.seq,
+                        label: n.label,
+                        bodyPreview: n.body.slice(0, 200),
+                        wordCount: n.body.split(/\s+/).filter(Boolean).length,
+                    }));
+                    const totalWords = snapshot.reduce((sum, n) => sum + n.wordCount, 0);
+                    trace("notes_snapshot", `${snapshot.length} note(s), ${totalWords} words`);
+                    await input.debugSession.setNotesSnapshot(snapshot, planBody);
+                }
+            }
+
             await input.debugSession?.setGenerating();
             await input.debugSession?.finishSuccess(stopReason || "completed");
 
@@ -1131,6 +1699,10 @@ function deriveStopDetail(
 
     if (stopReason === "direct_answer") {
         return "Model answered directly via finish tool.";
+    }
+
+    if (stopReason === "stalled_promise") {
+        return findLast((event) => event.label === "stall_guard");
     }
 
     return null;

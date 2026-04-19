@@ -36,7 +36,9 @@ The runtime keeps only narrow guardrails:
 - capability validation
 - repeated-call protection
 - tool-call and latency budgets
-- context overflow pruning
+- context overflow pruning (Tier-1 truncation + Tier-2 compaction)
+- doom-loop detection (identical tool calls → nudge → force finish)
+- progress-required tracking (long tasks only)
 - refusal prevention for ordinary conversation
 
 Intent policy:
@@ -49,6 +51,7 @@ These capability ids are prompt- and runtime-stable:
 
 - `retrieve_messages`
 - `search_messages`
+- `random_channel_message`
 - `resolve_member_identity`
 - `list_guild_structure`
 - `resolve_channel_targets`
@@ -56,18 +59,33 @@ These capability ids are prompt- and runtime-stable:
 - `list_members`
 - `get_guild_context`
 - `clear_messages`
+- `delete_messages`
 - `create_channel`
 - `create_category`
 - `measure_text_length`
 - `evaluate_math`
 - `get_role_info`
+- `list_roles`
 - `delete_channel`
+- `delete_role`
 - `create_thread`
 - `move_channel`
+- `move_category`
 - `manage_member_roles`
 - `list_threads`
 - `read_thread_messages`
 - `send_message`
+- `edit_message`
+- `create_role`
+- `edit_channel`
+- `edit_role`
+- `start_long_task`
+- `note_add`
+- `note_list`
+- `note_read`
+- `note_update`
+- `note_clear`
+- `plan_update`
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`.
 
@@ -94,7 +112,12 @@ Runtime prompts live under `resources/prompts/` and stay external to code:
 
 - `resources/prompts/system/base.md`
 - `resources/prompts/system/personality.md`
+- `resources/prompts/system/personality_mixed_override.md` (applied when `personality = "mixed"`)
+- `resources/prompts/system/personality_classic_override.md` (applied when `personality = "classic"`)
 - `resources/prompts/runtime/agent_loop.md`
+- `resources/prompts/runtime/stall_classifier.md`
+
+Personality mode is selectable via `/settings` → Personalidade. Three modes: `default` (baseline), `mixed` (recommended — sharper, evidence-first, low filler), `classic` (legacy dominant persona).
 
 The stable prompt catalog is:
 
@@ -139,7 +162,6 @@ Core supported commands and entrypoints:
 - `/talk`
 - mentions
 - replies
-- `/find`
 - `/nth`
 - `/debug toggle` / `/debug logs`
 - `/index`

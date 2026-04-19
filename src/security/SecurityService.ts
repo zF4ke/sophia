@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 import { AdminDirectory } from "@/security/AdminDirectory";
 import { CommandPolicyRegistry } from "@/security/CommandPolicyRegistry";
+import { ACCESS_POLICY_TARGETS, type AccessPolicyTarget } from "@/security/policyTargets";
 import { RateLimitRegistry } from "@/security/RateLimitRegistry";
 import type { AdminUser, CommandConfig, ModeratorUser } from "@/security/types";
 
@@ -91,11 +92,25 @@ export class SecurityService {
         return this.commandPolicyRegistry.isCommandPublic(commandName);
     }
 
+    public static async isTriggerEnabled(
+        trigger: AccessPolicyTarget,
+        userId?: string,
+    ): Promise<boolean> {
+        await this.initialize();
+        if (userId && this.isAdmin(userId)) {
+            return true;
+        }
+        return this.commandPolicyRegistry.isCommandPublic(trigger);
+    }
+
     public static async checkRateLimit(
         userId: string,
         commandName: string
     ): Promise<boolean> {
         await this.initialize();
+        if (this.isAdmin(userId)) {
+            return true;
+        }
         const config = this.commandPolicyRegistry.getCommandConfig(commandName);
 
         let limit = config.rateLimits.default;
@@ -112,7 +127,17 @@ export class SecurityService {
         );
     }
 
+    public static async checkTriggerRateLimit(
+        userId: string,
+        trigger: AccessPolicyTarget,
+    ): Promise<boolean> {
+        return this.checkRateLimit(userId, trigger);
+    }
+
     public static getCommandRemainingUses(userId: string, commandName: string): number {
+        if (this.isAdmin(userId)) {
+            return Number.POSITIVE_INFINITY;
+        }
         const config = this.commandPolicyRegistry.getCommandConfig(commandName);
 
         let limit = config.rateLimits.default;
@@ -146,6 +171,13 @@ export class SecurityService {
     public static async getCommandConfigs(): Promise<Map<string, CommandConfig>> {
         await this.initialize();
         return this.commandPolicyRegistry.getCommandConfigs();
+    }
+
+    public static getPolicyTargetLabels(): Record<AccessPolicyTarget, string> {
+        return {
+            [ACCESS_POLICY_TARGETS.mention]: "@mention",
+            [ACCESS_POLICY_TARGETS.reply]: "reply",
+        };
     }
 
     public static async validateChannelPermissions(

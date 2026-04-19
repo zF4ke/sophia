@@ -39,6 +39,8 @@ function buildInitialState(question: string): DebugTraceState {
         cumulativePromptTokens: 0,
         cumulativeCompletionTokens: 0,
         contextUsagePercent: null,
+        notesSnapshot: [],
+        planPreview: null,
     };
 }
 

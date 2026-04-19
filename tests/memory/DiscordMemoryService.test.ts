@@ -164,6 +164,33 @@ describe("DiscordMemoryService", () => {
         expect(messages).toEqual([]);
     });
 
+    it("prunes expired thread notes keeping only recent requests", async () => {
+        // Create notes across 3 different requests on the same thread
+        await DiscordMemoryService.addRequestNote({
+            requestId: "req-old-1", threadId: "t1", kind: "note", label: null, body: "old note 1",
+        });
+        await DiscordMemoryService.addRequestNote({
+            requestId: "req-old-2", threadId: "t1", kind: "note", label: null, body: "old note 2",
+        });
+        await DiscordMemoryService.addRequestNote({
+            requestId: "req-recent", threadId: "t1", kind: "note", label: null, body: "recent note",
+        });
+
+        // Prune, keeping only 1 most recent request
+        const { removed } = await DiscordMemoryService.pruneExpiredThreadNotes({
+            threadId: "t1",
+            keepRequests: 1,
+        });
+        expect(removed).toBe(2);
+
+        // Only the recent request's notes should remain
+        const remaining = await DiscordMemoryService.listRequestNotes({
+            requestId: "req-recent", threadId: "t1", includeThreadHistory: true, kind: "note",
+        });
+        expect(remaining).toHaveLength(1);
+        expect(remaining[0].requestId).toBe("req-recent");
+    });
+
     it("stores discovered channels and crawl state", async () => {
         await DiscordMemoryService.upsertDiscoveredChannel("c1", "g1", "general", 123);
         await DiscordMemoryService.updateChannelCrawlState("c1", "m-oldest", true);

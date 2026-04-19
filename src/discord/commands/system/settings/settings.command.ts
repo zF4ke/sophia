@@ -25,7 +25,102 @@ export type RuntimeSettingKey =
     | "escalationFetchLimit"
     | "retrievalHistoryLimit"
     | "retrievalContextWindow"
-    | "approvalTimeoutMs";
+    | "approvalTimeoutMs"
+    | "maxNotesPerRequest"
+    | "noteExpiryRequests"
+    | "longTaskMaxToolCalls"
+    | "longTaskMaxLatencyBudgetMs"
+    | "longTaskEvidenceSliceFloor"
+    | "longTaskRetrievalInlineCrawlBatches";
+
+export type CompactionSettingKey =
+    | "triggerFraction"
+    | "inputTriggerFraction"
+    | "inputMaxTokens";
+
+const LONG_TASK_KEYS: RuntimeSettingKey[] = [
+    "longTaskMaxToolCalls",
+    "longTaskMaxLatencyBudgetMs",
+    "longTaskEvidenceSliceFloor",
+    "longTaskRetrievalInlineCrawlBatches",
+];
+
+function isLongTaskKey(key: RuntimeSettingKey): boolean {
+    return LONG_TASK_KEYS.includes(key);
+}
+
+export function getRuntimeSettingValue(
+    settings: BotSettings,
+    key: RuntimeSettingKey,
+): number {
+    switch (key) {
+        case "longTaskMaxToolCalls":
+            return settings.runtime.longTask.maxToolCalls;
+        case "longTaskMaxLatencyBudgetMs":
+            return settings.runtime.longTask.maxLatencyBudgetMs;
+        case "longTaskEvidenceSliceFloor":
+            return settings.runtime.longTask.evidenceSliceFloor;
+        case "longTaskRetrievalInlineCrawlBatches":
+            return settings.runtime.longTask.retrievalInlineCrawlBatches;
+        default:
+            return settings.runtime[key] as number;
+    }
+}
+
+export function buildRuntimeSettingPatch(
+    current: BotSettings,
+    key: RuntimeSettingKey,
+    value: number,
+): Partial<BotSettings> {
+    if (isLongTaskKey(key)) {
+        const longTask = { ...current.runtime.longTask };
+        switch (key) {
+            case "longTaskMaxToolCalls":
+                longTask.maxToolCalls = value;
+                break;
+            case "longTaskMaxLatencyBudgetMs":
+                longTask.maxLatencyBudgetMs = value;
+                break;
+            case "longTaskEvidenceSliceFloor":
+                longTask.evidenceSliceFloor = value;
+                break;
+            case "longTaskRetrievalInlineCrawlBatches":
+                longTask.retrievalInlineCrawlBatches = value;
+                break;
+        }
+        return { runtime: { ...current.runtime, longTask } };
+    }
+    return { runtime: { ...current.runtime, [key]: value } };
+}
+
+export type SettingsTab = "model" | "runtime" | "compaction" | "longTask" | "personality";
+
+type PersonalityMode = BotSettings["personality"];
+
+const PERSONALITY_OPTIONS: Array<{
+    value: PersonalityMode;
+    label: string;
+    description: string;
+}> = [
+    {
+        value: "default",
+        label: "Default",
+        description: "Calorosa e direta. A voz base.",
+    },
+    {
+        value: "mixed",
+        label: "Mixed (recomendado)",
+        description: "Confiante, curiosa e com humor seco. Afiada sem ser fria.",
+    },
+    {
+        value: "classic",
+        label: "Classic",
+        description: "Dominante e assertiva. Séria, sem emoji, sem filler. A personalidade original da Sophia.",
+    },
+];
+type SettingsPanelOptions = {
+    idPrefix?: string;
+};
 
 type RuntimeSettingMeta = {
     label: string;
@@ -34,227 +129,616 @@ type RuntimeSettingMeta = {
     presets: number[];
 };
 
-const CONTEXT_HEADROOM_RATIO = 0.80;
+type CompactionSettingMeta = {
+    label: string;
+    shortDescription: string;
+    longDescription: string;
+    presets: number[];
+    formatValue?: (value: number) => string;
+};
 
 const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
     maxPriorTurns: {
-        label: "Recent Turns",
-        shortDescription: "How many recent Q/A pairs go back into the prompt.",
-        longDescription: "Number of recent conversation turns replayed into the next turn's prompt as compact dialogue context.",
+        label: "🧠 Turnos recentes",
+        shortDescription: "Perguntas e respostas recentes no contexto.",
+        longDescription: "Número de turnos recentes reaproveitados no prompt do turno seguinte.",
         presets: [3, 5, 8, 10],
     },
     maxChannelMessages: {
-        label: "Recent Channel Messages",
-        shortDescription: "Ambient channel context loaded per turn.",
-        longDescription: "How many recent ambient messages from the current channel are injected as local context before the loop starts.",
+        label: "💬 Mensagens do canal",
+        shortDescription: "Contexto recente do canal atual.",
+        longDescription: "Quantidade de mensagens recentes do canal atual usadas como contexto local.",
         presets: [10, 15, 25, 40],
     },
     maxToolRunsContext: {
-        label: "Prior Tool Runs",
-        shortDescription: "How many past tool runs are replayed for evidence reconstruction.",
-        longDescription: "Number of persisted tool runs scanned when rebuilding prior evidence for follow-up turns.",
+        label: "🧩 Histórico de ferramentas",
+        shortDescription: "Ferramentas anteriores para recuperar contexto.",
+        longDescription: "Número de runs persistidos usados para reconstruir evidência em follow-ups.",
         presets: [6, 12, 18, 24],
     },
     maxEvidenceSlice: {
-        label: "Prior Evidence Slice",
-        shortDescription: "Reusable evidence carried into the next turn.",
-        longDescription: "Maximum number of evidence items reconstructed from prior tool runs and carried into the next turn's system prompt.",
+        label: "📚 Evidência reaproveitada",
+        shortDescription: "Quantidade de evidência levada para o próximo turno.",
+        longDescription: "Máximo de itens de evidência reaproveitados de runs anteriores.",
         presets: [16, 32, 48, 64],
     },
     retrievalHistoryLimit: {
-        label: "Default Retrieval Page",
-        shortDescription: "Default rows returned per retrieve_messages call.",
-        longDescription: "Default page size for retrieve_messages when the model does not specify a limit. Higher values scan more history per call but also create larger tool outputs.",
+        label: "🔎 Histórico por pesquisa",
+        shortDescription: "Itens por chamada de retrieve_messages.",
+        longDescription: "Tamanho de página padrão quando o modelo não define limite.",
         presets: [25, 50, 75, 100, 150, 250, 400, 600, 1000],
     },
     retrievalContextWindow: {
-        label: "Around-Message Window",
-        shortDescription: "Neighbor messages loaded around a hit.",
-        longDescription: "How many neighboring messages are loaded when retrieve_messages zooms into a specific message via aroundMessageId.",
+        label: "🪟 Janela à volta da mensagem",
+        shortDescription: "Mensagens vizinhas ao redor do resultado.",
+        longDescription: "Quantidade de mensagens vizinhas carregadas ao usar aroundMessageId.",
         presets: [8, 15, 25, 40],
     },
     maxToolCalls: {
-        label: "Max Tool Calls",
-        shortDescription: "Hard cap on tool executions per turn.",
-        longDescription: "Hard cap on how many tool executions Sophia can make in one turn before it must finish or fall back.",
-        presets: [
-            2,
-            4,
-            6,
-            8,
-            10,
-            12,
-            15,
-            20,
-            25,
-            30,
-        ],
+        label: "🛠️ Máx. de ferramentas",
+        shortDescription: "Limite de ferramentas por turno.",
+        longDescription: "Limite rígido de execuções de ferramentas por turno.",
+        presets: [2, 4, 6, 8, 10, 12, 15, 20, 25, 30],
     },
     maxRepeatedCallSignature: {
-        label: "Repeated Call Guard",
-        shortDescription: "Same tool + same args retry limit.",
-        longDescription: "How many times the exact same tool call signature is allowed before the runtime blocks it as a loop.",
+        label: "🔁 Limite de repetição",
+        shortDescription: "Quantas vezes o mesmo pedido pode repetir.",
+        longDescription: "Tentativas permitidas para a mesma assinatura antes de bloquear loop.",
         presets: [1, 2, 3],
     },
     maxLatencyBudgetMs: {
-        label: "Latency Budget",
-        shortDescription: "Total runtime budget per turn.",
-        longDescription: "Maximum wall-clock time the loop can spend on one turn before stopping with a budget exit.",
-        presets: [
-            10000,
-            15000,
-            20000,
-            30000,
-            45000,
-            60000,
-            90000,
-            120000,
-            180000,
-            240000,
-            300000,
-        ],
+        label: "⏱️ Tempo máximo por turno",
+        shortDescription: "Tempo total de execução por turno.",
+        longDescription: "Tempo máximo de execução do loop antes de encerrar por orçamento.",
+        presets: [10000, 15000, 20000, 30000, 45000, 60000, 90000, 120000, 180000, 240000, 300000],
     },
     escalationFetchLimit: {
-        label: "Escalation Fetch Limit",
-        shortDescription: "Live refresh cap for scoped retrieval retries.",
-        longDescription: "Maximum number of messages fetched during a scoped live refresh when retrieve_messages escalates beyond the cache.",
+        label: "🚀 Limite de refresh ao vivo",
+        shortDescription: "Máximo de fetch durante refresh ao vivo.",
+        longDescription: "Máximo de mensagens num refresh ao vivo durante retries de retrieve.",
         presets: [50, 100, 150, 250, 400, 600, 800, 1000],
     },
     approvalTimeoutMs: {
-        label: "Approval Timeout",
-        shortDescription: "How long to wait for admin approval on write/destructive actions.",
-        longDescription: "Maximum time in milliseconds the runtime will wait for an admin to approve or deny a write or destructive tool call before auto-denying.",
+        label: "✅ Tempo de aprovação",
+        shortDescription: "Tempo máximo à espera de admin.",
+        longDescription: "Tempo máximo de espera por aprovação de ações write/destructive antes de auto-recusa.",
         presets: [30000, 60000, 120000, 300000],
+    },
+    maxNotesPerRequest: {
+        label: "🗒️ Máx. páginas no notebook",
+        shortDescription: "Cap de páginas por pedido.",
+        longDescription: "Máximo de páginas que o notebook do turno pode armazenar antes de recusar novas notas.",
+        presets: [50, 100, 150, 200, 300, 500],
+    },
+    noteExpiryRequests: {
+        label: "🧹 Expiração do notebook",
+        shortDescription: "Pedidos mantidos por thread.",
+        longDescription: "Quantos pedidos recentes por thread mantêm as páginas do notebook antes da limpeza automática.",
+        presets: [1, 3, 5, 8, 12, 20],
+    },
+    longTaskMaxToolCalls: {
+        label: "🛠️ Long task: máx. ferramentas",
+        shortDescription: "Cap de ferramentas ao entrar em long-task.",
+        longDescription: "Quando o modelo chama start_long_task, o limite de chamadas é elevado para este valor.",
+        presets: [50, 100, 150, 200, 300, 500, 750, 1000],
+    },
+    longTaskMaxLatencyBudgetMs: {
+        label: "⏱️ Long task: duração máxima",
+        shortDescription: "Cap de tempo (ms) ao entrar em long-task.",
+        longDescription: "Quando o modelo chama start_long_task, o orçamento de tempo é elevado para este valor (ms).",
+        presets: [120000, 240000, 360000, 600000, 900000, 1200000, 1800000],
+    },
+    longTaskEvidenceSliceFloor: {
+        label: "📚 Long task: floor de evidência",
+        shortDescription: "Piso da fatia de evidência em long-task.",
+        longDescription: "Valor mínimo para maxEvidenceSlice ao iniciar long-task, garantindo que retrievals grandes não sejam cortados.",
+        presets: [64, 96, 128, 192, 256],
+    },
+    longTaskRetrievalInlineCrawlBatches: {
+        label: "🌊 Long task: crawl inline por retrieve",
+        shortDescription: "Batches síncronos quando histórico é parcial.",
+        longDescription: "Quantos batches de 100 mensagens são buscados síncronamente por retrieve_messages quando o canal ainda não está totalmente indexado.",
+        presets: [0, 1, 3, 5, 10],
     },
 };
 
+const COMPACTION_SETTING_META: Record<CompactionSettingKey, CompactionSettingMeta> = {
+    triggerFraction: {
+        label: "🧱 Trigger da Tier-2",
+        shortDescription: "Percentagem do contexto para resumir o miolo.",
+        longDescription: "Quando o prompt atinge esta percentagem da janela total, a Tier-2 resume o bloco do meio em vez de apenas truncar.",
+        presets: [0.6, 0.7, 0.8, 0.85, 0.9, 0.95],
+        formatValue: (value) => `${Math.round(value * 100)}%`,
+    },
+    inputTriggerFraction: {
+        label: "✂️ Trigger da Tier-0",
+        shortDescription: "Percentagem do input para compactação de entrada.",
+        longDescription: "Percentagem da janela total a partir da qual a compactação de entrada tenta reduzir prompts pesados antes da chamada ao modelo.",
+        presets: [0.2, 0.3, 0.4, 0.5, 0.6],
+        formatValue: (value) => `${Math.round(value * 100)}%`,
+    },
+    inputMaxTokens: {
+        label: "📦 Teto absoluto da Tier-0",
+        shortDescription: "Ceiling absoluto do prompt antes de compactar.",
+        longDescription: "Limite absoluto aproximado de tokens de entrada para disparar compactação, mesmo em modelos com janelas gigantes.",
+        presets: [8000, 10000, 12000, 16000, 20000, 30000],
+    },
+};
+
+const SETTINGS_CONTAINER_ACCENT = 0xd1d5db;
+const TAB_LABEL_PAD = 0;
+
 function formatNumber(value: number): string {
-    return value.toLocaleString("en-US");
+    return value.toLocaleString("pt-PT");
 }
 
-function buildSettingsPanel(settings: BotSettings) {
-    const profileConfig = readModelProfiles();
-    const profiles = Object.keys(profileConfig.profiles);
-    const selectedProfileName = resolveModelProfileName(settings.modelProfile, profileConfig);
-    const selectedProfile = profileConfig.profiles[selectedProfileName];
-    const pruneThreshold = selectedProfile
-        ? Math.floor(selectedProfile.contextWindow * CONTEXT_HEADROOM_RATIO)
-        : null;
+function formatUsd(value?: number): string {
+    if (value == null) return "n/d";
+    const hasThreeDecimals =
+        Math.abs(value * 100 - Math.round(value * 100)) > Number.EPSILON;
+    return `$${value.toFixed(hasThreeDecimals ? 3 : 2)}`;
+}
 
-    const runtimeLines = (Object.keys(RUNTIME_SETTING_META) as RuntimeSettingKey[]).map((key) => {
-        const meta = RUNTIME_SETTING_META[key];
-        return `- **${meta.label}:** ${formatNumber(settings.runtime[key])} — ${meta.shortDescription}`;
-    });
+function padTabLabel(label: string): string {
+    const spacer = "‎ ".repeat(TAB_LABEL_PAD);
+    return `${spacer}${label}${spacer}`;
+}
 
-    const infoLines = [
-        `**Profile:** ${selectedProfileName}${selectedProfile ? ` · ${selectedProfile.chatModel}` : ""}`,
-        selectedProfile ? `**Context:** ${formatNumber(selectedProfile.contextWindow)} tokens · **Max Output:** ${formatNumber(selectedProfile.maxOutputTokens)}` : null,
-        `**Personality:** ${settings.personality === "classic" ? "Classic (v1)" : "Default"}`,
-        `**Debug:** ${settings.debug ? "enabled" : "disabled"}`,
-        `**Auto-Approve Writes (non-destructive):** ${settings.runtime.autoApproveWrites ? "enabled" : "disabled"}`,
-        "",
-        ...runtimeLines,
-    ].filter((x): x is string => x !== null);
+function getPlainRuntimeLabel(key: RuntimeSettingKey): string {
+    return RUNTIME_SETTING_META[key].label.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+}
 
-    if (pruneThreshold != null) {
-        infoLines.push(`- **Prompt Prune Threshold:** ~${formatNumber(pruneThreshold)} tokens (80% of context)`);
+function getCompactionSettingValue(
+    settings: BotSettings,
+    key: CompactionSettingKey,
+): number {
+    return settings.compaction[key];
+}
+
+export function buildCompactionSettingPatch(
+    current: BotSettings,
+    key: CompactionSettingKey,
+    value: number,
+): Partial<BotSettings> {
+    return { compaction: { ...current.compaction, [key]: value } };
+}
+
+function formatCompactionValue(key: CompactionSettingKey, value: number): string {
+    return COMPACTION_SETTING_META[key].formatValue?.(value) ?? formatNumber(value);
+}
+
+function buildPriceLines(profileName: string): string[] {
+    const profile = readModelProfiles().profiles[profileName];
+    const pricing = profile?.pricing;
+    if (!pricing) {
+        return ["Sem preço disponível."];
     }
 
-    const mainContainer = new ContainerBuilder()
-        .setAccentColor(0x5865f2)
-        .addTextDisplayComponents(
-            new TextDisplayBuilder().setContent("## ⚙️ Sophia Settings"),
-            new TextDisplayBuilder().setContent(infoLines.join("\n"))
+    const lines = [
+        `Entrada: \`${formatUsd(pricing.inputPerMillionUsd)} / 1M tokens\``,
+        `Saída: \`${formatUsd(pricing.outputPerMillionUsd)} / 1M tokens\``,
+    ];
+    if (pricing.cacheReadPerMillionUsd != null) {
+        lines.push(`Leitura de cache: \`${formatUsd(pricing.cacheReadPerMillionUsd)} / 1M tokens\``);
+    }
+    if (pricing.webSearchPerCallUsd != null) {
+        lines.push(`Pesquisa web: \`${formatUsd(pricing.webSearchPerCallUsd)} / pedido\``);
+    }
+    return lines;
+}
+
+function buildModelOptions(settings: BotSettings) {
+    const profileConfig = readModelProfiles();
+    const selectedProfileName = resolveModelProfileName(settings.modelProfile, profileConfig);
+    return Object.entries(profileConfig.profiles)
+        .sort(([, left], [, right]) => {
+            const leftInput = left.pricing?.inputPerMillionUsd ?? Number.POSITIVE_INFINITY;
+            const rightInput = right.pricing?.inputPerMillionUsd ?? Number.POSITIVE_INFINITY;
+            if (leftInput !== rightInput) {
+                return leftInput - rightInput;
+            }
+
+            const leftOutput = left.pricing?.outputPerMillionUsd ?? Number.POSITIVE_INFINITY;
+            const rightOutput = right.pricing?.outputPerMillionUsd ?? Number.POSITIVE_INFINITY;
+            if (leftOutput !== rightOutput) {
+                return leftOutput - rightOutput;
+            }
+
+            return (left.label || "").localeCompare(right.label || "");
+        })
+        .map(([profileName, profile]) => {
+            const label = profile.label || profileName;
+            const inputPrice = profile.pricing?.inputPerMillionUsd;
+            const outputPrice = profile.pricing?.outputPerMillionUsd;
+            const description = [
+                `${formatNumber(profile.contextWindow)} contexto`,
+                inputPrice != null && outputPrice != null
+                    ? `in ${formatUsd(inputPrice)}/1M · out ${formatUsd(outputPrice)}/1M`
+                    : "sem preço disponível.",
+            ].join(" · ");
+
+            return {
+                label: label.slice(0, 100),
+                value: profileName,
+                description: description.slice(0, 100),
+                default: profileName === selectedProfileName,
+            };
+        });
+}
+
+function buildTabsRow(tab: SettingsTab, idPrefix: string) {
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`${idPrefix}:tab:model`)
+            .setLabel(padTabLabel("Modelo"))
+            .setStyle(tab === "model" ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(tab === "model"),
+        new ButtonBuilder()
+            .setCustomId(`${idPrefix}:tab:runtime`)
+            .setLabel(padTabLabel("Runtime"))
+            .setStyle(tab === "runtime" ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(tab === "runtime"),
+        new ButtonBuilder()
+            .setCustomId(`${idPrefix}:tab:compaction`)
+            .setLabel(padTabLabel("Compactação"))
+            .setStyle(tab === "compaction" ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(tab === "compaction"),
+        new ButtonBuilder()
+            .setCustomId(`${idPrefix}:tab:longTask`)
+            .setLabel(padTabLabel("Long task"))
+            .setStyle(tab === "longTask" ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(tab === "longTask"),
+        new ButtonBuilder()
+            .setCustomId(`${idPrefix}:tab:personality`)
+            .setLabel(padTabLabel("Personalidade"))
+            .setStyle(tab === "personality" ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(tab === "personality")
+    );
+}
+
+export function buildSettingsPanel(
+    settings: BotSettings,
+    tab: SettingsTab = "model",
+    options: SettingsPanelOptions = {}
+) {
+    const idPrefix = options.idPrefix ?? "settings";
+    const profileConfig = readModelProfiles();
+    const selectedProfileName = resolveModelProfileName(settings.modelProfile, profileConfig);
+    const selectedProfile = profileConfig.profiles[selectedProfileName];
+    const selectedLabel = selectedProfile?.label || selectedProfileName;
+
+    const components: Array<
+        ContainerBuilder | ActionRowBuilder<ButtonBuilder> | ActionRowBuilder<StringSelectMenuBuilder>
+    > = [];
+
+    if (tab === "model") {
+        const modelInfoLines = [
+            `Nome: \`${selectedLabel} ☑️\``,
+            selectedProfile ? `ID: \`${selectedProfile.chatModel}\`` : "ID: n/d",
+            selectedProfile
+                ? `Contexto: \`${formatNumber(selectedProfile.contextWindow)} tokens\``
+                : "Contexto: n/d",
+            selectedProfile
+                ? `Output máximo: \`${formatNumber(selectedProfile.maxOutputTokens)} tokens\``
+                : "Output máximo: n/d",
+            ...buildPriceLines(selectedProfileName),
+        ];
+
+        components.push(
+            new ContainerBuilder()
+                .setAccentColor(SETTINGS_CONTAINER_ACCENT)
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent("## Configurações — Modelo"),
+                )
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(modelInfoLines.join("\n"))
+                )
+                .addActionRowComponents(
+                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`${idPrefix}:model:select`)
+                            .setPlaceholder("Escolher modelo")
+                            .addOptions(buildModelOptions(settings))
+                    )
+                )
+        );
+    } else if (tab === "runtime") {
+        const runtimeKeys = (Object.keys(RUNTIME_SETTING_META) as RuntimeSettingKey[]).filter(
+            (key) => !isLongTaskKey(key)
+        );
+        const runtimeLines = runtimeKeys.map(
+            (key) => `${getPlainRuntimeLabel(key)}: \`${formatNumber(getRuntimeSettingValue(settings, key))}\``
         );
 
-    const profileSelect = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId("settings:profile")
-            .setPlaceholder("Change model profile")
-            .addOptions(
-                profiles.map((p) => ({
-                    label: p,
-                    value: p,
-                    default: p === selectedProfileName,
-                }))
-            )
-    );
+        components.push(
+            new ContainerBuilder()
+                .setAccentColor(SETTINGS_CONTAINER_ACCENT)
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent("## Configurações — Runtime"),
+                )
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(runtimeLines.join("\n"))
+                )
+                .addActionRowComponents(
+                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`${idPrefix}:runtime`)
+                            .setPlaceholder("Ajustar parâmetro runtime")
+                            .addOptions(
+                                runtimeKeys.map((key) => {
+                                    const meta = RUNTIME_SETTING_META[key];
+                                    return {
+                                        label: meta.label.slice(0, 100),
+                                        value: key,
+                                        description: `${meta.shortDescription} Atual: ${formatNumber(getRuntimeSettingValue(settings, key))}`.slice(0, 100),
+                                    };
+                                })
+                            )
+                    )
+                )
+                .addActionRowComponents(
+                    new ActionRowBuilder<ButtonBuilder>().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`${idPrefix}:auto-approve-writes:toggle`)
+                            .setLabel(settings.runtime.autoApproveWrites ? "Desativar autoaprovação" : "Ativar autoaprovação")
+                            .setStyle(settings.runtime.autoApproveWrites ? ButtonStyle.Secondary : ButtonStyle.Success),
+                        new ButtonBuilder()
+                            .setCustomId(`${idPrefix}:reset`)
+                            .setLabel("Repor padrões")
+                            .setStyle(ButtonStyle.Danger)
+                    )
+                )
+        );
+    } else if (tab === "compaction") {
+        const compactionSettings = settings.compaction;
+        const compactionProfileName = compactionSettings.summarizerModel;
+        const compactionProfile = profileConfig.profiles[compactionProfileName];
+        const compactionLabel = compactionProfile?.label || compactionProfileName;
+        const compactionKeys = Object.keys(COMPACTION_SETTING_META) as CompactionSettingKey[];
 
-    const runtimeSelect = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId("settings:runtime")
-            .setPlaceholder("Change a runtime parameter")
-            .addOptions(
-                (Object.keys(RUNTIME_SETTING_META) as RuntimeSettingKey[]).map((key) => {
-                    const meta = RUNTIME_SETTING_META[key];
-                    return {
-                        label: meta.label,
-                        value: key,
-                        description: `${meta.shortDescription} Current: ${formatNumber(settings.runtime[key])}`.slice(0, 100),
-                    };
-                })
-            )
-    );
+        const compactionInfoLines = [
+            `Modelo de compactação: \`${compactionLabel} ☑️\``,
+            ...compactionKeys.map(
+                (key) => `${COMPACTION_SETTING_META[key].label.replace(/^[^\p{L}\p{N}]+/u, "").trim()}: \`${formatCompactionValue(key, getCompactionSettingValue(settings, key))}\``
+            ),
+        ];
 
-    const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-            .setCustomId("settings:personality:toggle")
-            .setLabel(settings.personality === "classic" ? "Personality: Classic" : "Personality: Default")
-            .setStyle(settings.personality === "classic" ? ButtonStyle.Primary : ButtonStyle.Secondary),
-        new ButtonBuilder()
-            .setCustomId("settings:auto-approve-writes:toggle")
-            .setLabel(settings.runtime.autoApproveWrites ? "Disable Auto-Approve Writes" : "Enable Auto-Approve Writes")
-            .setStyle(settings.runtime.autoApproveWrites ? ButtonStyle.Secondary : ButtonStyle.Primary),
-        new ButtonBuilder()
-            .setCustomId("settings:debug:toggle")
-            .setLabel(settings.debug ? "Disable Debug" : "Enable Debug")
-            .setStyle(settings.debug ? ButtonStyle.Secondary : ButtonStyle.Success),
-        new ButtonBuilder()
-            .setCustomId("settings:reset")
-            .setLabel("Reset to Defaults")
-            .setStyle(ButtonStyle.Danger)
-    );
+        const compactionModelOptions = Object.entries(profileConfig.profiles)
+            .sort(([, a], [, b]) => {
+                const ai = a.pricing?.inputPerMillionUsd ?? Infinity;
+                const bi = b.pricing?.inputPerMillionUsd ?? Infinity;
+                return ai - bi;
+            })
+            .map(([name, p]) => ({
+                label: (p.label || name).slice(0, 100),
+                value: name,
+                description: p.pricing
+                    ? `in ${formatUsd(p.pricing.inputPerMillionUsd)}/1M · out ${formatUsd(p.pricing.outputPerMillionUsd)}/1M`.slice(0, 100)
+                    : "sem preço",
+                default: name === compactionProfileName,
+            }));
+
+        components.push(
+            new ContainerBuilder()
+                .setAccentColor(SETTINGS_CONTAINER_ACCENT)
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent("## Configurações — Compactação"),
+                )
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(compactionInfoLines.join("\n"))
+                )
+                .addActionRowComponents(
+                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`${idPrefix}:compaction:model`)
+                            .setPlaceholder("Escolher modelo de compactação")
+                            .addOptions(
+                                compactionModelOptions.length > 0
+                                    ? compactionModelOptions
+                                    : [{ label: "Nenhum modelo elegível", value: "_none" }]
+                            )
+                    )
+                )
+                .addActionRowComponents(
+                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`${idPrefix}:compaction`)
+                            .setPlaceholder("Ajustar parâmetro de compactação")
+                            .addOptions(
+                                compactionKeys.map((key) => {
+                                    const meta = COMPACTION_SETTING_META[key];
+                                    return {
+                                        label: meta.label.slice(0, 100),
+                                        value: key,
+                                        description: `${meta.shortDescription} Atual: ${formatCompactionValue(key, getCompactionSettingValue(settings, key))}`.slice(0, 100),
+                                    };
+                                })
+                            )
+                    )
+                )
+        );
+    }
+
+    if (tab === "personality") {
+        const current = settings.personality;
+        const descriptionLines = PERSONALITY_OPTIONS.map((opt) => {
+            const mark = opt.value === current ? "☑️" : "▫️";
+            return `${mark} **${opt.label}** — ${opt.description}`;
+        });
+
+        components.push(
+            new ContainerBuilder()
+                .setAccentColor(SETTINGS_CONTAINER_ACCENT)
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent("## Configurações — Personalidade"),
+                )
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(
+                        "Controla o tom e a voz da Sophia. A escolha é aplicada em todos os turnos.",
+                    ),
+                )
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(descriptionLines.join("\n")),
+                )
+                .addActionRowComponents(
+                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`${idPrefix}:personality:select`)
+                            .setPlaceholder("Escolher personalidade")
+                            .addOptions(
+                                PERSONALITY_OPTIONS.map((opt) => ({
+                                    label: opt.label.slice(0, 100),
+                                    value: opt.value,
+                                    description: opt.description.slice(0, 100),
+                                    default: opt.value === current,
+                                })),
+                            ),
+                    ),
+                ),
+        );
+    }
+
+    if (tab === "longTask") {
+        const longTaskLines = LONG_TASK_KEYS.map(
+            (key) => `${getPlainRuntimeLabel(key)}: \`${formatNumber(getRuntimeSettingValue(settings, key))}\``
+        );
+
+        components.push(
+            new ContainerBuilder()
+                .setAccentColor(SETTINGS_CONTAINER_ACCENT)
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent("## Configurações — Long task"),
+                )
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(
+                        "Valores aplicados quando o modelo chama `start_long_task` (estimativas do modelo são ignoradas)."
+                    )
+                )
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(longTaskLines.join("\n"))
+                )
+                .addActionRowComponents(
+                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`${idPrefix}:runtime`)
+                            .setPlaceholder("Ajustar parâmetro long-task")
+                            .addOptions(
+                                LONG_TASK_KEYS.map((key) => {
+                                    const meta = RUNTIME_SETTING_META[key];
+                                    return {
+                                        label: meta.label.slice(0, 100),
+                                        value: key,
+                                        description: `${meta.shortDescription} Atual: ${formatNumber(getRuntimeSettingValue(settings, key))}`.slice(0, 100),
+                                    };
+                                })
+                            )
+                    )
+                )
+        );
+    }
+
+    components.push(buildTabsRow(tab, idPrefix));
+
+    return {
+        components,
+        flags: MessageFlags.IsComponentsV2 as const,
+    };
+}
+
+export function buildRuntimeValueSelect(
+    key: RuntimeSettingKey,
+    currentValue: number,
+    options: SettingsPanelOptions = {}
+) {
+    const idPrefix = options.idPrefix ?? "settings";
+    const meta = RUNTIME_SETTING_META[key];
+    const presets = meta.presets.includes(currentValue)
+        ? meta.presets
+        : [...meta.presets, currentValue].sort((a, b) => a - b);
 
     return {
         components: [
-            mainContainer,
-            profileSelect,
-            runtimeSelect,
-            buttonRow,
+            new ContainerBuilder()
+                .setAccentColor(SETTINGS_CONTAINER_ACCENT)
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(`## ${meta.label}`),
+                    new TextDisplayBuilder().setContent(
+                        [
+                            `**Descrição:** ${meta.longDescription}`,
+                            `**Valor atual:** ${formatNumber(currentValue)}`,
+                        ].join("\n")
+                    )
+                )
+                .addActionRowComponents(
+                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`${idPrefix}:runtime:set:${key}`)
+                            .setPlaceholder("Escolher valor")
+                            .addOptions(
+                                presets.map((v) => ({
+                                    label: formatNumber(v),
+                                    value: String(v),
+                                    default: v === currentValue,
+                                }))
+                            )
+                    )
+                ),
+            new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`${idPrefix}:tab:${isLongTaskKey(key) ? "longTask" : "runtime"}`)
+                    .setLabel(isLongTaskKey(key) ? "Voltar ao Long task" : "Voltar ao runtime")
+                    .setStyle(ButtonStyle.Secondary)
+            ),
         ],
         flags: MessageFlags.IsComponentsV2 as const,
     };
 }
 
-function buildRuntimeValueSelect(key: RuntimeSettingKey, currentValue: number) {
-    const meta = RUNTIME_SETTING_META[key];
-    const presets = meta?.presets || [currentValue];
-    const values = presets.includes(currentValue) ? presets : [...presets, currentValue].sort((a, b) => a - b);
-
-    const container = new ContainerBuilder()
-        .setAccentColor(0xfee75c)
-        .addTextDisplayComponents(
-            new TextDisplayBuilder().setContent(`## Set ${meta.label}`),
-            new TextDisplayBuilder().setContent(
-                [`Current value: **${formatNumber(currentValue)}**`, meta.longDescription].join("\n")
-            )
-        );
-
-    const select = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId(`settings:runtime:set:${key}`)
-            .setPlaceholder("Pick a value")
-            .addOptions(
-                values.map((v) => ({
-                    label: String(v),
-                    value: String(v),
-                    default: v === currentValue,
-                }))
-            )
-    );
+export function buildCompactionValueSelect(
+    key: CompactionSettingKey,
+    currentValue: number,
+    options: SettingsPanelOptions = {}
+) {
+    const idPrefix = options.idPrefix ?? "settings";
+    const meta = COMPACTION_SETTING_META[key];
+    const presets = meta.presets.includes(currentValue)
+        ? meta.presets
+        : [...meta.presets, currentValue].sort((a, b) => a - b);
 
     return {
-        components: [container, select],
+        components: [
+            new ContainerBuilder()
+                .setAccentColor(SETTINGS_CONTAINER_ACCENT)
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(`## ${meta.label}`),
+                    new TextDisplayBuilder().setContent(
+                        [
+                            `**Descrição:** ${meta.longDescription}`,
+                            `**Valor atual:** ${formatCompactionValue(key, currentValue)}`,
+                        ].join("\n")
+                    )
+                )
+                .addActionRowComponents(
+                    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`${idPrefix}:compaction:set:${key}`)
+                            .setPlaceholder("Escolher valor")
+                            .addOptions(
+                                presets.map((v) => ({
+                                    label: formatCompactionValue(key, v),
+                                    value: String(v),
+                                    default: v === currentValue,
+                                }))
+                            )
+                    )
+                ),
+            new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`${idPrefix}:tab:compaction`)
+                    .setLabel("Voltar à compactação")
+                    .setStyle(ButtonStyle.Secondary)
+            ),
+        ],
         flags: MessageFlags.IsComponentsV2 as const,
     };
 }
@@ -262,7 +746,7 @@ function buildRuntimeValueSelect(key: RuntimeSettingKey, currentValue: number) {
 export default {
     data: new SlashCommandBuilder()
         .setName("settings")
-        .setDescription("View and change Sophia's runtime settings")
+        .setDescription("Configurar modelo e runtime da Sophia")
         .setContexts(0, 1, 2)
         .setIntegrationTypes(0)
         .setDMPermission(false),
@@ -271,26 +755,48 @@ export default {
 
         if (!SecurityService.isAdmin(interaction.user.id)) {
             await interaction.reply({
-                content: "❌ You don't have permission to use this command.",
+                content: "❌ Apenas administradores podem usar este comando.",
                 flags: MessageFlags.Ephemeral as const,
             });
             return;
         }
 
         const settings = SettingsService.load();
-        await interaction.reply(buildSettingsPanel(settings));
+        await interaction.reply(buildSettingsPanel(settings, "model"));
     },
 };
 
 export function handleSettingsInteraction(customId: string): {
-    type: "profile" | "runtime_pick" | "runtime_set" | "auto_approve_writes_toggle" | "personality_toggle" | "debug_toggle" | "reset" | null;
+    type:
+        | "tab_model"
+        | "tab_runtime"
+        | "tab_compaction"
+        | "tab_long_task"
+        | "tab_personality"
+        | "model_select"
+        | "compaction_model_select"
+        | "compaction_pick"
+        | "compaction_set"
+        | "runtime_pick"
+        | "runtime_set"
+        | "personality_select"
+        | "auto_approve_writes_toggle"
+        | "reset"
+        | null;
     key?: RuntimeSettingKey;
+    compactionKey?: CompactionSettingKey;
 } {
-    if (customId === "settings:profile") return { type: "profile" };
+    if (customId === "settings:tab:model") return { type: "tab_model" };
+    if (customId === "settings:tab:runtime") return { type: "tab_runtime" };
+    if (customId === "settings:tab:compaction") return { type: "tab_compaction" };
+    if (customId === "settings:tab:longTask") return { type: "tab_long_task" };
+    if (customId === "settings:tab:personality") return { type: "tab_personality" };
+    if (customId === "settings:personality:select") return { type: "personality_select" };
+    if (customId === "settings:model:select") return { type: "model_select" };
+    if (customId === "settings:compaction:model") return { type: "compaction_model_select" };
+    if (customId === "settings:compaction") return { type: "compaction_pick" };
     if (customId === "settings:runtime") return { type: "runtime_pick" };
-    if (customId === "settings:personality:toggle") return { type: "personality_toggle" };
     if (customId === "settings:auto-approve-writes:toggle") return { type: "auto_approve_writes_toggle" };
-    if (customId === "settings:debug:toggle") return { type: "debug_toggle" };
     if (customId === "settings:reset") return { type: "reset" };
     if (customId.startsWith("settings:runtime:set:")) {
         return {
@@ -298,7 +804,61 @@ export function handleSettingsInteraction(customId: string): {
             key: customId.slice("settings:runtime:set:".length) as RuntimeSettingKey,
         };
     }
+    if (customId.startsWith("settings:compaction:set:")) {
+        return {
+            type: "compaction_set",
+            compactionKey: customId.slice("settings:compaction:set:".length) as CompactionSettingKey,
+        };
+    }
     return { type: null };
 }
 
-export { buildSettingsPanel, buildRuntimeValueSelect };
+export function parseSettingsInteraction(
+    customId: string,
+    idPrefix = "settings"
+): {
+    type:
+        | "tab_model"
+        | "tab_runtime"
+        | "tab_compaction"
+        | "tab_long_task"
+        | "tab_personality"
+        | "model_select"
+        | "compaction_model_select"
+        | "compaction_pick"
+        | "compaction_set"
+        | "runtime_pick"
+        | "runtime_set"
+        | "personality_select"
+        | "auto_approve_writes_toggle"
+        | "reset"
+        | null;
+    key?: RuntimeSettingKey;
+    compactionKey?: CompactionSettingKey;
+} {
+    if (customId === `${idPrefix}:tab:model`) return { type: "tab_model" };
+    if (customId === `${idPrefix}:tab:runtime`) return { type: "tab_runtime" };
+    if (customId === `${idPrefix}:tab:compaction`) return { type: "tab_compaction" };
+    if (customId === `${idPrefix}:tab:longTask`) return { type: "tab_long_task" };
+    if (customId === `${idPrefix}:tab:personality`) return { type: "tab_personality" };
+    if (customId === `${idPrefix}:personality:select`) return { type: "personality_select" };
+    if (customId === `${idPrefix}:model:select`) return { type: "model_select" };
+    if (customId === `${idPrefix}:compaction:model`) return { type: "compaction_model_select" };
+    if (customId === `${idPrefix}:compaction`) return { type: "compaction_pick" };
+    if (customId === `${idPrefix}:runtime`) return { type: "runtime_pick" };
+    if (customId === `${idPrefix}:auto-approve-writes:toggle`) return { type: "auto_approve_writes_toggle" };
+    if (customId === `${idPrefix}:reset`) return { type: "reset" };
+    if (customId.startsWith(`${idPrefix}:runtime:set:`)) {
+        return {
+            type: "runtime_set",
+            key: customId.slice(`${idPrefix}:runtime:set:`.length) as RuntimeSettingKey,
+        };
+    }
+    if (customId.startsWith(`${idPrefix}:compaction:set:`)) {
+        return {
+            type: "compaction_set",
+            compactionKey: customId.slice(`${idPrefix}:compaction:set:`.length) as CompactionSettingKey,
+        };
+    }
+    return { type: null };
+}

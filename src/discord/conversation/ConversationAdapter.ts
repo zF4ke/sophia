@@ -32,6 +32,7 @@ export class ConversationAdapter {
         interaction: ChatInputCommandInteraction;
         question: string;
         debugSession?: RuntimeDebugSession | null;
+        progressNotifier?: ((summary: string) => Promise<void>) | null;
     }): Promise<TurnInput> {
         const { interaction, question, debugSession } = options;
         return {
@@ -55,6 +56,7 @@ export class ConversationAdapter {
             protectedBlockNotifier: interaction.channel && "send" in interaction.channel
                 ? createProtectedBlockNotifier(interaction.channel as import("discord.js").SendableChannels)
                 : undefined,
+            progressNotifier: options.progressNotifier ?? null,
             conversation: await buildConversationContext({
                 guild: interaction.guild,
                 currentChannelId: interaction.channelId,
@@ -74,6 +76,7 @@ export class ConversationAdapter {
             startTyping(): Promise<void>;
             stop(): Promise<void>;
         } | null;
+        progressNotifier?: ((summary: string) => Promise<void>) | null;
     }): Promise<TurnInput> {
         const { message, trigger, question, debugSession, activityIndicator } = options;
         const replyContext = trigger === "reply" ? await buildReplyContext(message) : null;
@@ -99,6 +102,7 @@ export class ConversationAdapter {
             protectedBlockNotifier: message.channel && "send" in message.channel
                 ? createProtectedBlockNotifier(message.channel as import("discord.js").SendableChannels)
                 : undefined,
+            progressNotifier: options.progressNotifier ?? null,
             activityIndicator: activityIndicator ?? null,
             conversation: await buildConversationContext({
                 guild: message.guild,

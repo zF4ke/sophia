@@ -11,12 +11,13 @@ import type {
     ResolvedMemberIdentity,
     ResolvedChannelTarget,
 } from "@/shared/appTypes";
-import type { ToolDefinition, CapabilityContext } from "./types";
+import type { ToolDefinition, CapabilityContext, ToolEffect } from "./types";
 
 // ── Import all per-tool definitions ─────────────────────────────────
 
 import { retrieveMessagesTool } from "./retrieveMessages";
 import { searchMessagesTool } from "./searchMessages";
+import { randomChannelMessageTool } from "./randomChannelMessage";
 import { listGuildStructureTool } from "./listGuildStructure";
 import { getGuildContextTool } from "./getGuildContext";
 import { resolveChannelTargetsTool } from "./resolveChannelTargets";
@@ -32,10 +33,20 @@ import { createChannelTool } from "./createChannel";
 import { createCategoryTool } from "./createCategory";
 import { createThreadTool } from "./createThread";
 import { moveChannelTool } from "./moveChannel";
+import { moveCategoryTool } from "./moveCategory";
 import { manageMemberRolesTool } from "./manageMemberRoles";
 import { sendMessageTool } from "./sendMessage";
+import { editMessageTool } from "./editMessage";
+import { createRoleTool } from "./createRole";
+import { editChannelTool } from "./editChannel";
+import { editRoleTool } from "./editRole";
+import { listRolesTool } from "./listRoles";
 import { clearMessagesTool } from "./clearMessages";
+import { deleteMessagesTool } from "./deleteMessages";
 import { deleteChannelTool } from "./deleteChannel";
+import { deleteRoleTool } from "./deleteRole";
+import { startLongTaskTool } from "./startLongTask";
+import { noteAddTool, noteListTool, noteReadTool, noteUpdateTool, noteClearTool, planUpdateTool } from "./notes";
 
 // ── Aggregated tool list ────────────────────────────────────────────
 
@@ -43,6 +54,7 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     // ── Retrieval ──
     retrieveMessagesTool,
     searchMessagesTool,
+    randomChannelMessageTool,
     // ── Server & channel discovery ──
     listGuildStructureTool,
     getGuildContextTool,
@@ -52,6 +64,8 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     getMemberProfileTool,
     listMembersTool,
     getRoleInfoTool,
+    // ── Role discovery ──
+    listRolesTool,
     // ── Thread reading ──
     listThreadsTool,
     readThreadMessagesTool,
@@ -63,11 +77,27 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     createCategoryTool,
     createThreadTool,
     moveChannelTool,
+    moveCategoryTool,
     manageMemberRolesTool,
     sendMessageTool,
+    editMessageTool,
+    createRoleTool,
     // ── Destructive ──
     clearMessagesTool,
+    deleteMessagesTool,
     deleteChannelTool,
+    deleteRoleTool,
+    editChannelTool,
+    editRoleTool,
+    // ── Control ──
+    startLongTaskTool,
+    // ── Scratchpad ──
+    noteAddTool,
+    noteListTool,
+    noteReadTool,
+    noteUpdateTool,
+    noteClearTool,
+    planUpdateTool,
 ];
 
 const TOOL_MAP = new Map<string, ToolDefinition>(
@@ -90,6 +120,10 @@ export function isDestructiveTool(name: string): boolean {
 
 export function isMutatingTool(name: string): boolean {
     return _writeSet.has(name) || _destructiveSet.has(name);
+}
+
+export function getToolEffect(name: string): ToolEffect | undefined {
+    return TOOL_MAP.get(name)?.catalog.effect;
 }
 
 // ── Display helpers ─────────────────────────────────────────────────

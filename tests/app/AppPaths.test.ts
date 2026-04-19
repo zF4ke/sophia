@@ -14,6 +14,8 @@ describe("AppPaths", () => {
     });
 
     it("resolves mutable runtime state from storage", () => {
+        // Under tests, SOPHIA_STORAGE_ROOT redirects to an isolated dir
+        // (see tests/setup/testStorage.ts); that path still terminates in "storage".
         expect(AppPaths.storageRoot.endsWith("storage")).toBe(true);
         expect(FileSystemService.getBaseStorageDir()).toBe(AppPaths.storageRoot);
     });

@@ -33,7 +33,7 @@ export interface DebugLogTraceEntry {
     traceEvents?: Array<{ label: string; detail: string; timestamp: number }>;
 }
 
-export type DebugLogsView = "overview" | "prompt" | "messages" | "tools" | "trace" | "json";
+export type DebugLogsView = "overview" | "prompt" | "messages" | "tools" | "trace" | "notes" | "json";
 
 export interface DebugLogsPanelState {
     ownerUserId: string;
@@ -73,6 +73,7 @@ const VIEW_LABELS: Record<DebugLogsView, string> = {
     messages: "Messages",
     tools: "Tool Calls",
     trace: "Runtime Trace",
+    notes: "Notes",
     json: "Raw JSON",
 };
 
@@ -431,6 +432,67 @@ function buildToolsText(entry: DebugLogTraceEntry, entries: DebugLogTraceEntry[]
         .join("\n\n");
 }
 
+function buildNotesText(entry: DebugLogTraceEntry, entries: DebugLogTraceEntry[] = [], entryIndex = -1): string {
+    const records = extractToolCallRecords(entry, entries, entryIndex);
+    const noteRecords = records.filter((r) => r.name === "note_add" || r.name === "note_list" || r.name === "note_clear");
+
+    const blocks: string[] = [];
+
+    if (noteRecords.length) {
+        blocks.push(
+            "## Note tool calls",
+            ...noteRecords.map((record, index) => {
+                const lines = [`#${index + 1} ${record.name}`];
+                lines.push("Arguments:", record.argumentsText || "{}");
+                lines.push("Output:", record.outputText || "No output.");
+                return lines.join("\n");
+            })
+        );
+    }
+
+    const partialIndexBlock = buildPartialIndexBlock(records);
+    if (partialIndexBlock) {
+        blocks.push("", "## Partial index (retrieve_messages)", partialIndexBlock);
+    }
+
+    if (!blocks.length) {
+        return "No notes or partial-index signals recorded for this entry.";
+    }
+
+    return blocks.join("\n\n");
+}
+
+function buildPartialIndexBlock(records: DebugToolCallRecord[]): string | null {
+    const sections: string[] = [];
+    for (const record of records) {
+        if (record.name !== "retrieve_messages") continue;
+        const output = record.outputText || "";
+        if (!output.includes("partialIndex")) continue;
+        try {
+            // Try extract JSON block
+            const firstBrace = output.indexOf("{");
+            if (firstBrace < 0) continue;
+            const parsed = JSON.parse(output.slice(firstBrace));
+            const partial = (parsed as Record<string, unknown>)?.partialIndex;
+            const hints = (parsed as Record<string, unknown>)?.partialIndexHints;
+            if (!partial && !hints) continue;
+            const lines = [`Call ${record.id} (${record.name}):`];
+            if (partial && typeof partial === "object") {
+                for (const [channelId, info] of Object.entries(partial as Record<string, unknown>)) {
+                    lines.push(`• #${channelId}: ${JSON.stringify(info)}`);
+                }
+            }
+            if (Array.isArray(hints)) {
+                lines.push("Hints:", ...hints.map((h) => `- ${String(h)}`));
+            }
+            sections.push(lines.join("\n"));
+        } catch {
+            // skip
+        }
+    }
+    return sections.length ? sections.join("\n\n") : null;
+}
+
 function buildTraceText(entry: DebugLogTraceEntry): string {
     const events = entry.traceEvents;
     if (!events || !events.length) {
@@ -465,6 +527,9 @@ export function buildLogEntryViewText(
     }
     if (view === "trace") {
         return buildTraceText(entry);
+    }
+    if (view === "notes") {
+        return buildNotesText(entry, entries, entryIndex);
     }
     if (view === "json") {
         return JSON.stringify(entry, null, 2);

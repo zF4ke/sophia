@@ -202,6 +202,35 @@ describe("ModelGateway", () => {
         });
     });
 
+    it("throws when text generation emits raw tool markup", async () => {
+        (ModelGateway as any).client.chat.completions.create = vi.fn().mockResolvedValue({
+            choices: [{
+                message: {
+                    content: [
+                        "<minimax:tool_call>",
+                        "<invoke name=\"resolve_member_identity\">",
+                        "<parameter name=\"targets\">[\"oneperson\"]</parameter>",
+                        "</invoke>",
+                        "</minimax:tool_call>",
+                    ].join("\n"),
+                },
+            }],
+            usage: {
+                server_tool_use: {
+                    web_search_requests: 0,
+                },
+            },
+        });
+
+        await expect(
+            ModelGateway.generateText([{ role: "user", content: "Continue" }], {
+                traceContext: {
+                    traceLabel: "raw_tool_markup_text",
+                },
+            })
+        ).rejects.toThrow("Model emitted raw tool markup during text generation");
+    });
+
     it("sends the OpenRouter web search tool when web mode is enabled", async () => {
         const create = vi.fn().mockResolvedValue({
             choices: [{ message: { content: "Resposta com web" } }],
@@ -251,6 +280,95 @@ describe("ModelGateway", () => {
             webSearchRequests: 2,
         });
     });
+
+    it("retries once when the provider returns a malformed completion for tool chat", async () => {
+        const create = vi
+            .fn()
+            .mockResolvedValueOnce({ id: "bad-response" })
+            .mockResolvedValueOnce({
+                choices: [
+                    {
+                        message: {
+                            content: null,
+                            tool_calls: [
+                                {
+                                    id: "tool_1",
+                                    function: {
+                                        name: "finish",
+                                        arguments: "{\"answer\":\"ok\"}",
+                                    },
+                                },
+                            ],
+                        },
+                        finish_reason: "tool_calls",
+                    },
+                ],
+                usage: {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                },
+            });
+        (ModelGateway as any).client.chat.completions.create = create;
+
+        const result = await ModelGateway.generateWithTools(
+            [{ role: "user", content: "Teste" }],
+            {
+                tools: [],
+                traceContext: {
+                    traceLabel: "tool_retry_test",
+                },
+            }
+        );
+
+        expect(create).toHaveBeenCalledTimes(2);
+        expect(result.toolCalls).toEqual([
+            {
+                id: "tool_1",
+                type: "function",
+                function: {
+                    name: "finish",
+                    arguments: "{\"answer\":\"ok\"}",
+                },
+            },
+        ]);
+    });
+
+    it("flags raw invoke markup when the provider omits tool_calls", async () => {
+        (ModelGateway as any).client.chat.completions.create = vi.fn().mockResolvedValue({
+            choices: [
+                {
+                    message: {
+                        content: [
+                            "<invoke name=\"search__messages\">",
+                            "<parameter name=\"author_id\">123</parameter>",
+                            "<parameter name=\"limit\">25</parameter>",
+                            "</invoke>",
+                            "</minimax:tool_call>",
+                        ].join("\n"),
+                    },
+                    finish_reason: "stop",
+                },
+            ],
+            usage: {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            },
+        });
+
+        const result = await ModelGateway.generateWithTools(
+            [{ role: "user", content: "Teste" }],
+            {
+                tools: [],
+                traceContext: {
+                    traceLabel: "invoke_markup_test",
+                },
+            }
+        );
+
+        expect(result.content).toBeNull();
+        expect(result.toolCalls).toEqual([]);
+        expect(result.malformedToolCallText).toContain("<invoke name=\"search__messages\">");
+    });
 });
-
-

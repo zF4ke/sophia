@@ -11,5 +11,6 @@ export default defineConfig({
         environment: "node",
         include: ["tests/**/*.test.ts"],
         exclude: ["tests/live/**/*.test.ts"],
+        setupFiles: ["tests/setup/testStorage.ts"],
     },
 });

@@ -102,5 +102,36 @@ export function renderDebugTrace(
         );
     }
 
+    if (state.notesSnapshot.length > 0 || state.planPreview) {
+        const NOTES_VISIBLE = 15;
+        const notesLines: string[] = [];
+        const totalWords = state.notesSnapshot.reduce((sum, n) => sum + n.wordCount, 0);
+
+        notesLines.push(`> **Notes:** ${state.notesSnapshot.length} · **Total words:** ${totalWords.toLocaleString()}`);
+
+        if (state.planPreview) {
+            notesLines.push(`> **Plan:** ${trimText(state.planPreview, 150)}`);
+        }
+
+        const visible = state.notesSnapshot.slice(-NOTES_VISIBLE);
+        const hiddenNotes = state.notesSnapshot.length - visible.length;
+        if (hiddenNotes > 0) {
+            notesLines.push(`… ${hiddenNotes} earlier notes`);
+        }
+        for (const note of visible) {
+            const labelTag = note.label ? `\`${note.label}\`` : "";
+            notesLines.push(`\`#${note.seq}\` ${labelTag} ${trimText(note.bodyPreview, 100)} *(${note.wordCount}w)*`);
+        }
+
+        containers.push(
+            new ContainerBuilder()
+                .setAccentColor(0xe67e22)
+                .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent("### Scratchpad"),
+                    new TextDisplayBuilder().setContent(notesLines.join("\n"))
+                )
+        );
+    }
+
     return containers;
 }

@@ -13,6 +13,7 @@ const TOOL_NAMES = [
     // ── Retrieval ──
     "retrieve_messages",
     "search_messages",
+    "random_channel_message",
     // ── Server & channel discovery ──
     "list_guild_structure",
     "get_guild_context",
@@ -28,16 +29,34 @@ const TOOL_NAMES = [
     // ── Utilities ──
     "measure_text_length",
     "evaluate_math",
+    // ── Role discovery ──
+    "list_roles",
     // ── Write ──
     "create_channel",
     "create_category",
     "create_thread",
     "move_channel",
+    "move_category",
     "manage_member_roles",
     "send_message",
+    "edit_message",
+    "create_role",
     // ── Destructive ──
     "clear_messages",
+    "delete_messages",
     "delete_channel",
+    "delete_role",
+    "edit_channel",
+    "edit_role",
+    // ── Control ──
+    "start_long_task",
+    // ── Scratchpad ──
+    "note_add",
+    "note_list",
+    "note_read",
+    "note_update",
+    "note_clear",
+    "plan_update",
 ] as const;
 
 // ── Derived types and arrays ──
@@ -49,5 +68,4 @@ export const DISCORD_TOOL_NAMES = [...TOOL_NAMES] as DiscordToolName[];
 export const T = Object.fromEntries(
     DISCORD_TOOL_NAMES.map((n) => [n, n]),
 ) as { readonly [K in DiscordToolName]: K };
-
 

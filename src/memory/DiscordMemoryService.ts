@@ -30,6 +30,7 @@ type RuntimeRunRecord = {
     guildId: string | null;
     channelId: string | null;
     actorId: string;
+    requesterDisplayName: string | null;
     trigger: string | null;
     classificationMode: string;
     runtimeMode: string;
@@ -47,6 +48,18 @@ type RecentToolRunRecord = {
     summary: string;
     learned: string;
     outputJson: string;
+    createdTimestamp: number;
+};
+
+export type RequestNoteKind = "note" | "plan";
+
+export type RequestNoteRecord = {
+    requestId: string;
+    threadId: string;
+    seq: number;
+    kind: RequestNoteKind;
+    label: string | null;
+    body: string;
     createdTimestamp: number;
 };
 
@@ -628,6 +641,35 @@ export class DiscordMemoryService {
         return rows.map(mapStoredMessage).reverse();
     }
 
+    public static async getRandomStoredMessageAsync(
+        scope: SearchMessageScope & { channelIds: string[] },
+    ): Promise<StoredMessage | null> {
+        const [first] = await this.getRandomStoredMessagesAsync(scope, 1);
+        return first ?? null;
+    }
+
+    public static async getRandomStoredMessagesAsync(
+        scope: SearchMessageScope & { channelIds: string[] },
+        limit: number,
+    ): Promise<StoredMessage[]> {
+        await this.ensureInitialized();
+        const sanitizedLimit = Math.max(1, Math.min(100, Math.floor(limit || 1)));
+        const client = OperationalStore.getClient();
+        const scoped = buildScopeSql(scope);
+        const result = await client.execute({
+            sql: `
+                SELECT *
+                FROM messages m
+                ${scoped.sql}
+                ORDER BY RANDOM()
+                LIMIT ${sanitizedLimit}
+            `,
+            args: scoped.args,
+        });
+
+        return (result.rows as Array<Record<string, unknown>>).map(mapStoredMessage);
+    }
+
     public static async getChannelHistoryPageAsync(options: {
         guildId?: string | null;
         channelIds: string[];
@@ -637,6 +679,7 @@ export class DiscordMemoryService {
         perChannelOldestMessageId?: Record<string, string | null>;
         excludedMessageIds?: string[];
         limit?: number;
+        order?: "newest" | "oldest";
     }): Promise<StoredMessage[]> {
         await this.ensureInitialized();
         const limit = Math.max(1, options.limit ?? 20);
@@ -644,6 +687,7 @@ export class DiscordMemoryService {
             return [];
         }
 
+        const order: "newest" | "oldest" = options.order === "oldest" ? "oldest" : "newest";
         const client = OperationalStore.getClient();
         const perChannelArgs: InArgs = {};
         const perChannelClauses = options.channelIds.map((channelId, index) => {
@@ -657,7 +701,10 @@ export class DiscordMemoryService {
 
             const cursorArg = `historyCursorId${index}`;
             perChannelArgs[cursorArg] = cursorMessageId;
-            return `(m.channel_id = :${channelArg} AND CAST(m.id AS INTEGER) < CAST(:${cursorArg} AS INTEGER))`;
+            // Newest-first: continue with messages OLDER than cursor (id <).
+            // Oldest-first: continue with messages NEWER than cursor (id >).
+            const cmp = order === "oldest" ? ">" : "<";
+            return `(m.channel_id = :${channelArg} AND CAST(m.id AS INTEGER) ${cmp} CAST(:${cursorArg} AS INTEGER))`;
         });
 
         const baseScope: SearchMessageScope = {
@@ -673,13 +720,14 @@ export class DiscordMemoryService {
             baseScopeSql.replace(/^WHERE\s+/i, ""),
         ].filter(Boolean);
 
+        const sqlOrder = order === "oldest" ? "ASC" : "DESC";
         const rows = (
             await client.execute({
                 sql: `
                     SELECT *
                     FROM messages m
                     ${whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : ""}
-                    ORDER BY m.created_timestamp DESC
+                    ORDER BY m.created_timestamp ${sqlOrder}
                     LIMIT :limit
                 `,
                 args: {
@@ -690,7 +738,10 @@ export class DiscordMemoryService {
             })
         ).rows as Array<Record<string, unknown>>;
 
-        return rows.map(mapStoredMessage).reverse();
+        // For newest-first (DESC) we reverse to chronological.
+        // For oldest-first (ASC) rows are already chronological.
+        const mapped = rows.map(mapStoredMessage);
+        return order === "oldest" ? mapped : mapped.reverse();
     }
 
     public static async getMessageThreadAsync(
@@ -1106,11 +1157,11 @@ export class DiscordMemoryService {
         await client.execute({
             sql: `
                 INSERT INTO runtime_runs (
-                    request_id, thread_id, guild_id, channel_id, actor_id, trigger,
+                    request_id, thread_id, guild_id, channel_id, actor_id, requester_display_name, trigger,
                     classification_mode, runtime_mode, stop_reason, confidence,
                     question, answer, created_timestamp
                 ) VALUES (
-                    :requestId, :threadId, :guildId, :channelId, :actorId, :trigger,
+                    :requestId, :threadId, :guildId, :channelId, :actorId, :requesterDisplayName, :trigger,
                     :classificationMode, :runtimeMode, :stopReason, :confidence,
                     :question, :answer, :createdTimestamp
                 )
@@ -1121,6 +1172,7 @@ export class DiscordMemoryService {
                 guildId: run.guildId,
                 channelId: run.channelId,
                 actorId: run.actorId,
+                requesterDisplayName: run.requesterDisplayName,
                 trigger: run.trigger,
                 classificationMode: run.classificationMode,
                 runtimeMode: run.runtimeMode,
@@ -1158,6 +1210,7 @@ export class DiscordMemoryService {
                 sql: `
                     SELECT
                         request_id,
+                        requester_display_name,
                         question,
                         answer,
                         classification_mode,
@@ -1180,6 +1233,7 @@ export class DiscordMemoryService {
         return rows
             .map((row) => ({
                 requestId: String(row.request_id),
+                requesterDisplayName: row.requester_display_name ? String(row.requester_display_name) : null,
                 question: String(row.question || ""),
                 answer: String(row.answer || ""),
                 classificationMode: String(row.classification_mode || ""),
@@ -1236,6 +1290,289 @@ export class DiscordMemoryService {
             outputJson: String(row.output_json || "{}"),
             createdTimestamp: Number(row.created_timestamp || 0),
         }));
+    }
+
+    public static async addRequestNote(options: {
+        requestId: string;
+        threadId: string;
+        kind: RequestNoteKind;
+        label: string | null;
+        body: string;
+    }): Promise<{ seq: number }> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const row = (
+            await client.execute({
+                sql: `
+                    SELECT COALESCE(MAX(seq), 0) AS maxSeq
+                    FROM request_notes
+                    WHERE request_id = :requestId
+                `,
+                args: { requestId: options.requestId },
+            })
+        ).rows[0] as Record<string, unknown> | undefined;
+        const nextSeq = Number(row?.maxSeq ?? 0) + 1;
+
+        await client.execute({
+            sql: `
+                INSERT INTO request_notes (
+                    request_id, thread_id, seq, kind, label, body, created_timestamp
+                ) VALUES (
+                    :requestId, :threadId, :seq, :kind, :label, :body, :createdTimestamp
+                )
+            `,
+            args: {
+                requestId: options.requestId,
+                threadId: options.threadId,
+                seq: nextSeq,
+                kind: options.kind,
+                label: options.label,
+                body: options.body,
+                createdTimestamp: now(),
+            },
+        });
+        return { seq: nextSeq };
+    }
+
+    public static async updateRequestNote(options: {
+        requestId: string;
+        seq: number;
+        body: string;
+        label?: string | null;
+    }): Promise<{ updated: boolean }> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const setClauses = ["body = :body", "created_timestamp = :ts"];
+        const args: InArgs = {
+            requestId: options.requestId,
+            seq: options.seq,
+            body: options.body,
+            ts: now(),
+        };
+        if (options.label !== undefined) {
+            setClauses.push("label = :label");
+            args.label = options.label;
+        }
+        const result = await client.execute({
+            sql: `UPDATE request_notes SET ${setClauses.join(", ")} WHERE request_id = :requestId AND seq = :seq AND kind = 'note'`,
+            args,
+        });
+        return { updated: Number(result.rowsAffected ?? 0) > 0 };
+    }
+
+    public static async upsertRequestPlan(options: {
+        requestId: string;
+        threadId: string;
+        body: string;
+    }): Promise<{ version: number }> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const row = (
+            await client.execute({
+                sql: `
+                    SELECT seq FROM request_notes
+                    WHERE request_id = :requestId AND kind = 'plan'
+                    ORDER BY seq ASC LIMIT 1
+                `,
+                args: { requestId: options.requestId },
+            })
+        ).rows[0] as Record<string, unknown> | undefined;
+
+        if (row) {
+            await client.execute({
+                sql: `
+                    UPDATE request_notes
+                    SET body = :body, created_timestamp = :createdTimestamp
+                    WHERE request_id = :requestId AND seq = :seq
+                `,
+                args: {
+                    requestId: options.requestId,
+                    seq: Number(row.seq),
+                    body: options.body,
+                    createdTimestamp: now(),
+                },
+            });
+            const versionRow = (
+                await client.execute({
+                    sql: `
+                        SELECT COUNT(*) AS versions FROM request_notes
+                        WHERE request_id = :requestId AND kind = 'plan'
+                    `,
+                    args: { requestId: options.requestId },
+                })
+            ).rows[0] as Record<string, unknown> | undefined;
+            const existing = Number(versionRow?.versions ?? 1);
+            return { version: existing + 1 };
+        }
+
+        const { seq } = await this.addRequestNote({
+            requestId: options.requestId,
+            threadId: options.threadId,
+            kind: "plan",
+            label: null,
+            body: options.body,
+        });
+        return { version: 1 + (seq > 0 ? 0 : 0) };
+    }
+
+    public static async getRequestPlan(requestId: string): Promise<string | null> {
+        await this.ensureInitialized();
+        const row = (
+            await OperationalStore.getClient().execute({
+                sql: `
+                    SELECT body FROM request_notes
+                    WHERE request_id = :requestId AND kind = 'plan'
+                    ORDER BY seq ASC LIMIT 1
+                `,
+                args: { requestId },
+            })
+        ).rows[0] as Record<string, unknown> | undefined;
+        return row ? String(row.body || "") : null;
+    }
+
+    public static async listRequestNotes(options: {
+        requestId: string;
+        threadId?: string;
+        includeThreadHistory?: boolean;
+        kind?: RequestNoteKind;
+        label?: string;
+    }): Promise<RequestNoteRecord[]> {
+        await this.ensureInitialized();
+        const clauses: string[] = [];
+        const args: InArgs = {};
+
+        if (options.includeThreadHistory && options.threadId) {
+            clauses.push(`(request_id = :requestId OR thread_id = :threadId)`);
+            args.requestId = options.requestId;
+            args.threadId = options.threadId;
+        } else {
+            clauses.push(`request_id = :requestId`);
+            args.requestId = options.requestId;
+        }
+
+        if (options.kind) {
+            clauses.push(`kind = :kind`);
+            args.kind = options.kind;
+        }
+        if (options.label) {
+            clauses.push(`label = :label`);
+            args.label = options.label;
+        }
+
+        const rows = (
+            await OperationalStore.getClient().execute({
+                sql: `
+                    SELECT request_id, thread_id, seq, kind, label, body, created_timestamp
+                    FROM request_notes
+                    WHERE ${clauses.join(" AND ")}
+                    ORDER BY created_timestamp ASC, seq ASC
+                `,
+                args,
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        return rows.map((row) => ({
+            requestId: String(row.request_id),
+            threadId: String(row.thread_id),
+            seq: Number(row.seq),
+            kind: String(row.kind) as RequestNoteKind,
+            label: row.label == null ? null : String(row.label),
+            body: String(row.body || ""),
+            createdTimestamp: Number(row.created_timestamp || 0),
+        }));
+    }
+
+    public static async countRequestNotes(options: {
+        requestId: string;
+        kind?: RequestNoteKind;
+    }): Promise<number> {
+        await this.ensureInitialized();
+        const args: InArgs = { requestId: options.requestId };
+        let sql = `SELECT COUNT(*) AS n FROM request_notes WHERE request_id = :requestId`;
+        if (options.kind) {
+            sql += ` AND kind = :kind`;
+            args.kind = options.kind;
+        }
+        const row = (
+            await OperationalStore.getClient().execute({ sql, args })
+        ).rows[0] as Record<string, unknown> | undefined;
+        return Number(row?.n ?? 0);
+    }
+
+    public static async clearRequestNotes(options: {
+        requestId: string;
+        label?: string;
+        kind?: RequestNoteKind;
+    }): Promise<{ removed: number }> {
+        await this.ensureInitialized();
+        const clauses: string[] = [`request_id = :requestId`];
+        const args: InArgs = { requestId: options.requestId };
+        if (options.label) {
+            clauses.push(`label = :label`);
+            args.label = options.label;
+        }
+        if (options.kind) {
+            clauses.push(`kind = :kind`);
+            args.kind = options.kind;
+        }
+        const result = await OperationalStore.getClient().execute({
+            sql: `DELETE FROM request_notes WHERE ${clauses.join(" AND ")}`,
+            args,
+        });
+        return { removed: Number(result.rowsAffected ?? 0) };
+    }
+
+    /**
+     * Delete notes whose request_id is older than the most recent `keepRequests`
+     * distinct request_ids on the same thread. Plans are kept — only kind='note' is pruned.
+     */
+    public static async pruneExpiredThreadNotes(options: {
+        threadId: string;
+        keepRequests: number;
+    }): Promise<{ removed: number }> {
+        if (options.keepRequests <= 0) return { removed: 0 };
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+
+        // Find the most recent N distinct request_ids on this thread,
+        // ordered by the latest note timestamp within each request.
+        const recentRows = (
+            await client.execute({
+                sql: `
+                    SELECT request_id, MAX(created_timestamp) AS latest_ts
+                    FROM request_notes
+                    WHERE thread_id = :threadId AND kind = 'note'
+                    GROUP BY request_id
+                    ORDER BY latest_ts DESC
+                `,
+                args: { threadId: options.threadId },
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        // If there are fewer requests than the limit, nothing to prune.
+        if (recentRows.length <= options.keepRequests) {
+            return { removed: 0 };
+        }
+
+        const keepIds = new Set(
+            recentRows.slice(0, options.keepRequests).map((r) => String(r.request_id)),
+        );
+
+        // Delete notes from requests outside the keep set.
+        const expiredIds = recentRows
+            .slice(options.keepRequests)
+            .map((r) => String(r.request_id));
+
+        let removed = 0;
+        for (const reqId of expiredIds) {
+            if (keepIds.has(reqId)) continue;
+            const res = await client.execute({
+                sql: `DELETE FROM request_notes WHERE request_id = :requestId AND kind = 'note'`,
+                args: { requestId: reqId },
+            });
+            removed += Number(res.rowsAffected ?? 0);
+        }
+        return { removed };
     }
 
     public static async recordConversationMessages(options: {

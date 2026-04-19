@@ -2,6 +2,12 @@ import { ModalSubmitInteraction } from "discord.js";
 import { SecurityService } from "@/security/SecurityService";
 import { refreshPanel } from "@/discord/commands/system/access/handlers/panelRefresh";
 import type { AccessHandlerContext } from "@/discord/commands/system/access/handlers/types";
+import { isAccessPolicyTarget } from "@/security/policyTargets";
+
+function formatTargetLabel(commandName: string): string {
+    const labels = SecurityService.getPolicyTargetLabels();
+    return isAccessPolicyTarget(commandName) ? labels[commandName] : `/${commandName}`;
+}
 
 export async function handleAccessModal(
     interaction: ModalSubmitInteraction,
@@ -41,7 +47,7 @@ export async function handleAccessModal(
     await refreshPanel(interaction, context, {
         view: "commands",
         selectedCommand: commandName,
-        notice: `Limites de /${commandName} atualizados.`,
+        notice: `Limites de ${formatTargetLabel(commandName)} atualizados.`,
     });
     return true;
 }

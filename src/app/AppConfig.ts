@@ -55,6 +55,12 @@ export function getAppConfig(): AppConfig {
             escalationFetchLimit: rt.escalationFetchLimit,
             retrievalHistoryLimit: rt.retrievalHistoryLimit,
             retrievalContextWindow: rt.retrievalContextWindow,
+            longTask: {
+                maxToolCalls: rt.longTask?.maxToolCalls ?? 200,
+                maxLatencyBudgetMs: rt.longTask?.maxLatencyBudgetMs ?? 600_000,
+                evidenceSliceFloor: rt.longTask?.evidenceSliceFloor ?? 128,
+                retrievalInlineCrawlBatches: rt.longTask?.retrievalInlineCrawlBatches ?? 3,
+            },
         },
     };
 }

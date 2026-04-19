@@ -46,7 +46,7 @@ describe("AppConfig", () => {
         }));
         vi.spyOn(SettingsService, "load").mockReturnValue({
             ...defaults,
-            modelProfile: "smarter",
+            modelProfile: "minimax27",
         });
 
         const { getAppConfig } = await import("@/app/AppConfig");
@@ -54,10 +54,10 @@ describe("AppConfig", () => {
 
         expect(config.modelProfileName).toBe("minimax27");
         expect(config.modelProfile.chatModel).toBe("minimax/minimax-m2.7");
-        expect(updateSpy).toHaveBeenCalledWith({ modelProfile: "minimax27" });
+        expect(updateSpy).not.toHaveBeenCalled();
     });
 
-    it("falls back from stale saved profile names", async () => {
+    it("falls back from invalid saved profile names", async () => {
         process.env.DISCORD_TOKEN = "discord-token";
         process.env.OPENROUTER_API_KEY = "openrouter-key";
 
@@ -70,14 +70,13 @@ describe("AppConfig", () => {
         }));
         vi.spyOn(SettingsService, "load").mockReturnValue({
             ...defaults,
-            modelProfile: "cheap",
+            modelProfile: "does-not-exist",
         });
 
         const { getAppConfig } = await import("@/app/AppConfig");
         const config = getAppConfig();
 
-        expect(config.modelProfileName).toBe("free-elephant");
-        expect(config.modelProfile.chatModel).toBe("openrouter/elephant-alpha");
-        expect(updateSpy).toHaveBeenCalledWith({ modelProfile: "free-elephant" });
+        expect(config.modelProfileName).toBe(defaults.modelProfile);
+        expect(updateSpy).toHaveBeenCalledWith({ modelProfile: defaults.modelProfile });
     });
 });

@@ -2,6 +2,9 @@
   "name": "sophia",
   "version": "5.0.0",
   "main": "index.js",
+  "engines": {
+    "node": ">=20.12.0"
+  },
   "scripts": {
     "dev": "nodemon --watch \"src/**/*\" --watch \"resources/**/*\" --ext ts,js,json,md --exec \"tsx src/index.ts\"",
     "start": "tsx ./src/index.ts",
@@ -20,7 +23,7 @@
   "dependencies": {
     "@libsql/client": "^0.17.2",
     "discord.js": "^14.26.2",
-    "dotenv": "^17.4.1",
+    "gpt-tokenizer": "^3.4.0",
     "openai": "^6.34.0",
     "zod": "^4.3.6"
   },
