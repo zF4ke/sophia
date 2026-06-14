@@ -140,8 +140,8 @@ function findExactNormalizedMember(guild: Guild, query: string): GuildMember | n
 
     // Prefer a username-exact match over a displayName-only match.
     // This matters when multiple members share the same display name
-    // but have distinct usernames (e.g. two "Glonos" with usernames
-    // "subjectless" and "glonos" — querying "glonos" should find the latter).
+    // but have distinct usernames (e.g. two "Drennan" with usernames
+    // "quietfox" and "glonos" — querying "glonos" should find the latter).
     const usernameMatch = guild.members.cache.find(
         (candidate) => normalizeMemberLookupValue(candidate.user.username) === normalizedQuery
     );

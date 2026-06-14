@@ -101,8 +101,8 @@ describe("DiscordLiveService.listMembers", () => {
     });
 
     it("resolves fuzzy member profile queries with collapsed spacing", async () => {
-        const member = createMember("u1", "oneperson", "Openrosen", 100);
-        member.nickname = "One Person";
+        const member = createMember("u1", "riverside", "Rosewind", 100);
+        member.nickname = "Riverside";
         member.roles.cache.set("r1", { id: "r1", name: "member" } as any);
 
         const guild = {
@@ -115,12 +115,12 @@ describe("DiscordLiveService.listMembers", () => {
             },
         } as any;
 
-        const result = await DiscordLiveService.getMemberProfile(guild, "One Person");
+        const result = await DiscordLiveService.getMemberProfile(guild, "Riverside");
 
         expect(result?.id).toBe("u1");
-        expect(result?.username).toBe("oneperson");
-        expect(result?.displayName).toBe("Openrosen");
-        expect(result?.nickname).toBe("One Person");
+        expect(result?.username).toBe("riverside");
+        expect(result?.displayName).toBe("Rosewind");
+        expect(result?.nickname).toBe("Riverside");
     });
 
     it("resolves an exact member id even when the member is not already cached", async () => {

@@ -197,7 +197,7 @@ describe("runtime corpus task state machine", () => {
             .mockResolvedValueOnce(makeFinishResult("Resposta normal."));
 
         const result = await Runtime.answer(createInput({
-            question: "Analise o canal <#731278507740495882> em 2023 e me diga o clima geral",
+            question: "Analise o canal <#333333333333333333> em 2023 e me diga o clima geral",
         }));
 
         expect(result.answer).toBe("Resposta normal.");

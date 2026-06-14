@@ -209,7 +209,7 @@ describe("ModelGateway", () => {
                     content: [
                         "<minimax:tool_call>",
                         "<invoke name=\"resolve_member_identity\">",
-                        "<parameter name=\"targets\">[\"oneperson\"]</parameter>",
+                        "<parameter name=\"targets\">[\"riverside\"]</parameter>",
                         "</invoke>",
                         "</minimax:tool_call>",
                     ].join("\n"),

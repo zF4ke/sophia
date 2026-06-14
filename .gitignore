@@ -130,3 +130,6 @@ research/cline
 research/kilocode
 research/opencode
 research/openclaw
+
+# raw live-test capture (contains third-party member data — local only)
+research/live_tests_raw.md

@@ -253,8 +253,8 @@ describe("DiscordChannelCrawlService", () => {
                     content: "A qualidade audiovisual desse vídeo é bizarra.",
                     author: {
                         id: "u1",
-                        username: "oneperson",
-                        globalName: "One Person",
+                        username: "riverside",
+                        globalName: "Riverside",
                     },
                     member: {
                         displayName: "openrosen",
@@ -286,7 +286,7 @@ describe("DiscordChannelCrawlService", () => {
             expect.objectContaining({
                 messageId: "m1",
                 authorName: "openrosen",
-                authorUsername: "oneperson",
+                authorUsername: "riverside",
                 authorNickname: "openrosen",
             }),
         ]);

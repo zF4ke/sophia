@@ -5,7 +5,7 @@ describe("AnswerFormatter", () => {
     it("returns only the answer body even when citations exist", () => {
         const formatted = AnswerFormatter.format("Resposta pronta.", [
             {
-                label: "scart · F4zke",
+                label: "scart · Talven",
                 jumpLink: "https://discord.com/channels/g1/c1/m1",
             },
         ]);
