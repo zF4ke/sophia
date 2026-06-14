@@ -23,10 +23,9 @@ Sophia turns your Discord server into something you can talk to. Ask her what ha
 
 <div align="center">
 
-A polished product overview lives in [`landing/index.html`](landing/index.html) (open it in a browser).
+<img src="docs/preview.png" alt="Sophia landing page" width="860" />
 
-<!-- Add a screenshot at docs/preview.png and uncomment: -->
-<!-- <img src="docs/preview.png" alt="Sophia preview" width="820" /> -->
+<br/><sub>A conversational agent you talk to in plain language, with admin approval on every change. Full overview in <a href="landing/index.html"><code>landing/index.html</code></a>.</sub>
 
 </div>
 
