@@ -179,7 +179,7 @@ Current runtime capabilities and workflows:
 
 ### Member + channel + message retrieval
 
-- User asks: `Do que o One Person está falando em #reflexoes?`
+- User asks: `Do que o Riverside está falando em #reflexoes?`
 - Runtime resolves the speaker with `resolve_member_identity`.
 - Runtime resolves the target channel with `resolve_channel_targets`.
 - Runtime retrieves scoped message evidence with `retrieve_messages`.
