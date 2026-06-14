@@ -1,10 +1,36 @@
+<div align="center">
+
+<img src="assets/logo.svg" alt="Sophia" width="76" />
+
 # Sophia
 
-A conversational Discord assistant that can search server history, manage channels, and take actions — all through natural language.
+*A conversational AI agent for Discord that searches your server history and acts on it, with admin approval on every change.*
 
-Sophia turns your Discord server into a searchable, manageable workspace. Ask her questions about what happened in any channel, who said what, or have her create channels, manage roles, and clean up messages — with a built-in approval system that keeps admins in control.
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-8b6dff)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![discord.js](https://img.shields.io/badge/discord.js-v14-5865F2?logo=discord&logoColor=white)
+![Node](https://img.shields.io/badge/node-20%2B-339933?logo=node.js&logoColor=white)
 
-## Features
+**[How it works](docs/how-sophia-works.md)** · **[Architecture](docs/architecture.md)** · **[Agent loop](docs/agent-loop.md)** · **[Testing](docs/testing.md)**
+
+</div>
+
+---
+
+Sophia turns your Discord server into something you can talk to. Ask her what happened in any channel, who said what and when, or have her create channels, manage roles, and clean up messages, all in plain language, with a built-in approval system that keeps admins in control.
+
+## 📸 Preview
+
+<div align="center">
+
+A polished product overview lives in [`landing/index.html`](landing/index.html) (open it in a browser).
+
+<!-- Add a screenshot at docs/preview.png and uncomment: -->
+<!-- <img src="docs/preview.png" alt="Sophia preview" width="820" /> -->
+
+</div>
+
+## ✨ Features
 
 **Conversational AI** — Talk to Sophia naturally through `/talk`, mentions, or replies. She maintains conversation continuity across reply chains and threads.
 
