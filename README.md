@@ -33,19 +33,35 @@ Sophia turns your Discord server into a searchable, manageable workspace. Ask he
 ### Install
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/zF4ke/sophia.git
 cd sophia
 npm install
 ```
 
+### Get an OpenRouter key
+
+Sophia uses [OpenRouter](https://openrouter.ai/) to reach the language models. Bring your own key — Sophia never ships one, and you pay OpenRouter directly for the tokens you use.
+
+1. Sign up at [openrouter.ai](https://openrouter.ai/).
+2. Create a key at [openrouter.ai/keys](https://openrouter.ai/keys).
+3. Add credit (or start with free-tier model profiles).
+
+You also need a Discord bot token from the [Discord Developer Portal](https://discord.com/developers/applications) (create an application, add a Bot, copy its token).
+
 ### Configure
 
-Create a `.env` file:
+Copy the example file and fill in your values:
+
+```bash
+cp .env.example .env
+```
 
 ```env
 DISCORD_TOKEN=your-discord-bot-token
 OPENROUTER_API_KEY=your-openrouter-api-key
 ```
+
+A `.env` file is **required** before the first run — `npm start` reads it on startup and will exit if it is missing. See [`.env.example`](.env.example) for every supported variable (including the optional `BOOTSTRAP_ADMIN_IDS` and `SOPHIA_STORAGE_ROOT`).
 
 ### Run
 
@@ -139,7 +155,7 @@ All runtime tuning is done through `/settings` or `storage/settings.json`:
 
 These values are intentionally hardcoded and where to change them:
 
-- Default protected channel IDs: `src/app/SettingsService.ts` (`DEFAULT_PROTECTED_CHANNEL_IDS`)
+- Default protected channel IDs: `src/app/SettingsService.ts` (`DEFAULT_PROTECTED_CHANNEL_IDS`, empty by default — populate per server with `/superchannels`)
 - Runtime default values (tool limits, budgets, retrieval defaults, approval timeout): `src/app/SettingsService.ts` (`DEFAULT_SETTINGS.runtime`)
 - Context prune threshold ratio (`0.80`): `src/runtime/Runtime.ts` (`CONTEXT_HEADROOM_RATIO`)
 - OpenRouter base URL: `src/app/AppConfig.ts` (`openRouterBaseUrl`)
@@ -181,3 +197,11 @@ These values are intentionally hardcoded and where to change them:
 - **Storage:** libSQL (local SQLite)
 - **Validation:** Zod
 - **Testing:** Vitest
+
+## Project Status
+
+Sophia is functional and actively developed, but honest about its edges: there is no long-term memory or persistent personality yet, retrieval is cache-first with live refresh (not a full memory system), and large-server backfills can take several turns to complete. Self-hosting assumes you are comfortable with Node.js and a `.env` file. If that fits you, it runs today.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, hobby, research, education, and nonprofit use. **Commercial use is not permitted** under this license. See the [LICENSE](LICENSE) file for the full terms.
