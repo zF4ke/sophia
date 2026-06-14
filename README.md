@@ -11,7 +11,7 @@
 ![discord.js](https://img.shields.io/badge/discord.js-v14-5865F2?logo=discord&logoColor=white)
 ![Node](https://img.shields.io/badge/node-20%2B-339933?logo=node.js&logoColor=white)
 
-**[How it works](docs/how-sophia-works.md)** · **[Architecture](docs/architecture.md)** · **[Agent loop](docs/agent-loop.md)** · **[Testing](docs/testing.md)**
+**[Live site](https://zf4ke.github.io/sophia/)** · **[How it works](docs/how-sophia-works.md)** · **[Architecture](docs/architecture.md)** · **[Testing](docs/testing.md)**
 
 </div>
 
@@ -23,9 +23,9 @@ Sophia turns your Discord server into something you can talk to. Ask her what ha
 
 <div align="center">
 
-<img src="docs/preview.png" alt="Sophia landing page" width="860" />
+<a href="https://zf4ke.github.io/sophia/"><img src="docs/preview.png" alt="Sophia landing page" width="860" /></a>
 
-<br/><sub>A conversational agent you talk to in plain language, with admin approval on every change. Full overview in <a href="landing/index.html"><code>landing/index.html</code></a>.</sub>
+<br/><sub>A conversational agent you talk to in plain language, with admin approval on every change. <a href="https://zf4ke.github.io/sophia/"><b>View the live site →</b></a></sub>
 
 </div>
 
