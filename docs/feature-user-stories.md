@@ -165,7 +165,7 @@ Current runtime capabilities and workflows:
 
 ### Ambiguous identity disambiguation
 
-- User asks: `Qual Glonos é o verdadeiro?`
+- User asks: `Qual Drennan é o verdadeiro?`
 - Runtime resolves members with `resolve_member_identity` or `list_members`.
 - If multiple current-guild members share the same display name, the runtime should fetch a profile for each with `get_member_profile` (once per member, different arguments).
 - Sophia compares the profiles (roles, join date, account age, activity history) and makes a specific recommendation instead of asking the user to choose manually.
@@ -179,7 +179,7 @@ Current runtime capabilities and workflows:
 
 ### Member + channel + message retrieval
 
-- User asks: `Do que o One Person está falando em #reflexoes?`
+- User asks: `Do que o Riverside está falando em #reflexoes?`
 - Runtime resolves the speaker with `resolve_member_identity`.
 - Runtime resolves the target channel with `resolve_channel_targets`.
 - Runtime retrieves scoped message evidence with `retrieve_messages`.
@@ -244,8 +244,8 @@ Current runtime capabilities and workflows:
 
 ### Role management after member lookup
 
-- Admin asks: `Give the Moderator role to Glonos.`
-- Runtime resolves "Glonos" with `resolve_member_identity`.
+- Admin asks: `Give the Moderator role to Drennan.`
+- Runtime resolves "Drennan" with `resolve_member_identity`.
 - If ambiguous, fetches profiles with `get_member_profile` to disambiguate.
 - Runtime calls `manage_member_roles` to add the role.
 - Approval card is shown. Admin approves. Role is added.

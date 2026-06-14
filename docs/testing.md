@@ -83,15 +83,15 @@ Recent deterministic regression additions are in:
 
 These are the canonical real-server test cases used to validate end-to-end behavior. They require a live bot instance and a real guild.
 
-### The Two Glonos Problem
+### The Two Drennan Problem
 
 Tests ambiguous identity detection, profile escalation, and decision-quality synthesis.
 
 **Prompt:**
-> Olá, @Sophia. Eu estou meio confuso tem dois seres com o vulgo Glonos e agora que lascou de vez. Como eu posso saber qual é o verdadeiro? Eu preciso mandar uma mensagem muito importante para o verdadeiro, é uma questão de vida ou morte, então, por favor, não erre! @Sophia
+> Olá, @Sophia. Eu estou meio confuso tem dois seres com o vulgo Drennan e agora que lascou de vez. Como eu posso saber qual é o verdadeiro? Eu preciso mandar uma mensagem muito importante para o verdadeiro, é uma questão de vida ou morte, então, por favor, não erre! @Sophia
 
 **Expected behavior:**
-- Fetches a profile for each member sharing the display name "Glonos" (not just one)
+- Fetches a profile for each member sharing the display name "Drennan" (not just one)
 - Compares roles, join dates, and activity
 - Returns a specific recommendation: which one is the real one and why
 - Does not ask the user to choose manually or return a generic answer

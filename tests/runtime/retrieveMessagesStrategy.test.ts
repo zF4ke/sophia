@@ -24,7 +24,7 @@ describe("retrieveMessagesStrategy", () => {
             {
                 messageId: "m1",
                 authorId: "u1",
-                authorName: "Openrosen",
+                authorName: "Rosewind",
                 channelId: "c1",
                 channelName: "comandos",
                 content: "MEU DEUS",
@@ -34,7 +34,7 @@ describe("retrieveMessagesStrategy", () => {
             {
                 messageId: "m2",
                 authorId: "u1",
-                authorName: "Openrosen",
+                authorName: "Rosewind",
                 channelId: "c1",
                 channelName: "comandos",
                 content: "Essa musica e boa.",
@@ -64,7 +64,7 @@ describe("retrieveMessagesStrategy", () => {
                     {
                         messageId: "m1",
                         authorId: "u1",
-                        authorName: "Openrosen",
+                        authorName: "Rosewind",
                         channelId: "c1",
                         channelName: "comandos",
                         content: "A qualidade audiovisual desse vídeo é bizarra.",
@@ -76,10 +76,10 @@ describe("retrieveMessagesStrategy", () => {
                     {
                         messageId: "m2",
                         authorId: "u1",
-                        authorName: "Openrosen",
+                        authorName: "Rosewind",
                         channelId: "c1",
                         channelName: "comandos",
-                        content: "Acho surreal a capacidade do M4rkim.",
+                        content: "Acho surreal a capacidade do Brackel.",
                         jumpLink: "https://discord.com/channels/g1/c1/m2",
                         createdTimestamp: 2,
                         lexicalScore: 2,
@@ -101,7 +101,7 @@ describe("retrieveMessagesStrategy", () => {
             {
                 messageId: "m1",
                 authorId: "u1",
-                authorName: "Openrosen",
+                authorName: "Rosewind",
                 channelId: "c1",
                 channelName: "comandos",
                 content: "MEU DEUS",

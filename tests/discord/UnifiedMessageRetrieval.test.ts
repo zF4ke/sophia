@@ -135,8 +135,8 @@ describe("UnifiedMessageRetrieval", () => {
                     content: "A qualidade audiovisual desse vídeo é bizarra.",
                     author: {
                         id: "u-openrosen",
-                        username: "oneperson",
-                        globalName: "One Person",
+                        username: "riverside",
+                        globalName: "Riverside",
                         bot: false,
                     },
                     member: null,
@@ -163,8 +163,8 @@ describe("UnifiedMessageRetrieval", () => {
             nickname: "openrosen",
             user: {
                 id: "u-openrosen",
-                username: "oneperson",
-                globalName: "One Person",
+                username: "riverside",
+                globalName: "Riverside",
             },
         });
 
@@ -211,7 +211,7 @@ describe("UnifiedMessageRetrieval", () => {
             expect.objectContaining({
                 messageId: "m1",
                 authorName: "openrosen",
-                authorUsername: "oneperson",
+                authorUsername: "riverside",
                 authorNickname: "openrosen",
             }),
         ]);
@@ -370,7 +370,7 @@ describe("UnifiedMessageRetrieval", () => {
                 {
                     messageId: "preview-1",
                     authorId: "u-open",
-                    authorName: "Openrosen",
+                    authorName: "Rosewind",
                     content: "random recent message outside requested day",
                     createdTimestamp: Date.now(),
                     jumpLink: "https://discord.com/channels/g1/c-comandos/preview-1",
@@ -410,7 +410,7 @@ describe("UnifiedMessageRetrieval", () => {
                     channelId: "c-comandos",
                     channelName: "comandos",
                     authorId: "u-open",
-                    authorName: "Openrosen",
+                    authorName: "Rosewind",
                     content: "a foto parecia o m4rkim",
                     attachmentsJson: "[]",
                     referenceMessageId: null,
@@ -491,8 +491,8 @@ describe("UnifiedMessageRetrieval", () => {
                     channelId: "c-comandos",
                     channelName: "comandos",
                     authorId: "u-open",
-                    authorName: "Openrosen",
-                    authorUsername: "oneperson",
+                    authorName: "Rosewind",
+                    authorUsername: "riverside",
                     authorNickname: "openrosen",
                     content: "olhem essa musica https://youtube.com/watch?v=abc",
                     attachmentsJson: "[]",
@@ -530,7 +530,7 @@ describe("UnifiedMessageRetrieval", () => {
             undefined
         );
         expect(result.historyMessages.length).toBe(1);
-        expect(result.historyMessages[0].authorName).toBe("Openrosen");
+        expect(result.historyMessages[0].authorName).toBe("Rosewind");
         expect(result.sourceOrigin).toBe("cache_after_refresh");
     });
 });

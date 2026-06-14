@@ -1,10 +1,35 @@
+<div align="center">
+
+<img src="assets/logo.svg" alt="Sophia" width="76" />
+
 # Sophia
 
-A conversational Discord assistant that can search server history, manage channels, and take actions — all through natural language.
+*A conversational AI agent for Discord that searches your server history and acts on it, with admin approval on every change.*
 
-Sophia turns your Discord server into a searchable, manageable workspace. Ask her questions about what happened in any channel, who said what, or have her create channels, manage roles, and clean up messages — with a built-in approval system that keeps admins in control.
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-8b6dff)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![discord.js](https://img.shields.io/badge/discord.js-v14-5865F2?logo=discord&logoColor=white)
+![Node](https://img.shields.io/badge/node-20%2B-339933?logo=node.js&logoColor=white)
 
-## Features
+**[Live site](https://zf4ke.github.io/sophia/)** · **[How it works](docs/how-sophia-works.md)** · **[Architecture](docs/architecture.md)** · **[Testing](docs/testing.md)**
+
+</div>
+
+---
+
+Sophia turns your Discord server into something you can talk to. Ask her what happened in any channel, who said what and when, or have her create channels, manage roles, and clean up messages, all in plain language, with a built-in approval system that keeps admins in control.
+
+## 📸 Preview
+
+<div align="center">
+
+<a href="https://zf4ke.github.io/sophia/"><img src="docs/preview.png" alt="Sophia landing page" width="860" /></a>
+
+<br/><sub>A conversational agent you talk to in plain language, with admin approval on every change. <a href="https://zf4ke.github.io/sophia/"><b>View the live site →</b></a></sub>
+
+</div>
+
+## ✨ Features
 
 **Conversational AI** — Talk to Sophia naturally through `/talk`, mentions, or replies. She maintains conversation continuity across reply chains and threads.
 
@@ -33,19 +58,35 @@ Sophia turns your Discord server into a searchable, manageable workspace. Ask he
 ### Install
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/zF4ke/sophia.git
 cd sophia
 npm install
 ```
 
+### Get an OpenRouter key
+
+Sophia uses [OpenRouter](https://openrouter.ai/) to reach the language models. Bring your own key — Sophia never ships one, and you pay OpenRouter directly for the tokens you use.
+
+1. Sign up at [openrouter.ai](https://openrouter.ai/).
+2. Create a key at [openrouter.ai/keys](https://openrouter.ai/keys).
+3. Add credit (or start with free-tier model profiles).
+
+You also need a Discord bot token from the [Discord Developer Portal](https://discord.com/developers/applications) (create an application, add a Bot, copy its token).
+
 ### Configure
 
-Create a `.env` file:
+Copy the example file and fill in your values:
+
+```bash
+cp .env.example .env
+```
 
 ```env
 DISCORD_TOKEN=your-discord-bot-token
 OPENROUTER_API_KEY=your-openrouter-api-key
 ```
+
+A `.env` file is **required** before the first run — `npm start` reads it on startup and will exit if it is missing. See [`.env.example`](.env.example) for every supported variable (including the optional `BOOTSTRAP_ADMIN_IDS` and `SOPHIA_STORAGE_ROOT`).
 
 ### Run
 
@@ -139,7 +180,7 @@ All runtime tuning is done through `/settings` or `storage/settings.json`:
 
 These values are intentionally hardcoded and where to change them:
 
-- Default protected channel IDs: `src/app/SettingsService.ts` (`DEFAULT_PROTECTED_CHANNEL_IDS`)
+- Default protected channel IDs: `src/app/SettingsService.ts` (`DEFAULT_PROTECTED_CHANNEL_IDS`, empty by default — populate per server with `/superchannels`)
 - Runtime default values (tool limits, budgets, retrieval defaults, approval timeout): `src/app/SettingsService.ts` (`DEFAULT_SETTINGS.runtime`)
 - Context prune threshold ratio (`0.80`): `src/runtime/Runtime.ts` (`CONTEXT_HEADROOM_RATIO`)
 - OpenRouter base URL: `src/app/AppConfig.ts` (`openRouterBaseUrl`)
@@ -181,3 +222,11 @@ These values are intentionally hardcoded and where to change them:
 - **Storage:** libSQL (local SQLite)
 - **Validation:** Zod
 - **Testing:** Vitest
+
+## Project Status
+
+Sophia is functional and actively developed, but honest about its edges: there is no long-term memory or persistent personality yet, retrieval is cache-first with live refresh (not a full memory system), and large-server backfills can take several turns to complete. Self-hosting assumes you are comfortable with Node.js and a `.env` file. If that fits you, it runs today.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, hobby, research, education, and nonprofit use. **Commercial use is not permitted** under this license. See the [LICENSE](LICENSE) file for the full terms.

@@ -7,7 +7,7 @@ function makeState(overrides: Partial<DebugTraceState> = {}): DebugTraceState {
         questionPreview: "Who decided that in the product channel?",
         status: "running",
         stage: "Running retrieve_messages",
-        requesterLabel: "F4zke",
+        requesterLabel: "Talven",
         trigger: "mention",
         classificationMode: "discord_grounded",
         runtimeMode: "research",
@@ -45,7 +45,7 @@ describe("renderDebugTrace", () => {
         );
 
         expect(rendered).toContain("Sophia Debug Trace");
-        expect(rendered).toContain("F4zke");
+        expect(rendered).toContain("Talven");
         expect(rendered).toContain("mention");
         expect(rendered).toContain("discord_grounded");
         expect(rendered).toContain("retrieve_messages, get_member_profile");

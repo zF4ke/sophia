@@ -89,7 +89,7 @@ describe("runtime user stories", () => {
                 authorId: "u-open",
             }),
             summary: "ordered history evidence; 2 history and 0 semantic result(s) from cached Discord history.",
-            learned: "Openrosen mencionou que parecia M4rkim.",
+            learned: "Rosewind mencionou que parecia Brackel.",
             outputJson: JSON.stringify({
                 tool: "retrieve_messages",
                 summary: "ordered history evidence",
@@ -105,8 +105,8 @@ describe("runtime user stories", () => {
                             channelName: "comandos",
                             guildId: "g1",
                             authorId: "u-open",
-                            authorName: "Openrosen",
-                            content: "A foto parecia o M4rkim nessa thumb.",
+                            authorName: "Rosewind",
+                            content: "A foto parecia o Brackel nessa thumb.",
                             createdTimestamp: 1707510000000,
                             jumpLink: "https://discord.com/channels/g1/c-comandos/m1",
                             lexicalScore: 4,
@@ -123,8 +123,8 @@ describe("runtime user stories", () => {
                             channelName: "comandos",
                             guildId: "g1",
                             authorId: "u-open",
-                            authorName: "Openrosen",
-                            content: "A foto parecia o M4rkim nessa thumb.",
+                            authorName: "Rosewind",
+                            content: "A foto parecia o Brackel nessa thumb.",
                             createdTimestamp: 1707510000000,
                             jumpLink: "https://discord.com/channels/g1/c-comandos/m1",
                             lexicalScore: 4,
@@ -155,7 +155,7 @@ describe("runtime user stories", () => {
 
         // Model sees prior evidence in the system prompt and answers directly via finish
         vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValue(
-            makeFinishResult("Sim, ele comparou a foto com o M4rkim.")
+            makeFinishResult("Sim, ele comparou a foto com o Brackel.")
         );
 
         const result = await Runtime.answer(
@@ -164,7 +164,7 @@ describe("runtime user stories", () => {
             })
         );
 
-        expect(result.answer).toBe("Sim, ele comparou a foto com o M4rkim.");
+        expect(result.answer).toBe("Sim, ele comparou a foto com o Brackel.");
         expect(result.toolRuns).toEqual([]);
     });
 
@@ -172,17 +172,17 @@ describe("runtime user stories", () => {
         const priorMemberRun = {
             requestId: "req-member",
             toolName: "resolve_member_identity",
-            argumentsJson: JSON.stringify({ query: "nMarkov" }),
-            summary: "resolved nMarkov",
+            argumentsJson: JSON.stringify({ query: "Faymon" }),
+            summary: "resolved Faymon",
             learned: "Resolved the author target.",
             outputJson: JSON.stringify({
                 tool: "resolve_member_identity",
-                summary: "resolved nMarkov",
+                summary: "resolved Faymon",
                 data: {
-                    query: "nMarkov",
-                    resolvedId: "569277281046888488",
-                    displayName: "nMarkov",
-                    username: "nMarkov",
+                    query: "Faymon",
+                    resolvedId: "222222222222222222",
+                    displayName: "Faymon",
+                    username: "Faymon",
                     globalName: null,
                     nickname: null,
                     isBot: true,
@@ -200,8 +200,8 @@ describe("runtime user stories", () => {
             toolName: "retrieve_messages",
             argumentsJson: JSON.stringify({
                 query: "markov",
-                channelIds: ["731278507740495882"],
-                authorId: "569277281046888488",
+                channelIds: ["333333333333333333"],
+                authorId: "222222222222222222",
             }),
             summary: "ordered history evidence",
             learned: "Retrieved prior scoped discussion messages.",
@@ -211,21 +211,21 @@ describe("runtime user stories", () => {
                 data: {
                     mode: "history",
                     sourceOrigin: "cache_after_refresh",
-                    targetAuthorId: "569277281046888488",
-                    targetChannelIds: ["731278507740495882"],
-                    searchedChannelIds: ["731278507740495882"],
+                    targetAuthorId: "222222222222222222",
+                    targetChannelIds: ["333333333333333333"],
+                    searchedChannelIds: ["333333333333333333"],
                     historyMessages: [
                         {
                             messageId: "m-disc-1",
-                            channelId: "731278507740495882",
+                            channelId: "333333333333333333",
                             channelName: "discussão",
                             guildId: "g1",
-                            authorId: "569277281046888488",
-                            authorName: "nMarkov",
-                            authorUsername: "nMarkov",
+                            authorId: "222222222222222222",
+                            authorName: "Faymon",
+                            authorUsername: "Faymon",
                             content: "Eu não sou eu.",
                             createdTimestamp: 1707510000000,
-                            jumpLink: "https://discord.com/channels/g1/731278507740495882/m-disc-1",
+                            jumpLink: "https://discord.com/channels/g1/333333333333333333/m-disc-1",
                             lexicalScore: 4,
                         },
                     ],
@@ -233,21 +233,21 @@ describe("runtime user stories", () => {
                     combinedResults: [
                         {
                             messageId: "m-disc-1",
-                            channelId: "731278507740495882",
+                            channelId: "333333333333333333",
                             channelName: "discussão",
                             guildId: "g1",
-                            authorId: "569277281046888488",
-                            authorName: "nMarkov",
-                            authorUsername: "nMarkov",
+                            authorId: "222222222222222222",
+                            authorName: "Faymon",
+                            authorUsername: "Faymon",
                             content: "Eu não sou eu.",
                             createdTimestamp: 1707510000000,
-                            jumpLink: "https://discord.com/channels/g1/731278507740495882/m-disc-1",
+                            jumpLink: "https://discord.com/channels/g1/333333333333333333/m-disc-1",
                             lexicalScore: 4,
                         },
                     ],
                     continuation: {
                         history: {
-                            perChannelOldestMessageId: { "731278507740495882": "m-disc-1" },
+                            perChannelOldestMessageId: { "333333333333333333": "m-disc-1" },
                             continuationAvailable: true,
                         },
                         semantic: {
@@ -337,7 +337,7 @@ describe("runtime user stories", () => {
     it("combines member resolution, channel resolution, and message retrieval for a grounded explanation", async () => {
         vi.spyOn(ModelGateway, "generateWithTools")
             .mockResolvedValueOnce(
-                makeToolCallResult([{ name: "resolve_member_identity", args: { queries: ["One Person"] } }])
+                makeToolCallResult([{ name: "resolve_member_identity", args: { queries: ["Riverside"] } }])
             )
             .mockResolvedValueOnce(
                 makeToolCallResult([{ name: "resolve_channel_targets", args: { targets: ["reflexoes"] } }])
@@ -346,18 +346,18 @@ describe("runtime user stories", () => {
                 makeToolCallResult([{ name: "list_guild_structure", args: { targetText: "reflexoes" } }])
             )
             .mockResolvedValueOnce(
-                makeToolCallResult([{ name: "retrieve_messages", args: { query: "do que o One Person está falando?", authorId: "u-one", channelIds: ["c-reflexoes"] } }])
+                makeToolCallResult([{ name: "retrieve_messages", args: { query: "do que o Riverside está falando?", authorId: "u-one", channelIds: ["c-reflexoes"] } }])
             )
             .mockResolvedValueOnce(
-                makeFinishResult("O One Person estava falando sobre a imagem e dizendo que ela era mais simbólica do que literal.")
+                makeFinishResult("O Riverside estava falando sobre a imagem e dizendo que ela era mais simbólica do que literal.")
             );
         vi.spyOn(DiscordLiveService, "resolveMemberIdentity").mockResolvedValue({
-            query: "One Person",
+            query: "Riverside",
             resolvedId: "u-one",
-            displayName: "One Person",
-            username: "oneperson",
+            displayName: "Riverside",
+            username: "riverside",
             globalName: null,
-            nickname: "One Person",
+            nickname: "Riverside",
             isBot: false,
             isCurrentGuildMember: true,
             source: "live_search",
@@ -417,7 +417,7 @@ describe("runtime user stories", () => {
             },
         ]);
         vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
-            query: "do que o One Person está falando?",
+            query: "do que o Riverside está falando?",
             mode: "mixed",
             historyMessages: [
                 {
@@ -426,7 +426,7 @@ describe("runtime user stories", () => {
                     channelName: "reflexoes",
                     guildId: "g1",
                     authorId: "u-one",
-                    authorName: "One Person",
+                    authorName: "Riverside",
                     content: "A imagem era mais simbólica do que literal.",
                     createdTimestamp: 1700000000000,
                     jumpLink: "https://discord.com/channels/g1/c-reflexoes/m1",
@@ -444,7 +444,7 @@ describe("runtime user stories", () => {
                     channelName: "reflexoes",
                     guildId: "g1",
                     authorId: "u-one",
-                    authorName: "One Person",
+                    authorName: "Riverside",
                     content: "A imagem era mais simbólica do que literal.",
                     createdTimestamp: 1700000000000,
                     jumpLink: "https://discord.com/channels/g1/c-reflexoes/m1",
@@ -498,12 +498,12 @@ describe("runtime user stories", () => {
 
         const result = await Runtime.answer(
             createInput({
-                question: "do que o One Person está falando em #reflexoes?",
+                question: "do que o Riverside está falando em #reflexoes?",
             })
         );
 
         expect(result.answer).toBe(
-            "O One Person estava falando sobre a imagem e dizendo que ela era mais simbólica do que literal."
+            "O Riverside estava falando sobre a imagem e dizendo que ela era mais simbólica do que literal."
         );
         expect(result.toolRuns.map((run) => run.tool)).toEqual([
             "resolve_member_identity",
