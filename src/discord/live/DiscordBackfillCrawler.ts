@@ -3,6 +3,7 @@ import { ChannelType } from "discord.js";
 import { OperationalStore } from "@/runtime/storage/OperationalStore";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { SettingsService } from "@/app/SettingsService";
+import { isGuildAllowed } from "@/security/guildAllowlist";
 import {
     fetchAndIngestBatch,
     resumeBeforeId,
@@ -129,6 +130,7 @@ export class DiscordBackfillCrawler {
         let ingested = 0;
 
         for (const guild of this.client.guilds.cache.values()) {
+            if (!isGuildAllowed(guild.id)) continue;
             const channels = await guild.channels.fetch().catch(() => null);
             if (!channels) continue;
             for (const channel of channels.values()) {
@@ -195,6 +197,7 @@ export class DiscordBackfillCrawler {
         channelId: string,
         options: { reason?: string; priority?: number; guildId?: string | null } = {}
     ): Promise<void> {
+        if (options.guildId && !isGuildAllowed(options.guildId)) return;
         await OperationalStore.initialize();
         const client = OperationalStore.getClient();
         const existing = (
@@ -428,6 +431,13 @@ export class DiscordBackfillCrawler {
     }
 
     private static async crawlOneChannel(job: CrawlQueueRow): Promise<void> {
+        // Legacy rows from before the guild allowlist existed may still sit in
+        // the queue — drop them lazily instead of crawling foreign guilds.
+        if (job.guildId && !isGuildAllowed(job.guildId)) {
+            this.log(`skipped_disallowed_guild channel=${job.channelId} guild=${job.guildId}`);
+            await this.markDone(job.channelId, 0);
+            return;
+        }
         const channel = await this.resolveChannel(job.channelId);
         if (!channel) {
             this.log(`channel_unresolvable channel=${job.channelId}`);

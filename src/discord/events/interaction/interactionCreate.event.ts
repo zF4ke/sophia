@@ -7,10 +7,13 @@ import { handleDebugPanelInteraction } from "@/discord/debug/debugPanelInteracti
 import { handleSettingsPanelInteraction } from "@/discord/commands/system/settings/settingsInteractions";
 import { handleUiTestSettingsInteraction } from "@/discord/commands/system/uitest/settings";
 import { SecurityService } from "@/security/SecurityService";
+import { isGuildAllowed } from "@/security/guildAllowlist";
 
 export = {
     name: "interactionCreate",
     async execute(interaction: Interaction, client: BotClient) {
+        if (!isGuildAllowed(interaction.guildId)) return;
+
         if (interaction.isAutocomplete()) {
             const command = client.commands.get(interaction.commandName);
             if (command?.autocomplete) {

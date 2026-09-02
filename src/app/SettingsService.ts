@@ -39,6 +39,8 @@ export interface BotSettings {
     };
     personality: "default" | "mixed" | "classic";
     protectedChannelIds: string[];
+    /** Guild IDs the bot serves. Empty = all guilds allowed. Messages, interactions, and crawls from other guilds are ignored. */
+    guildAllowlist: string[];
     debug: boolean;
 }
 
@@ -85,6 +87,7 @@ const DEFAULT_SETTINGS: BotSettings = {
     },
     personality: "default",
     protectedChannelIds: DEFAULT_PROTECTED_CHANNEL_IDS,
+    guildAllowlist: [],
     debug: false,
 };
 
@@ -100,6 +103,7 @@ function deepMerge(defaults: BotSettings, overrides: Partial<BotSettings>): BotS
             : defaults.personality;
     }
     if (overrides.protectedChannelIds !== undefined) result.protectedChannelIds = overrides.protectedChannelIds;
+    if (overrides.guildAllowlist !== undefined) result.guildAllowlist = overrides.guildAllowlist;
     if (overrides.debug !== undefined) result.debug = overrides.debug;
     if (overrides.runtime) {
         const mergedRuntime = { ...defaults.runtime, ...overrides.runtime };

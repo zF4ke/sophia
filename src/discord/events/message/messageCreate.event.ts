@@ -6,6 +6,7 @@ import { ConversationAdapter } from "@/discord/conversation/ConversationAdapter"
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { Runtime } from "@/runtime/Runtime";
 import { SecurityService } from "@/security/SecurityService";
+import { isGuildAllowed } from "@/security/guildAllowlist";
 import { ACCESS_POLICY_TARGETS } from "@/security/policyTargets";
 import { Message, PermissionFlagsBits, TextChannel, ThreadChannel } from "discord.js";
 
@@ -17,6 +18,7 @@ export = {
             if (!channel.isTextBased()) return;
             if (!(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
             if (message.author.id === message.client.user!.id) return;
+            if (!isGuildAllowed(message.guildId)) return;
 
             await SecurityService.initialize();
 
