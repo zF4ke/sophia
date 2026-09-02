@@ -22,7 +22,6 @@ async function braveSearch(query: string, count: number): Promise<{ title: strin
 
 async function duckDuckGoSearch(query: string, count: number): Promise<{ title: string; url: string; snippet: string }[]> {
     try {
-        // Use DuckDuckGo html lite scraping fallback via text search endpoint
         const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
         const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
         if (!res.ok) return [];
@@ -40,6 +39,55 @@ async function duckDuckGoSearch(query: string, count: number): Promise<{ title: 
                 out.push({ title: t.Text.slice(0, 80), url: t.FirstURL, snippet: t.Text });
                 if (out.length >= count) break;
             }
+        }
+        return out.slice(0, count);
+    } catch {
+        return [];
+    }
+}
+
+// Free, no API key needed — scrapes DuckDuckGo lite HTML.
+async function duckDuckGoLiteSearch(query: string, count: number): Promise<{ title: string; url: string; snippet: string }[]> {
+    try {
+        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+        const res = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Sophia/4.5; +Discord)",
+                Accept: "text/html",
+            },
+            signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) return [];
+        const html = await res.text();
+        const out: { title: string; url: string; snippet: string }[] = [];
+        // DDG lite: each result is <a class="result__a" href="...">title</a> + <a class="result__snippet">
+        const titleRe = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+        const snippetRe = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+        const titles: { url: string; title: string }[] = [];
+        let m: RegExpExecArray | null;
+        while ((m = titleRe.exec(html)) !== null) {
+            const rawUrl = m[1];
+            // DDG wraps with /l/?uddg=...
+            let decoded = rawUrl;
+            try {
+                if (rawUrl.includes("uddg=")) {
+                    const u = new URL("https://duckduckgo.com" + rawUrl);
+                    decoded = decodeURIComponent(u.searchParams.get("uddg") || rawUrl);
+                } else if (rawUrl.startsWith("//")) {
+                    decoded = "https:" + rawUrl;
+                }
+            } catch { /* keep raw */ }
+            const title = m[2].replace(/<[^>]+>/g, "").trim().slice(0, 120);
+            if (decoded.startsWith("http")) titles.push({ url: decoded, title });
+            if (titles.length >= count) break;
+        }
+        const snippets: string[] = [];
+        while ((m = snippetRe.exec(html)) !== null) {
+            snippets.push(m[1].replace(/<[^>]+>/g, "").trim().slice(0, 300));
+            if (snippets.length >= count) break;
+        }
+        for (let i = 0; i < titles.length; i++) {
+            out.push({ title: titles[i].title || "Result", url: titles[i].url, snippet: snippets[i] || "" });
         }
         return out.slice(0, count);
     } catch {
@@ -66,16 +114,16 @@ export const webSearchTool: ToolDefinition = {
     name: T.web_search,
     catalog: {
         effect: "read",
-        description: "Search the web for current information (news, docs, facts) and return titles, URLs, and snippets.",
+        description: "Search the web for free (no API key needed) — DuckDuckGo lite scrape with Brave optional upgrade. Returns titles, URLs, snippets.",
         evidenceRole: "discovery_only",
     },
     schema: {
         description:
-            "Search the internet for current information. Use when the user asks about real-world facts, news, documentation, or anything beyond Discord history. Returns titles, URLs and snippets. Follow up with fetch_url to read a specific page.",
+            "Free web search (no API key needed). Searches DuckDuckGo lite HTML for free; uses Brave API only if BRAVE_SEARCH_API_KEY is set. Use when the user asks about real-world facts, news, docs, or anything beyond Discord. Returns titles, URLs and snippets. Follow with fetch_url to read a page. Always free.",
         parameters: webSearchParams,
     },
     capability: {
-        description: "Search the web via Brave/DuckDuckGo fallback.",
+        description: "Free web search via DuckDuckGo lite scrape (Brave optional).",
         inputSchema: z.object({
             query: z.string().min(2).max(400),
             count: z.number().min(1).max(10).optional(),
@@ -91,21 +139,22 @@ export const webSearchTool: ToolDefinition = {
             const query = String(args.query || "").trim();
             if (!query) return { tool: T.web_search, summary: "Empty query.", data: null, errorMessage: "Query is required." };
             const count = Math.max(1, Math.min(10, Number(args.count) || 5));
+            // Free-first: Brave is optional (needs key), lite scrape is always free.
             let results = await braveSearch(query, count);
+            if (results.length === 0) results = await duckDuckGoLiteSearch(query, count);
             if (results.length === 0) results = await duckDuckGoSearch(query, count);
-            // Final fallback: if both empty, tell model to try fetch with a known URL pattern or rephrase
             if (results.length === 0) {
                 return {
                     tool: T.web_search,
                     summary: `No web results for "${query}" (try rephrasing or a more specific query).`,
-                    data: { query, results: [], hint: "Try a different query or fetch a specific URL via fetch_url." },
+                    data: { query, results: [], hint: "Try a different query or fetch a specific URL via fetch_url.", free: true },
                 };
             }
             const summary = results.map((r) => `- ${r.title}: ${r.url}`).join("\n");
             return {
                 tool: T.web_search,
                 summary: `Found ${results.length} results for "${query}":\n${summary}`,
-                data: { query, results },
+                data: { query, results, free: true },
             };
         },
     },
