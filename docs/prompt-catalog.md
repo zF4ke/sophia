@@ -64,3 +64,4 @@ The runtime prompt set expects these capability ids to stay stable:
 - `workflow_run`
 - `tool_search`
 - `create_poll`
+- `index_channel`

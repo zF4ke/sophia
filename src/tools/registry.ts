@@ -52,6 +52,7 @@ import { memoryRememberTool, memorySearchTool } from "./longTermMemory";
 import { workflowCreateTool, workflowListTool, workflowRunTool } from "./workflows";
 import { toolSearchTool } from "./toolSearch";
 import { createPollTool } from "./createPoll";
+import { indexChannelTool } from "./indexChannel";
 import { getToolExposure, isDirectTool } from "./toolExposure";
 
 // ── Aggregated tool list ────────────────────────────────────────────
@@ -116,6 +117,8 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     toolSearchTool,
     // ── Poll ──
     createPollTool,
+    // ── Indexing ──
+    indexChannelTool,
 ];
 
 const TOOL_MAP = new Map<string, ToolDefinition>(

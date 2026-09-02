@@ -37,6 +37,8 @@ export const DIRECT_TOOLS = new Set<DiscordToolName>([
     "memory_search",
     // workflow discovery (read)
     "workflow_list",
+    // indexing (agent self-service — replaces /index)
+    "index_channel",
     // discovery meta-tool itself
     "tool_search",
 ]);

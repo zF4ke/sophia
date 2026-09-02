@@ -98,6 +98,45 @@ export class DiscordBackfillCrawler {
             this.running = false;
         });
         this.log("started");
+        // Startup auto-crawl: enqueue every indexable guild channel so the
+        // index self-heals without anyone running /index. Fully-indexed
+        // channels finish after one cheap "nothing older" API call.
+        void this.enqueueAllGuildChannels();
+    }
+
+    /**
+     * Enqueue every text/announcement channel in every guild the bot can see.
+     * Excludes voice channels, categories, forum guides, etc. The worker
+     * processes them serially (priority 2, below on-demand escalations).
+     */
+    public static async enqueueAllGuildChannels(): Promise<{ queued: number; skipped: number }> {
+        if (!this.client) return { queued: 0, skipped: 0 };
+        let queued = 0;
+        let skipped = 0;
+        for (const guild of this.client.guilds.cache.values()) {
+            // force fetch so we see channels even if cache is cold
+            const channels = await guild.channels.fetch().catch(() => null);
+            if (!channels) continue;
+            for (const channel of channels.values()) {
+                if (!channel) continue;
+                const type = (channel as { type?: number }).type;
+                if (
+                    type !== ChannelType.GuildText &&
+                    type !== ChannelType.GuildAnnouncement
+                ) {
+                    skipped += 1;
+                    continue;
+                }
+                await this.enqueue(channel.id, {
+                    reason: "startup_refresh",
+                    priority: 2,
+                    guildId: guild.id,
+                });
+                queued += 1;
+            }
+        }
+        this.log(`startup_refresh queued=${queued} skipped=${skipped}`);
+        return { queued, skipped };
     }
 
     public static async stop(): Promise<void> {
@@ -443,5 +482,44 @@ export class DiscordBackfillCrawler {
                 await new Promise((r) => setTimeout(r, POLL_IDLE_MS));
             }
         }
+    }
+
+    /**
+     * Freshness sweep for one channel: walk newest→older closing the
+     * "offline gap" (messages sent while the bot was down) until we hit
+     * messages the index already has, or `maxMessages` is reached.
+     * Returns the number of messages actually ingested.
+     */
+    public static async refreshChannel(
+        channel: IndexableChannel,
+        maxMessages = 500
+    ): Promise<{ ingested: number; hitKnown: boolean; lastIndexedTimestamp: number | null }> {
+        const states = await DiscordMemoryService.getChannelCrawlStateAsync(channel.id);
+        // lastIndexedTimestamp lives on index_state, not crawl_state.
+        const indexStates = await DiscordMemoryService.getIndexStateAsync(channel.id);
+        const lastIndexedTimestamp = indexStates[0]?.lastIndexedTimestamp ?? null;
+
+        let ingested = 0;
+        let before: string | null | undefined = undefined; // newest first
+        let hitKnown = false;
+
+        while (ingested < maxMessages) {
+            const batchSize = Math.min(100, maxMessages - ingested);
+            const result = await fetchAndIngestBatch(channel, before ?? null, batchSize);
+            ingested += result.ingested;
+            if (result.reachedEnd && result.ingested === 0) break;
+            if (result.ingested === 0) break;
+            if (
+                lastIndexedTimestamp != null &&
+                result.oldestTimestampInBatch != null &&
+                result.oldestTimestampInBatch <= lastIndexedTimestamp
+            ) {
+                hitKnown = true;
+                break;
+            }
+            before = result.nextBeforeId;
+            await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+        }
+        return { ingested, hitKnown, lastIndexedTimestamp };
     }
 }

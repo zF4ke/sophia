@@ -191,6 +191,38 @@ function summarizeRecentTurns(turns: ConversationTurnSummary[]): string {
         .join("\n");
 }
 
+/**
+ * Index freshness for the current channel: how old is the newest indexed
+ * message, and is the full history already crawled? The agent compares this
+ * against the current date to judge whether retrieval results are stale.
+ */
+async function buildIndexFreshness(channelId: string | null): Promise<string> {
+    if (!channelId) return "Index status: unavailable (DM).";
+    try {
+        const [summary, crawlStates] = await Promise.all([
+            DiscordMemoryService.getChannelSummaryAsync(channelId),
+            DiscordMemoryService.getChannelCrawlStateAsync(channelId),
+        ]);
+        const crawl = crawlStates[0];
+        const now = Date.now();
+        if (!summary || summary.messageCount === 0) {
+            return `- Channel <#${channelId}>: NOT indexed yet (0 messages). Use index_channel (mode "refresh" or "deep") before answering questions about its history.`;
+        }
+        const lastMsgAgeMs = summary.lastMessageTimestamp ? now - summary.lastMessageTimestamp : null;
+        const lastMsgAge = lastMsgAgeMs == null
+            ? "unknown"
+            : lastMsgAgeMs < 3_600_000
+                ? `${Math.round(lastMsgAgeMs / 60_000)} min`
+                : lastMsgAgeMs < 86_400_000
+                    ? `${Math.round(lastMsgAgeMs / 3_600_000)} h`
+                    : `${Math.round(lastMsgAgeMs / 86_400_000)} days`;
+        const exhausted = crawl?.exhausted ? "full history crawled" : "history backfill incomplete";
+        return `- Channel <#${channelId}>: ${summary.messageCount} messages indexed, newest indexed message is ${lastMsgAge} old, ${exhausted}. Compare with today's date — if the user asks about recent activity and this looks stale, call index_channel first.`;
+    } catch {
+        return "Index status: unavailable.";
+    }
+}
+
 function sanitizeAnswer(answer: string | null | undefined): string {
     const normalized = (answer || "").trim();
     const banned = new Set([
@@ -454,7 +486,7 @@ export class Runtime {
                 toolContext: formatRecentToolRuns(recentToolRuns),
             };
 
-            const renderSystemPrompt = (fields: typeof contextFields): string =>
+            const renderSystemPrompt = async (fields: typeof contextFields): Promise<string> =>
                 PromptRegistry.render("runtime/agent_loop", {
                     guild_name: input.guild?.name || "DM",
                     guild_id: guildId || "none",
@@ -474,9 +506,10 @@ export class Runtime {
                     max_tool_calls: String(constraints.maxToolCalls),
                     personality_override: personalityOverride,
                     deferred_tools: formatDeferredInventory(),
+                    index_freshness: await buildIndexFreshness(channelId),
                 });
 
-            let systemPrompt = renderSystemPrompt(contextFields);
+            let systemPrompt = await renderSystemPrompt(contextFields);
 
             // ── 3b. Tier-0 input compaction ──
             // Measure the assembled prompt with a tokenizer. If it's past the
@@ -502,7 +535,7 @@ export class Runtime {
                 traceEvents,
             });
             if (compactionOutcome.compacted && compactionOutcome.fields) {
-                systemPrompt = renderSystemPrompt(compactionOutcome.fields);
+                systemPrompt = await renderSystemPrompt(compactionOutcome.fields);
                 trace(
                     "compaction_tier0_applied",
                     `Input compacted ${compactionOutcome.promptTokensBefore} → ~${compactionOutcome.promptTokensAfter} tokens.`,
@@ -1731,10 +1764,15 @@ export class Runtime {
                 "The runtime hit an internal error and returned a conversational fallback instead."
             );
             await input.debugSession?.finishError(error);
+            // Surface a one-line failure to the user — an empty answer reads as
+            // "Sophia ignored me", which is worse than admitting the fault.
+            const userHint = error instanceof Error && error.message
+                ? error.message.slice(0, 120)
+                : "erro interno";
             return {
                 requestId,
                 threadId,
-                answer: "",
+                answer: `Não consegui processar isso agora (${userHint}). Tenta de novo — se persistir, o problema é meu, não teu.`,
                 citations: [],
                 classification: classify("conversation"),
                 toolRuns: [],

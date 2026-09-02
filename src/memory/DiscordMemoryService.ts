@@ -406,25 +406,29 @@ export class DiscordMemoryService {
             },
         ]);
 
-        for (let index = 0; index < chunks.length; index += 1) {
-            await client.execute({
-                sql: `
-                    INSERT INTO message_chunks (
-                        chunk_id, message_id, channel_id, guild_id, chunk_index, content, created_timestamp
-                    ) VALUES (
-                        :chunkId, :messageId, :channelId, :guildId, :chunkIndex, :content, :createdTimestamp
-                    )
-                `,
-                args: {
-                    chunkId: `${stored.id}:${index}`,
-                    messageId: stored.id,
-                    channelId: stored.channelId,
-                    guildId: stored.guildId,
-                    chunkIndex: index,
-                    content: chunks[index],
-                    createdTimestamp: stored.createdTimestamp,
-                },
-            });
+        // Batch all chunk inserts in one roundtrip — per-chunk execute() was the
+        // backfill bottleneck (10x slower on large channels).
+        if (chunks.length) {
+            await client.batch(
+                chunks.map((chunkContent, index) => ({
+                    sql: `
+                        INSERT INTO message_chunks (
+                            chunk_id, message_id, channel_id, guild_id, chunk_index, content, created_timestamp
+                        ) VALUES (
+                            :chunkId, :messageId, :channelId, :guildId, :chunkIndex, :content, :createdTimestamp
+                        )
+                    `,
+                    args: {
+                        chunkId: `${stored.id}:${index}`,
+                        messageId: stored.id,
+                        channelId: stored.channelId,
+                        guildId: stored.guildId,
+                        chunkIndex: index,
+                        content: chunkContent,
+                        createdTimestamp: stored.createdTimestamp,
+                    },
+                })),
+            );
         }
 
         this.knownChannelsSnapshot.set(stored.channelId, {

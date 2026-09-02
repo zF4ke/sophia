@@ -69,6 +69,8 @@ const TOOL_NAMES = [
     "tool_search",
     // ── Poll ──
     "create_poll",
+    // ── Indexing ──
+    "index_channel",
 ] as const;
 
 // ── Derived types and arrays ──

@@ -93,6 +93,7 @@ These capability ids are prompt- and runtime-stable:
 - `workflow_run`
 - `tool_search`
 - `create_poll`
+- `index_channel`
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`.
 
@@ -155,7 +156,9 @@ OpenRouter remains the only model-provider surface. Do not hardcode models in so
 Local libSQL storage is the source of truth for Discord retrieval state and runtime traces.
 
 - New messages are ingested from `src/discord/events/message/messageCreate.event.ts`
-- Backfill and repair flows are exposed through `src/discord/commands/system/index.command.ts`
+- **Startup auto-crawl**: `DiscordBackfillCrawler.enqueueAllGuildChannels()` enqueues every text channel on `clientReady`, so the index self-heals without `/index`
+- **Agent self-service indexing**: the `index_channel` tool lets the model refresh (newest sweep) or deep-backfill (queued) channels on its own judgment, guided by the `Index Freshness` block in the system prompt
+- Backfill and repair flows remain exposed through `src/discord/commands/system/index.command.ts` (manual override only)
 - Operational storage is local and disposable
 - Bot settings are persisted in `storage/settings.json`
 
