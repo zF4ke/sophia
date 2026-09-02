@@ -2,6 +2,7 @@ import type { Client, TextChannel, ThreadChannel } from "discord.js";
 import { ChannelType } from "discord.js";
 import { OperationalStore } from "@/runtime/storage/OperationalStore";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { SettingsService } from "@/app/SettingsService";
 import {
     fetchAndIngestBatch,
     resumeBeforeId,
@@ -98,45 +99,68 @@ export class DiscordBackfillCrawler {
             this.running = false;
         });
         this.log("started");
-        // Startup auto-crawl: enqueue every indexable guild channel so the
-        // index self-heals without anyone running /index. Fully-indexed
-        // channels finish after one cheap "nothing older" API call.
-        void this.enqueueAllGuildChannels();
+        // Startup sweep: bounded recency pass per channel (closes the
+        // "bot was offline" gap). NEVER walks full history here — channels
+        // with hundreds of thousands of messages would crawl for hours.
+        // Deep backfill is agent-gated via index_channel mode="deep".
+        void this.sweepAllGuildChannels();
     }
 
     /**
-     * Enqueue every text/announcement channel in every guild the bot can see.
-     * Excludes voice channels, categories, forum guides, etc. The worker
-     * processes them serially (priority 2, below on-demand escalations).
+     * Bounded recency sweep across every guild text channel.
+     * Per channel: skip if already queued/running, skip if the newest
+     * indexed message is < 1h old, otherwise fetch newest→older until we
+     * hit known messages or the configured cap (default 1000 msgs).
+     * Serialized so we never race the worker on the same channel.
      */
-    public static async enqueueAllGuildChannels(): Promise<{ queued: number; skipped: number }> {
-        if (!this.client) return { queued: 0, skipped: 0 };
-        let queued = 0;
+    public static async sweepAllGuildChannels(): Promise<{ swept: number; skipped: number; ingested: number }> {
+        if (!this.client) return { swept: 0, skipped: 0, ingested: 0 };
+        const settings = SettingsService.load();
+        if (!settings.runtime.startupSweep) {
+            this.log("startup_sweep disabled by settings");
+            return { swept: 0, skipped: 0, ingested: 0 };
+        }
+        const cap = Math.max(100, Math.min(5000, settings.runtime.startupSweepMaxMessages || 1000));
+        const queue = await this.listQueue();
+        const busy = new Set(queue.map((q) => q.channelId));
+
+        let swept = 0;
         let skipped = 0;
+        let ingested = 0;
+
         for (const guild of this.client.guilds.cache.values()) {
-            // force fetch so we see channels even if cache is cold
             const channels = await guild.channels.fetch().catch(() => null);
             if (!channels) continue;
             for (const channel of channels.values()) {
                 if (!channel) continue;
                 const type = (channel as { type?: number }).type;
-                if (
-                    type !== ChannelType.GuildText &&
-                    type !== ChannelType.GuildAnnouncement
-                ) {
+                if (type !== ChannelType.GuildText && type !== ChannelType.GuildAnnouncement) continue;
+                if (busy.has(channel.id)) {
                     skipped += 1;
                     continue;
                 }
-                await this.enqueue(channel.id, {
-                    reason: "startup_refresh",
-                    priority: 2,
-                    guildId: guild.id,
-                });
-                queued += 1;
+
+                const indexStates = await DiscordMemoryService.getIndexStateAsync(channel.id);
+                const lastIndexed = indexStates[0]?.lastIndexedTimestamp ?? null;
+                if (lastIndexed != null && Date.now() - lastIndexed < 3_600_000) {
+                    skipped += 1;
+                    continue;
+                }
+
+                const indexable = channel as unknown as IndexableChannel;
+                try {
+                    const result = await this.refreshChannel(indexable, cap);
+                    swept += 1;
+                    ingested += result.ingested;
+                    this.log(`startup_sweep channel=${channel.id} ingested=${result.ingested} hitKnown=${result.hitKnown ? "yes" : "no"} cap=${cap}`);
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    this.log(`startup_sweep_error channel=${channel.id} error=${message}`);
+                }
             }
         }
-        this.log(`startup_refresh queued=${queued} skipped=${skipped}`);
-        return { queued, skipped };
+        this.log(`startup_sweep done swept=${swept} skipped=${skipped} ingested=${ingested}`);
+        return { swept, skipped, ingested };
     }
 
     public static async stop(): Promise<void> {

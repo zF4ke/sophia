@@ -156,8 +156,9 @@ OpenRouter remains the only model-provider surface. Do not hardcode models in so
 Local libSQL storage is the source of truth for Discord retrieval state and runtime traces.
 
 - New messages are ingested from `src/discord/events/message/messageCreate.event.ts`
-- **Startup auto-crawl**: `DiscordBackfillCrawler.enqueueAllGuildChannels()` enqueues every text channel on `clientReady`, so the index self-heals without `/index`
-- **Agent self-service indexing**: the `index_channel` tool lets the model refresh (newest sweep) or deep-backfill (queued) channels on its own judgment, guided by the `Index Freshness` block in the system prompt
+- **Startup sweep**: `DiscordBackfillCrawler.sweepAllGuildChannels()` runs a *bounded* recency pass per channel on `clientReady` (cap: `runtime.startupSweepMaxMessages`, default 1000) — closes offline gaps without full-history crawls
+- **Edge prefetch**: when `retrieve_messages` pagination touches the indexed boundary, the channel is auto-enqueued for deep backfill (`runtime.edgePrefetch`)
+- **Agent self-service indexing**: the `index_channel` tool lets the model refresh (newest sweep) or deep-backfill (queued) channels on its own judgment, guided by the `Index Freshness` block in the system prompt. Deep backfills are agent-gated only — boot never walks full history
 - Backfill and repair flows remain exposed through `src/discord/commands/system/index.command.ts` (manual override only)
 - Operational storage is local and disposable
 - Bot settings are persisted in `storage/settings.json`

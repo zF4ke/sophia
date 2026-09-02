@@ -22,6 +22,9 @@ export interface BotSettings {
         approvalTimeoutMs: number;
         autoApproveWrites: boolean;
         maxNotesPerRequest: number;
+        startupSweep: boolean;
+        startupSweepMaxMessages: number;
+        edgePrefetch: boolean;
         longTask: {
             maxToolCalls: number;
             maxLatencyBudgetMs: number;
@@ -65,6 +68,9 @@ const DEFAULT_SETTINGS: BotSettings = {
         approvalTimeoutMs: 60_000,
         autoApproveWrites: false,
         maxNotesPerRequest: 200,
+        startupSweep: true,
+        startupSweepMaxMessages: 1000,
+        edgePrefetch: true,
         longTask: {
             maxToolCalls: 200,
             maxLatencyBudgetMs: 600_000,
@@ -134,7 +140,12 @@ export class SettingsService {
 
             const needsSave =
                 parsed.modelProfile !== merged.modelProfile ||
-                (parsed.compaction as Partial<BotSettings["compaction"]> | undefined)?.summarizerModel !== merged.compaction.summarizerModel;
+                (parsed.compaction as Partial<BotSettings["compaction"]> | undefined)?.summarizerModel !== merged.compaction.summarizerModel ||
+                // Backfill newly-added runtime knobs into the on-disk file so
+                // operators can see (and tune) them without reading source.
+                (parsed.runtime as Partial<BotSettings["runtime"]> | undefined)?.startupSweep === undefined ||
+                (parsed.runtime as Partial<BotSettings["runtime"]> | undefined)?.startupSweepMaxMessages === undefined ||
+                (parsed.runtime as Partial<BotSettings["runtime"]> | undefined)?.edgePrefetch === undefined;
             if (needsSave) {
                 this.save(merged);
             }
