@@ -46,6 +46,49 @@ async function duckDuckGoSearch(query: string, count: number): Promise<{ title: 
     }
 }
 
+// Free, no API key — scrapes Google HTML directly (Google-like, no API key).
+async function googleSearch(query: string, count: number): Promise<{ title: string; url: string; snippet: string }[]> {
+    try {
+        const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=pt&num=${count}&udm=14`;
+        const res = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                Accept: "text/html,application/xhtml+xml",
+                "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
+            },
+            signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) return [];
+        const html = await res.text();
+        // Google often returns 429/captcha page — detect and fallback
+        if (/Our systems have detected unusual traffic|captcha|recaptcha/i.test(html)) return [];
+        const out: { title: string; url: string; snippet: string }[] = [];
+        // Parse <a href="/url?q=REAL_URL&sa="><h3>Title</h3></a> + snippet in next div
+        const blockRe = /<a[^>]*href="\/url\?q=([^&"]+)[^"]*"[^>]*>\s*(?:<h3[^>]*>([\s\S]*?)<\/h3>|([^<]+))\s*<\/a>/gi;
+        let m: RegExpExecArray | null;
+        while ((m = blockRe.exec(html)) !== null) {
+            try {
+                const decoded = decodeURIComponent(m[1]);
+                if (!decoded.startsWith("http") || decoded.includes("google.com")) continue;
+                const rawTitle = (m[2] || m[3] || "").replace(/<[^>]+>/g, "").trim().slice(0, 120);
+                if (!rawTitle) continue;
+                out.push({ title: rawTitle, url: decoded, snippet: "" });
+                if (out.length >= count) break;
+            } catch { continue; }
+        }
+        // Try to enrich snippets: look for <div class="VwiC3b"> or <span class="aCOpRe">
+        const snippetRe = /<div[^>]*class="[^"]*VwiC3b[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+        const snippets: string[] = [];
+        while ((m = snippetRe.exec(html)) !== null) {
+            snippets.push(m[1].replace(/<[^>]+>/g, "").trim().slice(0, 300));
+        }
+        for (let i = 0; i < out.length; i++) if (snippets[i]) out[i].snippet = snippets[i];
+        return out.slice(0, count);
+    } catch {
+        return [];
+    }
+}
+
 // Free, no API key needed — scrapes DuckDuckGo lite HTML.
 async function duckDuckGoLiteSearch(query: string, count: number): Promise<{ title: string; url: string; snippet: string }[]> {
     try {
@@ -114,16 +157,16 @@ export const webSearchTool: ToolDefinition = {
     name: T.web_search,
     catalog: {
         effect: "read",
-        description: "Search the web for free (no API key needed) — DuckDuckGo lite scrape with Brave optional upgrade. Returns titles, URLs, snippets.",
+        description: "Google-like web search for free (no API key) — scrapes Google HTML, falls back to DuckDuckGo lite. Returns titles, URLs, snippets.",
         evidenceRole: "discovery_only",
     },
     schema: {
         description:
-            "Free web search (no API key needed). Searches DuckDuckGo lite HTML for free; uses Brave API only if BRAVE_SEARCH_API_KEY is set. Use when the user asks about real-world facts, news, docs, or anything beyond Discord. Returns titles, URLs and snippets. Follow with fetch_url to read a page. Always free.",
+            "Free Google-like web search (no API key). Tries Google HTML first, then DuckDuckGo lite. Use when the user asks about real-world facts, news, docs, or anything beyond Discord. Returns titles, URLs and snippets. Follow with fetch_url to read a page. Always free.",
         parameters: webSearchParams,
     },
     capability: {
-        description: "Free web search via DuckDuckGo lite scrape (Brave optional).",
+        description: "Free Google-like web search (Google HTML → DuckDuckGo lite, Brave optional).",
         inputSchema: z.object({
             query: z.string().min(2).max(400),
             count: z.number().min(1).max(10).optional(),
@@ -139,9 +182,10 @@ export const webSearchTool: ToolDefinition = {
             const query = String(args.query || "").trim();
             if (!query) return { tool: T.web_search, summary: "Empty query.", data: null, errorMessage: "Query is required." };
             const count = Math.max(1, Math.min(10, Number(args.count) || 5));
-            // Free-first: Brave is optional (needs key), lite scrape is always free.
-            let results = await braveSearch(query, count);
+            // Free, no key: Google HTML first (real Google), then DDG lite, then Brave optional, then DDG API.
+            let results = await googleSearch(query, count);
             if (results.length === 0) results = await duckDuckGoLiteSearch(query, count);
+            if (results.length === 0) results = await braveSearch(query, count);
             if (results.length === 0) results = await duckDuckGoSearch(query, count);
             if (results.length === 0) {
                 return {
