@@ -285,7 +285,9 @@ function truncateToolResult(json: string): string {
 }
 
 // ── Context overflow detection and pruning ──
-const CONTEXT_HEADROOM_RATIO = 0.80;
+// Align headroom with compaction trigger but keep a 3% margin so Tier-1 prunes
+// before Tier-2 summarizes (inspired by opencode's PRUNE_PROTECT layer).
+const CONTEXT_HEADROOM_RATIO = 0.85;
 
 function isContextOverflow(promptTokens: number, contextWindow: number): boolean {
     return promptTokens >= contextWindow * CONTEXT_HEADROOM_RATIO;
@@ -294,8 +296,10 @@ function isContextOverflow(promptTokens: number, contextWindow: number): boolean
 function pruneOldToolOutputs(messages: ToolChatMessage[]): number {
     let pruned = 0;
     // Keep the system prompt (index 0), the user message (index 1),
-    // and the last 4 messages (latest tool interaction). Prune everything in between.
-    const protectedTail = 4;
+    // and the last 8 messages (align with compaction PRESERVE_TAIL = 8).
+    // Only prune older middle-block tool outputs; inspired by opencode's
+    // prune-until-PROTECT approach but lightweight here.
+    const protectedTail = 8;
     const lastPrunableIndex = messages.length - protectedTail;
 
     for (let i = 2; i < lastPrunableIndex; i++) {

@@ -1,6 +1,22 @@
 {
-  "defaultProfile": "gemini25flashlite",
+  "defaultProfile": "glm53flash",
   "profiles": {
+    "glm53flash": {
+      "chatModel": "z-ai/glm-5.3-flash",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.45,
+      "maxOutputTokens": 12000,
+      "contextWindow": 1048576,
+      "parallelToolCalls": true,
+      "label": "GLM 5.3 Flash",
+      "pricing": {
+        "inputPerMillionUsd": 0.075,
+        "outputPerMillionUsd": 0.25,
+        "cacheReadPerMillionUsd": 0.015,
+        "source": "openrouter",
+        "updatedAt": "2026-08-26"
+      }
+    },
     "gemini31flashlite": {
       "chatModel": "google/gemini-3.1-flash-lite-preview",
       "embeddingModel": "openai/text-embedding-3-small",

@@ -184,6 +184,22 @@ After a successful write/destructive call, use concrete identifiers returned by 
 - `measure_text_length` — Count characters, words, and lines in a text string. Use when the user asks about text length or word count.
 - `evaluate_math` — Evaluate a mathematical expression safely. Supports arithmetic, exponents, sqrt, trig, log, and more. Use when the user asks you to calculate something.
 
+### Web Tools
+
+- `web_search` — Search the internet (Brave/DuckDuckGo). Use when the user asks about current events, docs, or any fact beyond Discord.
+- `fetch_url` — Fetch a URL and extract readable text. Use after `web_search` to read a specific page.
+
+### Memory Tools (Long-Term)
+
+- `memory_search` — Recall persistent memories saved across sessions (preferences, decisions, facts). Use when you need prior context.
+- `memory_remember` — Save a durable memory for future turns (per guild/user). Use when the user says "lembra-te que" or you learn something worth keeping.
+
+### Workflow Tools
+
+- `workflow_list` — List saved workflows (reusable tool chains) for this server.
+- `workflow_create` — Create a workflow: a named sequence of tool calls (e.g. weekly digest). Steps are stored and versioned per guild.
+- `workflow_run` — Run a saved workflow by name. Optionally override step args. Results are collected and summarized.
+
 ### Control Tools
 
 - `start_long_task` — Declare that the current task needs more tool calls or time than the default budget. Call once, early, with a one-sentence `reason`. The runtime raises this turn's budgets to the operator-configured long-task caps (see `/settings` → Long task) and widens the per-turn evidence window so large scans aren't truncated. Idempotent — calling again is a no-op. Only use when you genuinely expect a complex, multi-step operation (e.g. bulk channel cleanup across many channels, large aggregation over multiple searches). Do not call for normal single-query research. You no longer need to estimate tool-call counts or seconds — operators configure those.

@@ -57,6 +57,10 @@ export function shouldCompactInput(
     }
     if (!Number.isFinite(fraction) || fraction <= 0) return false;
     if (!Number.isFinite(contextWindow) || contextWindow <= 0) return false;
+    // Adaptive: for large windows (>=500k) require at least 55% fill before
+    // Tier-0 compaction to avoid summarizing away useful prior evidence on
+    // small-to-medium prompts. For 1M window this means ~570k tokens.
+    if (contextWindow >= 500_000 && fraction < 0.55) fraction = 0.55;
     return promptTokens >= contextWindow * fraction;
 }
 

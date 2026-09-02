@@ -177,7 +177,7 @@ export class DoomLoopDetector {
     private readonly repeatThreshold: number;
     private nudgeCount = 0;
 
-    constructor(windowSize = 5, repeatThreshold = 3) {
+    constructor(windowSize = 6, repeatThreshold = 4) {
         this.windowSize = windowSize;
         this.repeatThreshold = repeatThreshold;
     }
@@ -241,7 +241,7 @@ export class ProgressTracker {
     private callsSinceProgress = 0;
     private readonly threshold: number;
 
-    constructor(threshold = 5) {
+    constructor(threshold = 8) {
         this.threshold = threshold;
     }
 

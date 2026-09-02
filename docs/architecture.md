@@ -11,7 +11,7 @@ Sophia runs on one conversational runtime and one unified Discord retrieval pipe
 - `retrieval`
   Cache-first Discord message retrieval with automatic live refresh when the cache is weak.
 - `capabilities`
-  Registry-driven capability manifests and handlers. 21 tools across read, write, and destructive tiers.
+  Registry-driven capability manifests and handlers. 46 tools across read, write, destructive, web, memory, and workflow tiers (GLM 5.3 Flash default, 1M context).
 - `approval`
   Gate layer for write and destructive tool calls. Single-item cards for individual actions; batch cards for grouped destructive actions organized by Discord category.
 - `memory`
@@ -82,14 +82,18 @@ That keeps Discord search cheap, durable, and continuously improving.
 
 Deep retrieval does not mean deep prompt stuffing. Sophia may inspect thousands of stored messages over multiple tool calls, but only a bounded working set goes into the live model context: recent turns, recent channel context, capped prior evidence, and the latest loop messages. Older tool outputs are pruned when prompt usage approaches the selected model profile context window.
 
-Context management has two tiers:
-- **Tier-1 (truncation)**: oldest tool-result messages are dropped when prompt tokens exceed a safe fraction of the context window.
-- **Tier-2 (compaction)**: when Tier-1 is not enough, the middle block of messages is summarised by the model selected in `/settings` → `Compactação` and replaced with a single `<compaction_summary>` system message. Load-bearing scratchpad tool calls (note_add, plan_update) are preserved verbatim.
+Context management has three tiers (less aggressive since Sophia 4.5):
+- **Tier-0 (input compaction)**: bulky prior context (turns, channel context, prior evidence) is summarized once pre-loop if prompt exceeds 55% of the window (90% for 1M models).
+- **Tier-1 (pruning)**: oldest tool-result messages are dropped when prompt tokens exceed 85% of the window; preserves last 8 messages (aligns with Tier-2 tail).
+- **Tier-2 (compaction)**: when Tier-1 is not enough, the middle block is summarized by `compaction.summarizerModel` (default GLM 5.3 Flash) and replaced with `<compaction_summary>`. Load-bearing scratchpad calls (note_add, plan_update) are preserved verbatim. Requires at least 4 middle messages to avoid trivial summaries.
 
 For long tasks (`start_long_task`), the runtime also provides:
-- **Scratchpad tools** (`note_add`, `note_list`, `note_clear`, `plan_update`): per-request notes stored in libSQL. The plan is re-injected into the system prompt every loop iteration so it survives compaction.
-- **Doom-loop detection**: sliding window detects repeated identical tool calls → nudge → force finish.
-- **Progress-required tracking**: after N non-progress calls, the model is nudged to record findings or change approach.
+- **Scratchpad tools** (`note_add`, `note_list`, `note_clear`, `plan_update`): per-request notes stored in libSQL. The plan is re-injected every iteration so it survives compaction.
+- **Doom-loop detection**: window=6, threshold=4 identical calls → nudge → force finish (less aggressive than before).
+- **Progress-required tracking**: threshold=8 non-progress calls (was 5) before nudging — advisory, not blocking.
+- **Web tools** (`web_search`, `fetch_url`): internet research with Brave → DuckDuckGo fallback.
+- **Long-term memory** (`memory_remember`, `memory_search`): cross-session guild/user memories persisted in `long_term_memories`.
+- **Workflows** (`workflow_create`, `workflow_list`, `workflow_run`): reusable tool chains stored per guild, with a visual composer at `landing/workflows.html`.
 
 ## Storage
 

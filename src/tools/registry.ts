@@ -47,6 +47,9 @@ import { deleteChannelTool } from "./deleteChannel";
 import { deleteRoleTool } from "./deleteRole";
 import { startLongTaskTool } from "./startLongTask";
 import { noteAddTool, noteListTool, noteClearTool, planUpdateTool } from "./notes";
+import { webSearchTool, fetchUrlTool } from "./webSearch";
+import { memoryRememberTool, memorySearchTool } from "./longTermMemory";
+import { workflowCreateTool, workflowListTool, workflowRunTool } from "./workflows";
 
 // ── Aggregated tool list ────────────────────────────────────────────
 
@@ -96,6 +99,16 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     noteListTool,
     noteClearTool,
     planUpdateTool,
+    // ── Web ──
+    webSearchTool,
+    fetchUrlTool,
+    // ── Long-term memory ──
+    memoryRememberTool,
+    memorySearchTool,
+    // ── Workflows ──
+    workflowCreateTool,
+    workflowListTool,
+    workflowRunTool,
 ];
 
 const TOOL_MAP = new Map<string, ToolDefinition>(

@@ -84,6 +84,13 @@ These capability ids are prompt- and runtime-stable:
 - `note_list`
 - `note_clear`
 - `plan_update`
+- `web_search`
+- `fetch_url`
+- `memory_search`
+- `memory_remember`
+- `workflow_create`
+- `workflow_list`
+- `workflow_run`
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`.
 

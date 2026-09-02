@@ -55,3 +55,10 @@ The runtime prompt set expects these capability ids to stay stable:
 - `note_list`
 - `note_clear`
 - `plan_update`
+- `web_search`
+- `fetch_url`
+- `memory_search`
+- `memory_remember`
+- `workflow_create`
+- `workflow_list`
+- `workflow_run`

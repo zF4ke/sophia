@@ -55,6 +55,16 @@ const TOOL_NAMES = [
     "note_list",
     "note_clear",
     "plan_update",
+    // ── Web ──
+    "web_search",
+    "fetch_url",
+    // ── Long-term memory ──
+    "memory_search",
+    "memory_remember",
+    // ── Workflows ──
+    "workflow_create",
+    "workflow_list",
+    "workflow_run",
 ] as const;
 
 // ── Derived types and arrays ──

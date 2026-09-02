@@ -73,9 +73,9 @@ const DEFAULT_SETTINGS: BotSettings = {
         },
     },
     compaction: {
-        summarizerModel: "gemini31flashlite",
-        triggerFraction: 0.85,
-        inputTriggerFraction: 0.4,
+        summarizerModel: "glm53flash",
+        triggerFraction: 0.88,
+        inputTriggerFraction: 0.55,
     },
     personality: "default",
     protectedChannelIds: DEFAULT_PROTECTED_CHANNEL_IDS,

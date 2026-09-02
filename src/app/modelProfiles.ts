@@ -3,8 +3,17 @@ import { AppPaths } from "@/app/AppPaths";
 import type { ModelProfileConfig } from "@/shared/appTypes";
 
 const FALLBACK_MODEL_PROFILES: ModelProfileConfig = {
-    defaultProfile: "free-elephant",
+    defaultProfile: "glm53flash",
     profiles: {
+        glm53flash: {
+            label: "GLM 5.3 Flash",
+            chatModel: "z-ai/glm-5.3-flash",
+            embeddingModel: "openai/text-embedding-3-small",
+            temperature: 0.45,
+            maxOutputTokens: 12000,
+            contextWindow: 1_048_576,
+            parallelToolCalls: true,
+        },
         gemini31flashlite: {
             label: "Gemini 3.1 Flash Lite",
             chatModel: "google/gemini-3.1-flash-lite-preview",

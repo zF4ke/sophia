@@ -406,6 +406,37 @@ export class OperationalStore {
             CREATE INDEX IF NOT EXISTS idx_request_notes_thread_time
             ON request_notes(thread_id, created_timestamp DESC);
 
+            CREATE TABLE IF NOT EXISTS long_term_memories (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT,
+                user_id TEXT,
+                kind TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                created_timestamp INTEGER NOT NULL,
+                updated_timestamp INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ltm_guild_user
+            ON long_term_memories(guild_id, user_id);
+
+            CREATE INDEX IF NOT EXISTS idx_ltm_key
+            ON long_term_memories(key);
+
+            CREATE TABLE IF NOT EXISTS workflows (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                steps_json TEXT NOT NULL,
+                created_by TEXT,
+                created_timestamp INTEGER NOT NULL,
+                updated_timestamp INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_workflows_guild
+            ON workflows(guild_id);
+
             CREATE VIRTUAL TABLE IF NOT EXISTS message_chunks_fts
             USING fts5(content, content='message_chunks', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
         `);
