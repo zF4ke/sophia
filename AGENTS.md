@@ -91,6 +91,8 @@ These capability ids are prompt- and runtime-stable:
 - `workflow_create`
 - `workflow_list`
 - `workflow_run`
+- `tool_search`
+- `create_poll`
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`.
 

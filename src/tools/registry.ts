@@ -50,6 +50,9 @@ import { noteAddTool, noteListTool, noteClearTool, planUpdateTool } from "./note
 import { webSearchTool, fetchUrlTool } from "./webSearch";
 import { memoryRememberTool, memorySearchTool } from "./longTermMemory";
 import { workflowCreateTool, workflowListTool, workflowRunTool } from "./workflows";
+import { toolSearchTool } from "./toolSearch";
+import { createPollTool } from "./createPoll";
+import { getToolExposure, isDirectTool } from "./toolExposure";
 
 // ── Aggregated tool list ────────────────────────────────────────────
 
@@ -109,6 +112,10 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     workflowCreateTool,
     workflowListTool,
     workflowRunTool,
+    // ── Meta (discovery) ──
+    toolSearchTool,
+    // ── Poll ──
+    createPollTool,
 ];
 
 const TOOL_MAP = new Map<string, ToolDefinition>(
@@ -262,4 +269,39 @@ export function buildToolDefinitions(): NativeToolDef[] {
             parameters: tool.schema.parameters,
         },
     }));
+}
+
+export function buildVisibleToolDefinitions(discovered: Set<string> = new Set()): NativeToolDef[] {
+    return ALL_TOOLS.filter((tool) => {
+        const exposure = getToolExposure(tool.name as never);
+        if (exposure === "direct") return true;
+        return discovered.has(tool.name);
+    }).map((tool) => ({
+        type: "function" as const,
+        function: {
+            name: tool.name,
+            description: tool.schema.description,
+            parameters: tool.schema.parameters,
+        },
+    }));
+}
+
+export function getDeferredTools(): typeof ALL_TOOLS {
+    return ALL_TOOLS.filter((t) => !isDirectTool(t.name as never)) as unknown as typeof ALL_TOOLS;
+}
+
+export function formatDeferredInventory(): string {
+    const deferred = getDeferredTools();
+    if (!deferred.length) return "All tools are directly available.";
+    const byEffect: Record<string, typeof deferred> = {};
+    for (const t of deferred) {
+        const k = t.catalog.effect;
+        if (!byEffect[k]) byEffect[k] = [] as unknown as typeof deferred;
+        (byEffect[k] as unknown as typeof t[]).push(t);
+    }
+    const lines: string[] = ["Deferred tools (call tool_search to load):"];
+    for (const [effect, tools] of Object.entries(byEffect)) {
+        lines.push(`- ${effect}: ${tools.map((t) => `${t.name} — ${t.catalog.description.slice(0, 80)}`).join("; ")}`);
+    }
+    return lines.join("\n");
 }

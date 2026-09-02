@@ -1,4 +1,4 @@
-import { buildToolDefinitions, type NativeToolDef } from "@/tools/registry";
+import { buildToolDefinitions, buildVisibleToolDefinitions, type NativeToolDef } from "@/tools/registry";
 
 export type { NativeToolDef };
 
@@ -25,3 +25,18 @@ export const TOOL_DEFINITIONS: NativeToolDef[] = [
         },
     },
 ];
+
+export function getToolDefinitions(discovered: Set<string> = new Set()): NativeToolDef[] {
+    return [
+        ...buildVisibleToolDefinitions(discovered),
+        {
+            type: "function",
+            function: {
+                name: "finish",
+                description:
+                    "Call this when you have your final answer ready. The 'answer' field will be sent as Sophia's response in Discord. You MUST call this tool to deliver your response — do not just output text.",
+                parameters: finishParams,
+            },
+        },
+    ];
+}

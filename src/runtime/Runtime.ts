@@ -12,7 +12,8 @@ import {
     formatChannelContext,
 } from "@/runtime/planning";
 import { PromptRegistry } from "@/runtime/PromptRegistry";
-import { TOOL_DEFINITIONS } from "@/runtime/toolSchemas";
+import { TOOL_DEFINITIONS, getToolDefinitions } from "@/runtime/toolSchemas";
+import { formatDeferredInventory } from "@/tools/registry";
 import type {
     ApprovalRequest,
     BatchApprovalRequest,
@@ -472,6 +473,7 @@ export class Runtime {
                         : "Not a reply.",
                     max_tool_calls: String(constraints.maxToolCalls),
                     personality_override: personalityOverride,
+                    deferred_tools: formatDeferredInventory(),
                 });
 
             let systemPrompt = renderSystemPrompt(contextFields);
@@ -530,6 +532,8 @@ export class Runtime {
             let cumulativePromptTokens = 0;
             let cumulativeCompletionTokens = 0;
             let malformedToolCallCorrections = 0;
+            // Dynamic tool discovery — deferred tools are loaded via tool_search (opencode/codex pattern).
+            const discoveredTools = new Set<string>();
 
             /**
              * Runtime-driven forced continuation: when the unified corpus guard
@@ -695,8 +699,9 @@ export class Runtime {
                     }
                 } catch { /* non-fatal */ }
 
+                const dynamicTools = getToolDefinitions(discoveredTools);
                 const result = await ModelGateway.generateWithTools(messages, {
-                    tools: TOOL_DEFINITIONS,
+                    tools: dynamicTools,
                     traceContext: {
                         traceLabel: `agent_loop_iter_${iteration}`,
                         questionPreview: input.question,
@@ -878,6 +883,16 @@ export class Runtime {
                         );
 
                         await input.debugSession?.setToolResult(toolName, output.summary);
+                        // Dynamic discovery: if tool_search returned results, expose them next iteration.
+                        if (toolName === T.tool_search && output.data && typeof output.data === "object") {
+                            try {
+                                const d = output.data as { results?: { name: string }[] };
+                                for (const r of d.results ?? []) {
+                                    if (r?.name) discoveredTools.add(r.name);
+                                }
+                                if (d.results?.length) trace("tool_discovery", `Discovered: ${d.results.map((r) => r.name).join(", ")}`);
+                            } catch { /* best-effort */ }
+                        }
                         if (toolName === T.retrieve_messages && retrieval) {
                             const prevViolations = corpusTask?.guardViolations ?? 0;
                             corpusTask = updateCorpusTask(

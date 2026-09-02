@@ -65,6 +65,10 @@ const TOOL_NAMES = [
     "workflow_create",
     "workflow_list",
     "workflow_run",
+    // ── Meta ──
+    "tool_search",
+    // ── Poll ──
+    "create_poll",
 ] as const;
 
 // ── Derived types and arrays ──
