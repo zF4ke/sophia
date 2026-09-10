@@ -10,14 +10,13 @@ import {
     TextDisplayBuilder,
 } from "discord.js";
 import { SettingsService, type BotSettings } from "@/app/SettingsService";
-import { readModelProfiles, resolveModelProfileName } from "@/app/modelProfiles";
+import { listModelProfiles, readModelProfiles, resolveModelProfileName } from "@/app/modelProfiles";
 import { SecurityService } from "@/security/SecurityService";
 import type { BotClient } from "@/shared/appTypes";
 
 export type RuntimeSettingKey =
     | "maxToolCalls"
     | "maxRepeatedCallSignature"
-    | "maxLatencyBudgetMs"
     | "maxPriorTurns"
     | "maxChannelMessages"
     | "maxEvidenceSlice"
@@ -27,13 +26,11 @@ export type RuntimeSettingKey =
     | "retrievalContextWindow"
     | "approvalTimeoutMs"
     | "longTaskMaxToolCalls"
-    | "longTaskMaxLatencyBudgetMs"
     | "longTaskEvidenceSliceFloor"
     | "longTaskRetrievalInlineCrawlBatches";
 
 const LONG_TASK_KEYS: RuntimeSettingKey[] = [
     "longTaskMaxToolCalls",
-    "longTaskMaxLatencyBudgetMs",
     "longTaskEvidenceSliceFloor",
     "longTaskRetrievalInlineCrawlBatches",
 ];
@@ -49,8 +46,6 @@ export function getRuntimeSettingValue(
     switch (key) {
         case "longTaskMaxToolCalls":
             return settings.runtime.longTask.maxToolCalls;
-        case "longTaskMaxLatencyBudgetMs":
-            return settings.runtime.longTask.maxLatencyBudgetMs;
         case "longTaskEvidenceSliceFloor":
             return settings.runtime.longTask.evidenceSliceFloor;
         case "longTaskRetrievalInlineCrawlBatches":
@@ -70,9 +65,6 @@ export function buildRuntimeSettingPatch(
         switch (key) {
             case "longTaskMaxToolCalls":
                 longTask.maxToolCalls = value;
-                break;
-            case "longTaskMaxLatencyBudgetMs":
-                longTask.maxLatencyBudgetMs = value;
                 break;
             case "longTaskEvidenceSliceFloor":
                 longTask.evidenceSliceFloor = value;
@@ -171,12 +163,6 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
         longDescription: "Tentativas permitidas para a mesma assinatura antes de bloquear loop.",
         presets: [1, 2, 3],
     },
-    maxLatencyBudgetMs: {
-        label: "⏱️ Tempo máximo por turno",
-        shortDescription: "Tempo total de execução por turno.",
-        longDescription: "Tempo máximo de execução do loop antes de encerrar por orçamento.",
-        presets: [10000, 15000, 20000, 30000, 45000, 60000, 90000, 120000, 180000, 240000, 300000],
-    },
     escalationFetchLimit: {
         label: "🚀 Limite de refresh ao vivo",
         shortDescription: "Máximo de fetch durante refresh ao vivo.",
@@ -191,15 +177,9 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
     },
     longTaskMaxToolCalls: {
         label: "🛠️ Long task: máx. ferramentas",
-        shortDescription: "Cap de ferramentas ao entrar em long-task.",
-        longDescription: "Quando o modelo chama start_long_task, o limite de chamadas é elevado para este valor.",
+        shortDescription: "Cap de ferramentas em long-task.",
+        longDescription: "Quando o modelo chama start_long_task, ou quando o runtime eleva o orçamento automaticamente (corpus explícito grande ou paginação longa), o limite de chamadas passa para este valor.",
         presets: [50, 100, 150, 200, 300, 500, 750, 1000],
-    },
-    longTaskMaxLatencyBudgetMs: {
-        label: "⏱️ Long task: duração máxima",
-        shortDescription: "Cap de tempo (ms) ao entrar em long-task.",
-        longDescription: "Quando o modelo chama start_long_task, o orçamento de tempo é elevado para este valor (ms).",
-        presets: [120000, 240000, 360000, 600000, 900000, 1200000, 1800000],
     },
     longTaskEvidenceSliceFloor: {
         label: "📚 Long task: floor de evidência",
@@ -261,22 +241,7 @@ function buildPriceLines(profileName: string): string[] {
 function buildModelOptions(settings: BotSettings) {
     const profileConfig = readModelProfiles();
     const selectedProfileName = resolveModelProfileName(settings.modelProfile, profileConfig);
-    return Object.entries(profileConfig.profiles)
-        .sort(([, left], [, right]) => {
-            const leftInput = left.pricing?.inputPerMillionUsd ?? Number.POSITIVE_INFINITY;
-            const rightInput = right.pricing?.inputPerMillionUsd ?? Number.POSITIVE_INFINITY;
-            if (leftInput !== rightInput) {
-                return leftInput - rightInput;
-            }
-
-            const leftOutput = left.pricing?.outputPerMillionUsd ?? Number.POSITIVE_INFINITY;
-            const rightOutput = right.pricing?.outputPerMillionUsd ?? Number.POSITIVE_INFINITY;
-            if (leftOutput !== rightOutput) {
-                return leftOutput - rightOutput;
-            }
-
-            return (left.label || "").localeCompare(right.label || "");
-        })
+    return listModelProfiles(profileConfig)
         .map(([profileName, profile]) => {
             const label = profile.label || profileName;
             const inputPrice = profile.pricing?.inputPerMillionUsd;
@@ -431,12 +396,7 @@ export function buildSettingsPanel(
             `Trigger: \`${Math.round(compactionSettings.triggerFraction * 100)}%\` do contexto`,
         ];
 
-        const compactionModelOptions = Object.entries(profileConfig.profiles)
-            .sort(([, a], [, b]) => {
-                const ai = a.pricing?.inputPerMillionUsd ?? Infinity;
-                const bi = b.pricing?.inputPerMillionUsd ?? Infinity;
-                return ai - bi;
-            })
+        const compactionModelOptions = listModelProfiles(profileConfig)
             .map(([name, p]) => ({
                 label: (p.label || name).slice(0, 100),
                 value: name,
@@ -522,7 +482,7 @@ export function buildSettingsPanel(
                 )
                 .addTextDisplayComponents(
                     new TextDisplayBuilder().setContent(
-                        "Valores aplicados quando o modelo chama `start_long_task` (estimativas do modelo são ignoradas)."
+                        "Valores aplicados quando o modelo chama `start_long_task` ou quando o runtime eleva o orçamento automaticamente (corpus explícito grande ou paginação longa). Estimativas do modelo são ignoradas."
                     )
                 )
                 .addTextDisplayComponents(

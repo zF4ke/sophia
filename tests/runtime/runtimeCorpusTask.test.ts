@@ -73,19 +73,51 @@ function makeRawTextResult(content: string): ToolChatResult {
 
 function makeRetrievePayload(accumulated: number, continuationAvailable = true) {
     return {
+        query: "q",
         mode: "history",
+        cacheHit: true,
+        liveEscalated: false,
+        searchedChannelIds: ["c1"],
+        fetchedChannelIds: [],
+        cacheEnriched: false,
+        evidenceSufficient: accumulated > 0,
+        strongResultCount: 0,
+        weakResultCount: 0,
         historyMessageCount: accumulated,
+        semanticMatchCount: 0,
         accumulatedUniqueCount: accumulated,
-        sourceOrigin: "history",
+        sourceOrigin: "cache",
+        targetAuthorId: null,
+        targetChannelIds: ["c1"],
+        historyMessages: [],
+        semanticMatches: [],
+        combinedResults: [],
         continuation: {
             continuationAvailable,
             history: {
                 continuationAvailable,
                 perChannelOldestMessageId: continuationAvailable ? { c1: `oldest-${accumulated}` } : {},
             },
+            semantic: {
+                cursor: null,
+                continuationAvailable: false,
+            },
+            perChannelOldestMessageId: continuationAvailable ? { c1: `oldest-${accumulated}` } : {},
         },
-        exhaustion: { historyExhausted: !continuationAvailable, exhaustedChannelIds: [] },
-        messages: [],
+        exhaustion: {
+            historyExhaustedChannelIds: continuationAvailable ? [] : ["c1"],
+            historyExhausted: !continuationAvailable,
+            semanticExhausted: true,
+            exhaustedChannelIds: continuationAvailable ? [] : ["c1"],
+            exhausted: !continuationAvailable,
+        },
+        accumulatedWindow: {
+            beforeTimestamp: null,
+            afterTimestamp: null,
+        },
+        beforeTimestamp: null,
+        afterTimestamp: null,
+        excludedMessageIds: [],
     };
 }
 
@@ -101,7 +133,6 @@ describe("runtime corpus task state machine", () => {
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
-        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall: false });
     });
 
     it("rejects under-target finish, rejects raw-text, forces continuation, and falls back to deterministic incomplete string", async () => {
@@ -135,7 +166,7 @@ describe("runtime corpus task state machine", () => {
             .mockResolvedValueOnce(makeRawTextResult("Baseado no que eu tenho, a pessoa é..."))
             .mockResolvedValue({ content: null, toolCalls: [], finishReason: "stop", model: "t", durationMs: 1, usage: null });
 
-        const result = await Runtime.answer(createInput());
+        const result = await Runtime.answer(createInput({ autoContinue: false }));
 
         // Unified guard + forced continuation + deterministic fallback:
         //   - guard rejected an under-target finish AND an under-target raw text
@@ -173,7 +204,7 @@ describe("runtime corpus task state machine", () => {
             .mockResolvedValueOnce(makeToolCallResult("retrieve_messages", { query: "q", limit: 1000, channelIds: ["c1"] }))
             .mockResolvedValueOnce(makeFinishResult("Pronto — peguei o que estava disponível."));
 
-        const result = await Runtime.answer(createInput({ question: "Mostre algumas mensagens" }));
+        const result = await Runtime.answer(createInput({ autoContinue: false, question: "Mostre algumas mensagens" }));
 
         // No corpus task activated → finish accepted normally, no forced synthesis fallback.
         expect(result.answer).toBe("Pronto — peguei o que estava disponível.");
@@ -197,6 +228,7 @@ describe("runtime corpus task state machine", () => {
             .mockResolvedValueOnce(makeFinishResult("Resposta normal."));
 
         const result = await Runtime.answer(createInput({
+            autoContinue: false,
             question: "Analise o canal <#333333333333333333> em 2023 e me diga o clima geral",
         }));
 
@@ -227,6 +259,7 @@ describe("runtime corpus task state machine", () => {
             .mockResolvedValue({ content: null, toolCalls: [], finishReason: "stop", model: "t", durationMs: 1, usage: null });
 
         const result = await Runtime.answer(createInput({
+            autoContinue: false,
             question: "Faça uma análise baseada nas últimas 20000 mensagens do canal",
         }));
 
@@ -254,9 +287,40 @@ describe("runtime corpus task state machine", () => {
             .mockResolvedValueOnce(makeToolCallResult("retrieve_messages", { query: "q", limit: 20000, channelIds: ["c1"] }))
             .mockResolvedValueOnce(makeFinishResult("Só existem 500 mensagens no canal."));
 
-        const result = await Runtime.answer(createInput());
+        const result = await Runtime.answer(createInput({ autoContinue: false }));
 
         // Exhaustion lets the finish through — the guard is about truth, not quota.
         expect(result.answer).toBe("Só existem 500 mensagens no canal.");
+    });
+
+    it("auto-escalates long-task budgets on an explicit corpus without start_long_task", async () => {
+        const runMock = vi.fn().mockResolvedValue({
+            tool: "retrieve_messages",
+            summary: "ok",
+            data: makeRetrievePayload(1000, true),
+        });
+        const originalGet = CapabilityRegistry.get.bind(CapabilityRegistry);
+        vi.spyOn(CapabilityRegistry, "get").mockImplementation((id) => {
+            const cap = originalGet(id);
+            if (id === "retrieve_messages") return { ...cap, run: runMock };
+            return cap;
+        });
+
+        const recordSpy = vi.spyOn(DiscordMemoryService, "recordRuntimeRun")
+            .mockResolvedValue(undefined);
+        vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeToolCallResult("retrieve_messages", { query: "análise", limit: 1000, channelIds: ["c1"] }))
+            .mockResolvedValueOnce(makeFinishResult("Resposta antecipada."))
+            .mockResolvedValueOnce(makeRawTextResult("Ainda dá para responder com isso."))
+            .mockResolvedValue({ content: null, toolCalls: [], finishReason: "stop", model: "t", durationMs: 1, usage: null });
+
+        await Runtime.answer(createInput({
+            autoContinue: false,
+            question: "Faça uma análise baseada nas últimas 20000 mensagens do canal",
+        }));
+
+        const persistedArgs = recordSpy.mock.calls.at(-1)?.[0] as { traceEvents: Array<{ label: string; detail: string }> };
+        const longTaskTrace = persistedArgs.traceEvents.find((t) => t.label === "long_task");
+        expect(longTaskTrace?.detail).toMatch(/\(auto\)/);
     });
 });

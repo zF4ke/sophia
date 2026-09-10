@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "path";
+import { SettingsService } from "@/app/SettingsService";
+import { OperationalStore } from "@/runtime/storage/OperationalStore";
 import { ModelGateway, type ToolChatResult } from "@/ai/ModelGateway";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { Runtime } from "@/runtime/Runtime";
@@ -70,8 +73,19 @@ function makeMalformedMarkupResult(content: string): ToolChatResult {
     };
 }
 
+function makeBlankResult(): ToolChatResult {
+    return {
+        content: null,
+        toolCalls: [],
+        finishReason: "stop",
+        model: "test-model",
+        durationMs: 10,
+        usage: null,
+    };
+}
+
 describe("runtime stall correction", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.restoreAllMocks();
         toolCallCounter = 0;
         process.env.DISCORD_TOKEN = "test-token";
@@ -82,15 +96,25 @@ describe("runtime stall correction", () => {
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
-        // Default stall classifier: not a stall (tests override when needed)
-        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall: false });
+        // Isolate the operational store per file: otherwise these Runtime.answer
+        // runs hit whatever sqlite path leaked from another test file's
+        // settings (and, in CI sandboxes without network, fail on DB writes).
+        SettingsService.update({
+            runtime: {
+                ...SettingsService.load().runtime,
+                operationalDbPath: path.join(
+                    process.cwd(),
+                    "storage",
+                    "test-runtime-store",
+                    `runtime-stall-${Date.now()}-${Math.random()}.sqlite`,
+                ),
+            },
+        });
+        await OperationalStore.initialize();
     });
 
     it("rejects a stalling finish answer and allows the model to retry", async () => {
-        vi.spyOn(ModelGateway, "generateJson")
-            .mockResolvedValueOnce({ stall: true })
-            .mockResolvedValue({ stall: false });
-
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue("Síntese de teste.");
         const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
             // First call: model tries to stall
             .mockResolvedValueOnce(makeFinishResult("Vou dar uma olhada agora!"))
@@ -106,28 +130,7 @@ describe("runtime stall correction", () => {
     });
 
     it("rejects a stalling finish twice before accepting the third attempt", async () => {
-        vi.spyOn(ModelGateway, "generateJson")
-            .mockResolvedValueOnce({ stall: true })
-            .mockResolvedValueOnce({ stall: true })
-            .mockResolvedValue({ stall: false });
-
-        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
-            .mockResolvedValueOnce(makeFinishResult("Vou dar uma olhada agora!"))
-            .mockResolvedValueOnce(makeFinishResult("Te aviso quando terminar!"))
-            .mockResolvedValueOnce(makeFinishResult("Não encontrei evidência sobre isso."));
-
-        const result = await Runtime.answer(createInput({ question: "O que o João disse?" }));
-
-        expect(result.answer).toBe("Não encontrei evidência sobre isso.");
-        expect(generateSpy).toHaveBeenCalledTimes(3);
-    });
-
-    it("rejects a stalling finish twice before accepting the third attempt", async () => {
-        vi.spyOn(ModelGateway, "generateJson")
-            .mockResolvedValueOnce({ stall: true })
-            .mockResolvedValueOnce({ stall: true })
-            .mockResolvedValue({ stall: false });
-
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue("Sintese de teste.");
         const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
             .mockResolvedValueOnce(makeFinishResult("Vou dar uma olhada agora!"))
             .mockResolvedValueOnce(makeFinishResult("Te aviso quando terminar!"))
@@ -140,6 +143,7 @@ describe("runtime stall correction", () => {
     });
 
     it("does not reject a non-stalling direct answer", async () => {
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue("Sintese de teste.");
         const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
             .mockResolvedValueOnce(makeFinishResult("Olá! Como posso ajudar?"));
 
@@ -149,7 +153,42 @@ describe("runtime stall correction", () => {
         expect(generateSpy).toHaveBeenCalledTimes(1);
     });
 
+    it("defers finish when the model mixes it with executable tool calls", async () => {
+        const mixed: ToolChatResult = {
+            content: null,
+            toolCalls: [
+                {
+                    id: "finish-mixed",
+                    type: "function",
+                    function: { name: "finish", arguments: JSON.stringify({ answer: "premature" }) },
+                },
+                {
+                    id: "math-mixed",
+                    type: "function",
+                    function: { name: "evaluate_math", arguments: JSON.stringify({ expression: "2+2" }) },
+                },
+            ],
+            finishReason: "tool_calls",
+            model: "test-model",
+            durationMs: 10,
+            usage: null,
+        };
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue("Sintese de teste.");
+        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(mixed)
+            .mockResolvedValueOnce(makeFinishResult("4"));
+
+        const result = await Runtime.answer(createInput({ question: "2+2?" }));
+
+        expect(result.answer).toBe("4");
+        expect(result.toolRuns).toEqual([
+            expect.objectContaining({ tool: "evaluate_math" }),
+        ]);
+        expect(generateSpy).toHaveBeenCalledTimes(2);
+    });
+
     it("rejects raw tool-call markup and asks the model to retry properly", async () => {
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue("Sintese de teste.");
         const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
             .mockResolvedValueOnce(makeMalformedMarkupResult([
                 "<minimax:tool_call>",
@@ -165,10 +204,87 @@ describe("runtime stall correction", () => {
         expect(result.answer).toBe("Consegui continuar normalmente.");
         expect(generateSpy).toHaveBeenCalledTimes(2);
     });
+
+    it("rejects plain tool_call markup (arg_key style) as malformed output", async () => {
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue("Sintese de teste.");
+        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeMalformedMarkupResult([
+                "<tool_call>tool_search",
+                "<arg_key>query</arg_key>",
+                "<arg_value>artifact card send</arg_value>",
+                "</tool_call>",
+            ].join("\n")))
+            .mockResolvedValueOnce(makeFinishResult("Consegui continuar normalmente."));
+
+        const result = await Runtime.answer(createInput({ question: "Continua a busca." }));
+
+        expect(result.answer).toBe("Consegui continuar normalmente.");
+        expect(generateSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries a blank model completion instead of ending the turn in silence", async () => {
+        const recordSpy = vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
+        SettingsService.update({
+            runtime: {
+                ...SettingsService.load().runtime,
+                operationalDbPath: path.join(
+                    process.cwd(),
+                    "storage",
+                    "test-runtime-store",
+                    `runtime-stall-${Date.now()}-${Math.random()}.sqlite`,
+                ),
+            },
+        });
+        await OperationalStore.initialize();
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue("Sintese de teste.");
+        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
+        
+            .mockResolvedValueOnce(makeBlankResult())
+            .mockResolvedValueOnce(makeFinishResult("Agora sim, uma resposta."));
+
+        const result = await Runtime.answer(createInput({ question: "Responde alguma coisa." }));
+
+        expect(result.answer).toBe("Agora sim, uma resposta.");
+        expect(generateSpy).toHaveBeenCalledTimes(2);
+        const persisted = recordSpy.mock.calls.at(-1)?.[0] as { traceEvents: Array<{ label: string; detail: string }> };
+        expect(persisted.traceEvents.some((t) => t.label === "blank_response")).toBe(true);
+    });
+
+    it("nudges differently when the completion was truncated at the output limit", async () => {
+        const recordSpy = vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
+        SettingsService.update({
+            runtime: {
+                ...SettingsService.load().runtime,
+                operationalDbPath: path.join(
+                    process.cwd(),
+                    "storage",
+                    "test-runtime-store",
+                    `runtime-stall-${Date.now()}-${Math.random()}.sqlite`,
+                ),
+            },
+        });
+        await OperationalStore.initialize();
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue("Sintese de teste.");
+        const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
+        
+            .mockResolvedValueOnce({ content: null, toolCalls: [], finishReason: "length", model: "test-model", durationMs: 10, usage: null })
+            .mockResolvedValueOnce(makeFinishResult("Versão enxuta enviada."));
+
+        const result = await Runtime.answer(createInput({ question: "faz melhor, usa tudo!" }));
+
+        expect(result.answer).toBe("Versão enxuta enviada.");
+        expect(generateSpy).toHaveBeenCalledTimes(2);
+        const persisted = recordSpy.mock.calls.at(-1)?.[0] as { traceEvents: Array<{ label: string; detail: string }> };
+        const truncated = persisted.traceEvents.find((t) => t.label === "truncated_response");
+        expect(truncated).toBeDefined();
+        // The second call's messages must contain the targeted truncation nudge.
+        const secondCallMessages = generateSpy.mock.calls[1][0] as Array<{ role: string; content: string }>;
+        expect(secondCallMessages.some((m) => m.role === "system" && m.content.includes("output token limit"))).toBe(true);
+    });
 });
 
 describe("runtime start_long_task interception", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.restoreAllMocks();
         toolCallCounter = 0;
         process.env.DISCORD_TOKEN = "test-token";
@@ -179,8 +295,18 @@ describe("runtime start_long_task interception", () => {
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
-        // Default classifier: not a stall (long-task tests manage their own overrides)
-        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall: false });
+        SettingsService.update({
+            runtime: {
+                ...SettingsService.load().runtime,
+                operationalDbPath: path.join(
+                    process.cwd(),
+                    "storage",
+                    "test-runtime-store",
+                    `runtime-stall-${Date.now()}-${Math.random()}.sqlite`,
+                ),
+            },
+        });
+        await OperationalStore.initialize();
     });
 
     it("intercepts start_long_task without dispatching to capability layer", async () => {
@@ -200,13 +326,9 @@ describe("runtime start_long_task interception", () => {
     });
 
     it("rejects finish after start_long_task when no evidence was produced", async () => {
-        // Override classifier: first two finishes are promises, third is real
-        vi.spyOn(ModelGateway, "generateJson")
-            .mockResolvedValueOnce({ stall: true })
-            .mockResolvedValueOnce({ stall: true })
-            .mockResolvedValue({ stall: false });
-
+        vi.spyOn(ModelGateway, "generateText").mockResolvedValue("Sintese de teste.");
         const generateSpy = vi.spyOn(ModelGateway, "generateWithTools")
+        
             .mockResolvedValueOnce(makeStartLongTaskResult({
                 reason: "bulk scan",
                 estimated_tool_calls: 100,
@@ -239,7 +361,6 @@ describe("runtime start_long_task interception", () => {
         const persistedArgs = recordSpy.mock.calls.at(-1)?.[0] as { traceEvents: Array<{ label: string; detail: string }> };
         const longTaskTrace = persistedArgs.traceEvents.find((t) => t.label === "long_task");
         expect(longTaskTrace?.detail).toMatch(/calls=200/);
-        expect(longTaskTrace?.detail).toMatch(/latency=600000ms/);
     });
 
     it("second start_long_task call in same turn is idempotent", async () => {

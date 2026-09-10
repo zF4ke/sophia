@@ -47,6 +47,17 @@ import { deleteChannelTool } from "./deleteChannel";
 import { deleteRoleTool } from "./deleteRole";
 import { startLongTaskTool } from "./startLongTask";
 import { noteAddTool, noteListTool, noteClearTool, planUpdateTool } from "./notes";
+import { goalOpenTool, goalUpdateTool, goalDoneTool } from "./goals";
+import { webSearchTool, fetchUrlTool } from "./webSearch";
+import { memoryRememberTool, memorySearchTool } from "./longTermMemory";
+import { workflowCreateTool, workflowListTool, workflowRunTool, workflowDeleteTool } from "./workflows";
+import { toolSearchTool } from "./toolSearch";
+import { createPollTool } from "./createPoll";
+import { getPollResultsTool } from "./getPollResults";
+import { indexChannelTool } from "./indexChannel";
+import { artifactSendTool } from "./artifactSend";
+import { artifactEditTool } from "./artifactEdit";
+import { getToolExposure, isDirectTool } from "./toolExposure";
 
 // ── Aggregated tool list ────────────────────────────────────────────
 
@@ -96,11 +107,59 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     noteListTool,
     noteClearTool,
     planUpdateTool,
+    // ── Goals ──
+    goalOpenTool,
+    goalUpdateTool,
+    goalDoneTool,
+    // ── Web ──
+    webSearchTool,
+    fetchUrlTool,
+    // ── Long-term memory ──
+    memoryRememberTool,
+    memorySearchTool,
+    // ── Workflows ──
+    workflowCreateTool,
+    workflowListTool,
+    workflowRunTool,
+    workflowDeleteTool,
+    // ── Meta (discovery) ──
+    toolSearchTool,
+    // ── Poll ──
+    createPollTool,
+    getPollResultsTool,
+    // ── Indexing ──
+    indexChannelTool,
+    // ── Artifacts ──
+    artifactSendTool,
+    artifactEditTool,
 ];
 
 const TOOL_MAP = new Map<string, ToolDefinition>(
     ALL_TOOLS.map((t) => [t.name, t]),
 );
+
+function expectedSideEffectLevel(effect: ToolEffect): "none" | "write" | "destructive" {
+    return effect === "read" ? "none" : effect;
+}
+
+function validateToolDefinitions(tools: readonly ToolDefinition[]): void {
+    const names = new Set<string>();
+    for (const tool of tools) {
+        if (names.has(tool.name)) {
+            throw new Error(`Duplicate tool definition "${tool.name}".`);
+        }
+        names.add(tool.name);
+
+        const expected = expectedSideEffectLevel(tool.catalog.effect);
+        if (tool.capability.sideEffectLevel !== expected) {
+            throw new Error(
+                `Tool "${tool.name}" effect mismatch: catalog=${tool.catalog.effect}, capability=${tool.capability.sideEffectLevel}.`,
+            );
+        }
+    }
+}
+
+validateToolDefinitions(ALL_TOOLS);
 
 // ── Effect queries ──────────────────────────────────────────────────
 
@@ -249,4 +308,39 @@ export function buildToolDefinitions(): NativeToolDef[] {
             parameters: tool.schema.parameters,
         },
     }));
+}
+
+export function buildVisibleToolDefinitions(discovered: Set<string> = new Set()): NativeToolDef[] {
+    return ALL_TOOLS.filter((tool) => {
+        const exposure = getToolExposure(tool.name as never);
+        if (exposure === "direct") return true;
+        return discovered.has(tool.name);
+    }).map((tool) => ({
+        type: "function" as const,
+        function: {
+            name: tool.name,
+            description: tool.schema.description,
+            parameters: tool.schema.parameters,
+        },
+    }));
+}
+
+export function getDeferredTools(): typeof ALL_TOOLS {
+    return ALL_TOOLS.filter((t) => !isDirectTool(t.name as never)) as unknown as typeof ALL_TOOLS;
+}
+
+export function formatDeferredInventory(): string {
+    const deferred = getDeferredTools();
+    if (!deferred.length) return "All tools are directly available.";
+    const byEffect: Record<string, typeof deferred> = {};
+    for (const t of deferred) {
+        const k = t.catalog.effect;
+        if (!byEffect[k]) byEffect[k] = [] as unknown as typeof deferred;
+        (byEffect[k] as unknown as typeof t[]).push(t);
+    }
+    const lines: string[] = ["Deferred tools (call tool_search to load):"];
+    for (const [effect, tools] of Object.entries(byEffect)) {
+        lines.push(`- ${effect}: ${tools.map((t) => `${t.name} — ${t.catalog.description.slice(0, 80)}`).join("; ")}`);
+    }
+    return lines.join("\n");
 }

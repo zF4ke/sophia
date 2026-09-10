@@ -55,6 +55,31 @@ const TOOL_NAMES = [
     "note_list",
     "note_clear",
     "plan_update",
+    // ── Goals ──
+    "goal_open",
+    "goal_update",
+    "goal_done",
+    // ── Web ──
+    "web_search",
+    "fetch_url",
+    // ── Long-term memory ──
+    "memory_search",
+    "memory_remember",
+    // ── Workflows ──
+    "workflow_create",
+    "workflow_list",
+    "workflow_run",
+    "workflow_delete",
+    // ── Meta ──
+    "tool_search",
+    // ── Poll ──
+    "create_poll",
+    "get_poll_results",
+    // ── Indexing ──
+    "index_channel",
+    // ── Artifacts ──
+    "artifact_send",
+    "artifact_edit",
 ] as const;
 
 // ── Derived types and arrays ──

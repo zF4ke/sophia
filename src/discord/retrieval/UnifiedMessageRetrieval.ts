@@ -1,8 +1,10 @@
 import type { Guild } from "discord.js";
 import { getAppConfig } from "@/app/AppConfig";
+import { SettingsService } from "@/app/SettingsService";
 import {
     DiscordChannelCrawlService,
 } from "@/discord/live/DiscordChannelCrawlService";
+import { DiscordBackfillCrawler } from "@/discord/live/DiscordBackfillCrawler";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type {
     ChannelCrawlResult,
@@ -16,6 +18,43 @@ const MAX_CHANNEL_ESCALATIONS = 2;
 
 function getEscalationFetchLimit(): number {
     return Math.max(1, getAppConfig().runtime.escalationFetchLimit);
+}
+
+function edgePrefetchEnabled(): boolean {
+    try {
+        return SettingsService.load().runtime.edgePrefetch !== false;
+    } catch {
+        return true;
+    }
+}
+
+/**
+ * Queue deep backfill for channels whose history page touched the indexed
+ * boundary (oldest retrieved snowflake <= crawl checkpoint). Fire-and-forget —
+ * called with `void` after a history fetch; errors are swallowed.
+ */
+async function edgePrefetch(channelIds: string[], historyMessages: RetrievedChunk[]): Promise<void> {
+    const unique = [...new Set(channelIds)];
+    for (const channelId of unique) {
+        const [crawlState] = await DiscordMemoryService.getChannelCrawlStateAsync(channelId);
+        if (!crawlState || crawlState.exhausted) continue;
+        const boundary = crawlState.oldestFetchedMessageId;
+        if (!boundary) continue;
+        const oldestInPage = historyMessages
+            .filter((m) => m.channelId === channelId)
+            .reduce<RetrievedChunk | null>((oldest, m) => {
+                if (!oldest) return m;
+                return BigInt(m.messageId) < BigInt(oldest.messageId) ? m : oldest;
+            }, null);
+        if (!oldestInPage) continue;
+        // Page did not reach the boundary — plenty of indexed history left.
+        if (BigInt(oldestInPage.messageId) > BigInt(boundary)) continue;
+        await DiscordBackfillCrawler.enqueue(channelId, {
+            reason: "edge_prefetch",
+            priority: 5,
+            guildId: oldestInPage.guildId,
+        });
+    }
 }
 
 function dedupeChunks(rows: RetrievedChunk[]): RetrievedChunk[] {
@@ -649,6 +688,15 @@ export class UnifiedMessageRetrieval {
         }
 
         const combinedResults = buildCombinedResults(historyMessages, semanticMatches, limit);
+
+        // Edge prefetch: when a history page reaches the indexed boundary
+        // (oldest retrieved snowflake <= crawl checkpoint), queue that channel
+        // for deep backfill so the next pagination finds more history instead
+        // of a dead end. Fire-and-forget; the queue dedupes.
+        if (edgePrefetchEnabled() && historyMessages.length) {
+            void edgePrefetch(searchedChannelIds, historyMessages).catch(() => {});
+        }
+
         const crawlOldestByChannel = Object.fromEntries(
             crawlResults.map((crawl) => [crawl.channelId, crawl.oldestFetchedMessageId || null])
         );

@@ -1,20 +1,13 @@
-import { ModelGateway } from "@/ai/ModelGateway";
-import { SettingsService } from "@/app/SettingsService";
-import { readModelProfiles } from "@/app/modelProfiles";
-import { PromptRegistry } from "@/runtime/PromptRegistry";
 import type { DiscordToolEvidenceRole } from "@/shared/discordTools";
-import type { ModelProfile } from "@/shared/appTypes";
 import type { ToolInvocationRecord } from "@/runtime/contracts";
 import type { ToolEffect } from "@/tools/types";
 
 /**
  * Stall / fake-promise detector.
  *
- * Uses a cheap LLM classifier to detect when a `finish` answer promises
- * action instead of delivering content. Language-agnostic — no regexes.
- *
- * Structural checks (evidence roles, write/destructive tool success)
- * are still deterministic and bypass the classifier entirely.
+ * Detects a small set of obvious deferrals such as "let me check" and
+ * "vou verificar". This check stays local because adding a model request to
+ * validate every direct answer costs latency and creates another failure path.
  */
 
 export interface StallDetectionInput {
@@ -57,47 +50,31 @@ const PRODUCTIVE_EVIDENCE_ROLES: ReadonlySet<DiscordToolEvidenceRole> = new Set(
     "live_evidence",
 ]);
 
-// ── AI-based promise classifier ─────────────────────────────────────
+const STALL_PHRASES: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+    {
+        label: "english_deferred_action",
+        pattern: /\b(?:let me|i(?:'|’)ll|i will)\s+(?:check|look|search|investigate|verify|review|collect|process|create|delete|edit|send|move)\b/i,
+    },
+    {
+        label: "english_wait",
+        pattern: /\b(?:give me (?:a )?moment|one moment|hold on|working on it|still (?:checking|searching|collecting|processing)|almost done|i(?:'|’)ll get back to you)\b/i,
+    },
+    {
+        label: "portuguese_deferred_action",
+        pattern: /\b(?:vou|irei)\s+(?:verificar|procurar|buscar|pesquisar|analisar|checar|coletar|processar|criar|apagar|deletar|editar|enviar|mover|limpar|dar uma olhada)\b/i,
+    },
+    {
+        label: "portuguese_in_progress",
+        pattern: /\b(?:estou|ainda estou)\s+(?:verificando|procurando|buscando|pesquisando|analisando|checando|coletando|processando|começando)\b/i,
+    },
+    {
+        label: "portuguese_wait",
+        pattern: /\b(?:só um momento|um minutinho|já volto|te aviso quando|assim que terminar)\b/i,
+    },
+];
 
-interface ClassifierResult {
-    stall: boolean;
-}
-
-/**
- * Resolve the model profile used for the stall classifier.
- * Uses the compaction summarizer model from settings.
- */
-function resolveClassifierProfile(): ModelProfile | null {
-    const settings = SettingsService.load();
-    const profileName = settings.compaction.summarizerModel;
-    const config = readModelProfiles();
-    return config.profiles[profileName] ?? config.profiles[config.defaultProfile] ?? null;
-}
-
-/**
- * Call a cheap LLM to classify whether `answer` is a stall/promise.
- * Fail-open: returns `false` (not a stall) on any error.
- */
-async function classifyPromise(answer: string): Promise<boolean> {
-    try {
-        const systemPrompt = PromptRegistry.load("runtime/stall_classifier");
-        const result = await ModelGateway.generateJson<ClassifierResult>(
-            [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: answer },
-            ],
-            { stall: false },
-            {
-                profile: resolveClassifierProfile() ?? undefined,
-                temperature: 0,
-                maxOutputTokens: 32,
-                traceContext: { traceLabel: "stall_classifier" },
-            },
-        );
-        return result.stall === true;
-    } catch {
-        return false;
-    }
+function findStallPhrase(answer: string): string | undefined {
+    return STALL_PHRASES.find(({ pattern }) => pattern.test(answer))?.label;
 }
 
 function isProductiveRecord(
@@ -115,13 +92,13 @@ function isProductiveRecord(
  * Detect whether the candidate `finish` answer is an empty promise.
  *
  * Returns `stalled = true` when:
- *   A. the AI classifier flags the answer as a promise AND no
- *      productive work was done, OR
+ *   A. the answer contains an obvious deferral AND no productive work
+ *      was done, OR
  *   B. longTaskGranted is true AND no productive evidence was produced
  *      (the model asked for extended budget then bailed).
  *
- * Structural redemption (evidence roles, write/destructive tools)
- * short-circuits before the classifier is called, keeping latency low.
+ * Structural redemption from evidence or a completed mutation wins over
+ * wording. A useful answer may legitimately say what it checked.
  */
 export async function detectStallPromise(input: StallDetectionInput): Promise<StallDetectionResult> {
     const { answer, toolHistoryThisTurn, evidenceRoles, getToolEffect, longTaskGranted } = input;
@@ -138,10 +115,10 @@ export async function detectStallPromise(input: StallDetectionInput): Promise<St
 
     // ── Path B: long-task grant scenarios ──
     if (longTaskGranted) {
-        const isPromise = await classifyPromise(answer);
-        // B1: promise + long task → always stalled (evidence doesn't redeem)
-        if (isPromise) {
-            return { stalled: true, matchedPhrase: "ai_classified_promise" };
+        const matchedPhrase = findStallPhrase(answer);
+        // A long-task answer that still promises future work has not completed.
+        if (matchedPhrase) {
+            return { stalled: true, matchedPhrase };
         }
         // B2: no promise, but ran prep tools without evidence → stalled
         if (!ranProductiveEvidence && !ranActionTool && toolHistoryThisTurn.length > 0) {
@@ -151,17 +128,13 @@ export async function detectStallPromise(input: StallDetectionInput): Promise<St
     }
 
     // ── Path A: normal turns ──
-    // Short-circuit: productive work done → not stalled, skip classifier.
+    // Productive work redeems promise-like wording.
     if (ranProductiveEvidence || ranActionTool) {
         return { stalled: false };
     }
 
-    const isPromise = await classifyPromise(answer);
-    if (isPromise) {
-        return { stalled: true, matchedPhrase: "ai_classified_promise" };
-    }
-
-    return { stalled: false };
+    const matchedPhrase = findStallPhrase(answer);
+    return matchedPhrase ? { stalled: true, matchedPhrase } : { stalled: false };
 }
 
 // ── Doom-loop detector ──────────────────────────────────────────────
@@ -177,7 +150,7 @@ export class DoomLoopDetector {
     private readonly repeatThreshold: number;
     private nudgeCount = 0;
 
-    constructor(windowSize = 5, repeatThreshold = 3) {
+    constructor(windowSize = 6, repeatThreshold = 4) {
         this.windowSize = windowSize;
         this.repeatThreshold = repeatThreshold;
     }
@@ -241,7 +214,7 @@ export class ProgressTracker {
     private callsSinceProgress = 0;
     private readonly threshold: number;
 
-    constructor(threshold = 5) {
+    constructor(threshold = 8) {
         this.threshold = threshold;
     }
 

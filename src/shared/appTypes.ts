@@ -24,6 +24,23 @@ export interface ModelProfile {
     maxOutputTokens: number;
     contextWindow: number;
     parallelToolCalls?: boolean;
+    /**
+     * Optional OpenAI-compatible endpoint override for this profile (e.g. a
+     * local LM Studio server at http://127.0.0.1:1234/v1). When set, chat
+     * requests for this profile go there instead of OpenRouter, and the
+     * OpenRouter-only `provider` routing block is omitted.
+     */
+    baseUrl?: string;
+    /**
+     * Optional env var name holding the API key for a `baseUrl` profile
+     * (e.g. "OPENCODE_API_KEY" for OpenCode Zen). When unset, "not-needed"
+     * is sent as the key (local servers don't check it).
+     */
+    apiKeyEnv?: string;
+    /** Optional provider hint (e.g. "opencode" for Zen free models). */
+    provider?: string;
+    /** Free-form operator notes shown nowhere at runtime. */
+    notes?: string;
     pricing?: {
         inputPerMillionUsd?: number;
         outputPerMillionUsd?: number;
@@ -53,7 +70,6 @@ export interface AppConfig {
         checkpointDbPath: string;
         maxToolCalls: number;
         maxRepeatedCallSignature: number;
-        maxLatencyBudgetMs: number;
         maxPriorTurns: number;
         maxChannelMessages: number;
         maxToolRunsContext: number;
@@ -63,7 +79,6 @@ export interface AppConfig {
         retrievalContextWindow: number;
         longTask: {
             maxToolCalls: number;
-            maxLatencyBudgetMs: number;
             evidenceSliceFloor: number;
             retrievalInlineCrawlBatches: number;
         };

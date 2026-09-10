@@ -46,14 +46,14 @@ describe("AppConfig", () => {
         }));
         vi.spyOn(SettingsService, "load").mockReturnValue({
             ...defaults,
-            modelProfile: "minimax27",
+            modelProfile: "ling30flash",
         });
 
         const { getAppConfig } = await import("@/app/AppConfig");
         const config = getAppConfig();
 
-        expect(config.modelProfileName).toBe("minimax27");
-        expect(config.modelProfile.chatModel).toBe("minimax/minimax-m2.7");
+        expect(config.modelProfileName).toBe("ling30flash");
+        expect(config.modelProfile.chatModel).toBe("inclusionai/ling-3.0-flash");
         expect(updateSpy).not.toHaveBeenCalled();
     });
 

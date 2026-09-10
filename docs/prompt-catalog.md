@@ -11,7 +11,7 @@ The stable code catalog is `src/shared/promptCatalog.ts`.
 ## Purpose
 
 - `runtime/agent_loop`
-  Unified system prompt for the native tool-calling loop. Defines identity, environment, research flow, evidence rules, tool calling rules, and voice.
+  Unified system prompt for the native tool-calling loop. Defines identity, environment, index freshness, long-term memory digest, research flow, evidence rules, tool calling rules, and voice.
 
 Legacy prompt files under `resources/prompts/system/` may still exist as reference material, but they are not part of the active runtime prompt catalog.
 
@@ -54,4 +54,21 @@ The runtime prompt set expects these capability ids to stay stable:
 - `note_add`
 - `note_list`
 - `note_clear`
+- `goal_open`
+- `goal_update`
+- `goal_done`
 - `plan_update`
+- `web_search`
+- `fetch_url`
+- `memory_search`
+- `memory_remember`
+- `workflow_create`
+- `workflow_list`
+- `workflow_run`
+- `workflow_delete`
+- `artifact_send`
+- `artifact_edit`
+- `tool_search`
+- `create_poll`
+- `get_poll_results`
+- `index_channel`

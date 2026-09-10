@@ -73,7 +73,6 @@ describe("approval gate", () => {
         vi.spyOn(SettingsService, "load").mockReturnValue({
             runtime: {
                 maxToolCalls: 10,
-                maxLatencyBudgetMs: 30000,
                 approvalTimeoutMs: 60000,
                 autoApproveWrites: false,
             },
@@ -83,8 +82,6 @@ describe("approval gate", () => {
         vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "recordToolRun").mockResolvedValue(undefined);
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
-        // Default stall classifier: not a stall
-        vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall: false });
     });
 
     it("calls approvalGate for write tools and proceeds when approved", async () => {
@@ -266,7 +263,7 @@ describe("approval gate", () => {
         expect((blockedToolMsg as any).content).toContain("Auto-blocked");
     });
 
-    it("does not spend the latency budget while waiting for approval", async () => {
+    it("survives long admin approval waits (no wall-clock cap on turns)", async () => {
         vi.useFakeTimers();
 
         const approvalGate = vi.fn<(req: ApprovalRequest) => Promise<ApprovalResult>>()

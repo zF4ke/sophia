@@ -34,33 +34,31 @@ export function getAppConfig(): AppConfig {
     const runtimeDir = path.join(FileSystemService.getBaseStorageDir(), "runtime");
     FileSystemService.ensureDirectoryExists(runtimeDir);
 
-    const rt = settings.runtime;
+        const rt = settings.runtime;
 
-    return {
-        discordToken,
-        openRouterApiKey,
-        openRouterBaseUrl: "https://openrouter.ai/api/v1",
-        modelProfileName,
-        modelProfile,
-        runtime: {
-            operationalDbPath: rt.operationalDbPath,
-            checkpointDbPath: rt.checkpointDbPath,
-            maxToolCalls: rt.maxToolCalls,
-            maxRepeatedCallSignature: rt.maxRepeatedCallSignature,
-            maxLatencyBudgetMs: rt.maxLatencyBudgetMs,
-            maxPriorTurns: rt.maxPriorTurns,
-            maxChannelMessages: rt.maxChannelMessages,
-            maxToolRunsContext: rt.maxToolRunsContext,
-            maxEvidenceSlice: rt.maxEvidenceSlice,
-            escalationFetchLimit: rt.escalationFetchLimit,
-            retrievalHistoryLimit: rt.retrievalHistoryLimit,
-            retrievalContextWindow: rt.retrievalContextWindow,
-            longTask: {
-                maxToolCalls: rt.longTask?.maxToolCalls ?? 200,
-                maxLatencyBudgetMs: rt.longTask?.maxLatencyBudgetMs ?? 600_000,
-                evidenceSliceFloor: rt.longTask?.evidenceSliceFloor ?? 128,
-                retrievalInlineCrawlBatches: rt.longTask?.retrievalInlineCrawlBatches ?? 3,
+        return {
+            discordToken,
+            openRouterApiKey,
+            openRouterBaseUrl: "https://openrouter.ai/api/v1",
+            modelProfileName,
+            modelProfile,
+            runtime: {
+                operationalDbPath: rt.operationalDbPath,
+                checkpointDbPath: rt.checkpointDbPath,
+                maxToolCalls: rt.maxToolCalls,
+                maxRepeatedCallSignature: rt.maxRepeatedCallSignature,
+                maxPriorTurns: rt.maxPriorTurns,
+                maxChannelMessages: rt.maxChannelMessages,
+                maxToolRunsContext: rt.maxToolRunsContext,
+                maxEvidenceSlice: rt.maxEvidenceSlice,
+                escalationFetchLimit: rt.escalationFetchLimit,
+                retrievalHistoryLimit: rt.retrievalHistoryLimit,
+                retrievalContextWindow: rt.retrievalContextWindow,
+                longTask: {
+                    maxToolCalls: rt.longTask?.maxToolCalls ?? 200,
+                    evidenceSliceFloor: rt.longTask?.evidenceSliceFloor ?? 128,
+                    retrievalInlineCrawlBatches: rt.longTask?.retrievalInlineCrawlBatches ?? 3,
+                },
             },
-        },
-    };
-}
+        };
+    }

@@ -63,6 +63,17 @@ export type RequestNoteRecord = {
     createdTimestamp: number;
 };
 
+export type RequestGoalRecord = {
+    requestId: string;
+    threadId: string;
+    seq: number;
+    label: string | null;
+    body: string;
+    status: string;
+    createdTimestamp: number;
+    updatedTimestamp: number;
+};
+
 const EMPTY_STATS = { messages: 0, chunks: 0, channels: 0 };
 
 function now() {
@@ -406,25 +417,29 @@ export class DiscordMemoryService {
             },
         ]);
 
-        for (let index = 0; index < chunks.length; index += 1) {
-            await client.execute({
-                sql: `
-                    INSERT INTO message_chunks (
-                        chunk_id, message_id, channel_id, guild_id, chunk_index, content, created_timestamp
-                    ) VALUES (
-                        :chunkId, :messageId, :channelId, :guildId, :chunkIndex, :content, :createdTimestamp
-                    )
-                `,
-                args: {
-                    chunkId: `${stored.id}:${index}`,
-                    messageId: stored.id,
-                    channelId: stored.channelId,
-                    guildId: stored.guildId,
-                    chunkIndex: index,
-                    content: chunks[index],
-                    createdTimestamp: stored.createdTimestamp,
-                },
-            });
+        // Batch all chunk inserts in one roundtrip — per-chunk execute() was the
+        // backfill bottleneck (10x slower on large channels).
+        if (chunks.length) {
+            await client.batch(
+                chunks.map((chunkContent, index) => ({
+                    sql: `
+                        INSERT INTO message_chunks (
+                            chunk_id, message_id, channel_id, guild_id, chunk_index, content, created_timestamp
+                        ) VALUES (
+                            :chunkId, :messageId, :channelId, :guildId, :chunkIndex, :content, :createdTimestamp
+                        )
+                    `,
+                    args: {
+                        chunkId: `${stored.id}:${index}`,
+                        messageId: stored.id,
+                        channelId: stored.channelId,
+                        guildId: stored.guildId,
+                        chunkIndex: index,
+                        content: chunkContent,
+                        createdTimestamp: stored.createdTimestamp,
+                    },
+                })),
+            );
         }
 
         this.knownChannelsSnapshot.set(stored.channelId, {
@@ -1402,6 +1417,115 @@ export class DiscordMemoryService {
             })
         ).rows[0] as Record<string, unknown> | undefined;
         return row ? String(row.body || "") : null;
+    }
+
+    public static async listRequestGoals(options: {
+        requestId: string;
+        threadId?: string;
+        includeThreadHistory?: boolean;
+    }): Promise<RequestGoalRecord[]> {
+        await this.ensureInitialized();
+        const clauses: string[] = [];
+        const args: InArgs = {};
+
+        if (options.includeThreadHistory && options.threadId) {
+            clauses.push(`(request_id = :requestId OR thread_id = :threadId)`);
+            args.requestId = options.requestId;
+            args.threadId = options.threadId;
+        } else {
+            clauses.push(`request_id = :requestId`);
+            args.requestId = options.requestId;
+        }
+
+        const rows = (
+            await OperationalStore.getClient().execute({
+                sql: `
+                    SELECT request_id, thread_id, seq, label, body, status, created_timestamp, updated_timestamp
+                    FROM request_goals
+                    WHERE ${clauses.join(" AND ")}
+                    ORDER BY created_timestamp ASC, seq ASC
+                `,
+                args,
+            })
+        ).rows as Array<Record<string, unknown>>;
+
+        return rows.map((row) => ({
+            requestId: String(row.request_id),
+            threadId: String(row.thread_id),
+            seq: Number(row.seq),
+            label: row.label == null ? null : String(row.label),
+            body: String(row.body || ""),
+            status: String(row.status || "open"),
+            createdTimestamp: Number(row.created_timestamp || 0),
+            updatedTimestamp: Number(row.updated_timestamp || 0),
+        }));
+    }
+
+    public static async addRequestGoal(options: {
+        requestId: string;
+        threadId: string;
+        label: string | null;
+        body: string;
+    }): Promise<{ seq: number }> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const row = (
+            await client.execute({
+                sql: `
+                    SELECT COALESCE(MAX(seq), 0) AS maxSeq
+                    FROM request_goals
+                    WHERE request_id = :requestId
+                `,
+                args: { requestId: options.requestId },
+            })
+        ).rows[0] as Record<string, unknown> | undefined;
+        const nextSeq = Number(row?.maxSeq ?? 0) + 1;
+        const ts = now();
+
+        await client.execute({
+            sql: `
+                INSERT INTO request_goals (
+                    request_id, thread_id, seq, label, body, status, created_timestamp, updated_timestamp
+                ) VALUES (
+                    :requestId, :threadId, :seq, :label, :body, 'open', :ts, :ts
+                )
+            `,
+            args: {
+                requestId: options.requestId,
+                threadId: options.threadId,
+                seq: nextSeq,
+                label: options.label,
+                body: options.body,
+                ts,
+            },
+        });
+        return { seq: nextSeq };
+    }
+
+    public static async updateRequestGoal(options: {
+        requestId: string;
+        seq: number;
+        status: string;
+        body?: string;
+    }): Promise<void> {
+        await this.ensureInitialized();
+        const client = OperationalStore.getClient();
+        const args: InArgs = {
+            requestId: options.requestId,
+            seq: options.seq,
+            status: options.status,
+            updatedTimestamp: now(),
+        };
+        let sql = `
+            UPDATE request_goals
+            SET status = :status, updated_timestamp = :updatedTimestamp
+        `;
+        if (options.body != null) {
+            sql += `, body = :body`;
+            args.body = options.body;
+        }
+        sql += ` WHERE request_id = :requestId AND seq = :seq`;
+        await client.execute({ sql, args });
     }
 
     public static async listRequestNotes(options: {

@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import { EmptyModelOutputError } from "@/ai/EmptyModelOutputError";
 import { ModelTraceLogger } from "@/ai/ModelTraceLogger";
 import { getAppConfig } from "@/app/AppConfig";
+import { profileUsesResponsesApi, callResponsesApi } from "@/ai/ResponsesAdapter";
+import { readModelProfiles } from "@/app/modelProfiles";
 import type {
     ModelProfile,
     ModelTraceContext,
@@ -80,7 +82,15 @@ export type ToolChatResult = {
 
 export class ModelGateway {
     private static client: OpenAI | null = null;
+    /** Extra clients keyed by base URL, for per-profile endpoints (LM Studio, etc.). */
+    private static readonly profileClients = new Map<string, OpenAI>();
     private static readonly MALFORMED_COMPLETION_RETRIES = 1;
+    private static readonly RATE_LIMIT_RETRIES = 2;
+    /** Per-request HTTP timeout. Deliberately generous: it bounds a single hung
+     * connection, not the model's total work (turns have no wall-clock cap). */
+    private static readonly REQUEST_TIMEOUT_MS = 600_000;
+    /** Backoff between provider-error retries. Mutable for tests. */
+    private static rateLimitBackoffMs = [1_500, 4_000];
 
     private static getClient(): OpenAI {
         if (!this.client) {
@@ -88,6 +98,8 @@ export class ModelGateway {
             this.client = new OpenAI({
                 apiKey: config.openRouterApiKey,
                 baseURL: config.openRouterBaseUrl,
+                timeout: this.REQUEST_TIMEOUT_MS,
+                maxRetries: 0,
                 defaultHeaders: {
                     "HTTP-Referer": "https://sophia.local",
                     "X-OpenRouter-Title": "Sophia3",
@@ -96,6 +108,36 @@ export class ModelGateway {
         }
 
         return this.client;
+    }
+
+    /**
+     * The client for a chat profile: OpenRouter by default, or the profile's
+     * own OpenAI-compatible endpoint (OpenCode Zen, LM Studio, etc.).
+     */
+    private static async getClientForProfile(profile: ModelProfile): Promise<OpenAI> {
+        const config = getAppConfig();
+        if (!profile.baseUrl || profile.baseUrl === config.openRouterBaseUrl) {
+            return this.getClient();
+        }
+        const cached = this.profileClients.get(profile.baseUrl);
+        if (cached) return cached;
+        const apiKey = profile.apiKeyEnv
+            ? (process.env[profile.apiKeyEnv] || "not-needed")
+            : "not-needed";
+        const client = new OpenAI({
+            apiKey,
+            baseURL: profile.baseUrl,
+            timeout: this.REQUEST_TIMEOUT_MS,
+            maxRetries: 0,
+        });
+        this.profileClients.set(profile.baseUrl, client);
+        return client;
+    }
+
+    /** True when the profile routes through OpenRouter (provider routing applies). */
+    private static usesOpenRouter(profile: ModelProfile): boolean {
+        const config = getAppConfig();
+        return !profile.baseUrl || profile.baseUrl === config.openRouterBaseUrl;
     }
 
     public static async generateText(
@@ -203,9 +245,86 @@ export class ModelGateway {
     ): Promise<ToolChatResult> {
         const config = getAppConfig();
         const profile = options.profile || config.modelProfile;
-        const client = this.getClient();
+        const client = await this.getClientForProfile(profile);
         const startedAt = Date.now();
         const traceLabel = options.traceContext?.traceLabel || "unlabeled_tool_chat";
+
+        // Some providers (OpenCode Zen muse free models) only expose the
+        // Responses API; /chat/completions 500s on them.
+        if (!this.usesOpenRouter(profile) && profileUsesResponsesApi(profile)) {
+            const startedAt2 = startedAt;
+            const maxOutputTokens = options.maxOutputTokens ?? profile.maxOutputTokens;
+            let outcome;
+            try {
+                outcome = await callResponsesApi(client, profile, messages, {
+                    tools: options.tools,
+                    maxOutputTokens,
+                    temperature: options.temperature ?? profile.temperature,
+                });
+            } catch (error) {
+                const durationMs = Math.max(0, Date.now() - startedAt2);
+                ModelTraceLogger.log({
+                    timestamp: new Date().toISOString(),
+                    callKind: "tool_chat",
+                    model: profile.chatModel,
+                    traceLabel,
+                    questionPreview: this.getQuestionPreview(
+                        messages.filter((m): m is ChatMessage => m.role !== "tool") as ChatMessage[],
+                        options.traceContext
+                    ),
+                    durationMs,
+                    webMode: "off",
+                    webStatus: "off",
+                    webSearchRequests: 0,
+                    messages,
+                    rawOutput: "",
+                    normalizedOutput: "",
+                    blankOutput: true,
+                    toolCalls: [],
+                    finishReason: "error",
+                    traceEvents: options.traceContext?.traceEvents,
+                });
+                throw error;
+            }
+            const durationMs = Math.max(0, Date.now() - startedAt2);
+            const malformedToolCallText =
+                outcome.toolCalls.length === 0 && outcome.content && this.containsInvokeMarkup(outcome.content)
+                    ? outcome.content
+                    : null;
+            const content = malformedToolCallText ? null : outcome.content;
+
+            ModelTraceLogger.log({
+                timestamp: new Date().toISOString(),
+                callKind: "tool_chat",
+                model: profile.chatModel,
+                traceLabel,
+                questionPreview: this.getQuestionPreview(
+                    messages.filter((m): m is ChatMessage => m.role !== "tool") as ChatMessage[],
+                    options.traceContext
+                ),
+                durationMs,
+                webMode: "off",
+                webStatus: "off",
+                webSearchRequests: 0,
+                messages,
+                rawOutput: content || "",
+                normalizedOutput: content?.trim() || "",
+                blankOutput: !content?.trim() && outcome.toolCalls.length === 0,
+                toolCalls: outcome.toolCalls,
+                finishReason: outcome.finishReason,
+                traceEvents: options.traceContext?.traceEvents,
+            });
+
+            return {
+                content,
+                toolCalls: outcome.toolCalls,
+                malformedToolCallText,
+                finishReason: outcome.finishReason,
+                model: profile.chatModel,
+                durationMs,
+                usage: outcome.usage,
+            };
+        }
 
         const request: Record<string, unknown> = {
             model: profile.chatModel,
@@ -213,11 +332,20 @@ export class ModelGateway {
             max_tokens: options.maxOutputTokens ?? profile.maxOutputTokens,
             messages,
             tools: options.tools,
+            parallel_tool_calls: profile.parallelToolCalls ?? false,
         };
+        // Provider routing is an OpenRouter-only request field.
+        if (this.usesOpenRouter(profile)) {
+            request.provider = { sort: "throughput" };
+        }
 
+        let modelUsed = profile.chatModel;
         const completion = await this.createChatCompletionWithValidation(
-            client,
-            request,
+            async () => {
+                const outcome = await this.createWithModelFallback(client, request, profile);
+                modelUsed = outcome.modelUsed;
+                return outcome.completion;
+            },
             traceLabel,
             profile.chatModel
         );
@@ -243,7 +371,7 @@ export class ModelGateway {
         ModelTraceLogger.log({
             timestamp: new Date().toISOString(),
             callKind: "tool_chat",
-            model: profile.chatModel,
+            model: modelUsed,
             traceLabel,
             questionPreview: this.getQuestionPreview(
                 messages.filter((m): m is ChatMessage => m.role !== "tool") as ChatMessage[],
@@ -270,7 +398,7 @@ export class ModelGateway {
             }
             : null;
 
-        return { content, toolCalls, malformedToolCallText, finishReason, model: profile.chatModel, durationMs, usage };
+        return { content, toolCalls, malformedToolCallText, finishReason, model: modelUsed, durationMs, usage };
     }
 
     public static async embedTexts(texts: string[]): Promise<number[][]> {
@@ -279,6 +407,9 @@ export class ModelGateway {
         }
 
         const config = getAppConfig();
+        // Embeddings always route through OpenRouter, even when the chat
+        // profile points at a local server: local embedding models are not
+        // part of the retrieval contract.
         const client = this.getClient();
         const response = await client.embeddings.create({
             model: config.modelProfile.embeddingModel,
@@ -310,15 +441,36 @@ export class ModelGateway {
     }> {
         const config = getAppConfig();
         const profile = options.profile || config.modelProfile;
-        const client = this.getClient();
+        const client = await this.getClientForProfile(profile);
         const startedAt = Date.now();
         const webMode = options.webMode || "off";
+
+        // Responses-API profiles (OpenCode Zen muse free models): plain text
+        // generation must also go through /responses or it 500s.
+        if (!this.usesOpenRouter(profile) && profileUsesResponsesApi(profile)) {
+            const outcome = await callResponsesApi(client, profile, messages, {
+                tools: [],
+                maxOutputTokens: options.maxOutputTokens ?? profile.maxOutputTokens,
+                temperature: options.temperature ?? profile.temperature,
+            });
+            return {
+                model: profile.chatModel,
+                rawOutput: outcome.content || "",
+                durationMs: Math.max(0, Date.now() - startedAt),
+                webStatus: "off" as WebStatus,
+                webSearchRequests: 0,
+            };
+        }
+
         const request: Record<string, unknown> = {
             model: profile.chatModel,
             temperature: options.temperature ?? profile.temperature,
             max_tokens: options.maxOutputTokens ?? profile.maxOutputTokens,
             messages,
         };
+        if (this.usesOpenRouter(profile)) {
+            request.provider = { sort: "throughput" };
+        }
 
         if (webMode !== "off") {
             request.tools = [
@@ -333,9 +485,13 @@ export class ModelGateway {
             ];
         }
 
+        let modelUsed = profile.chatModel;
         const completion = await this.createChatCompletionWithValidation(
-            client,
-            request,
+            async () => {
+                const outcome = await this.createWithModelFallback(client, request, profile);
+                modelUsed = outcome.modelUsed;
+                return outcome.completion;
+            },
             options.traceContext?.traceLabel || "unlabeled_text_generation",
             profile.chatModel
         );
@@ -347,7 +503,7 @@ export class ModelGateway {
             webMode === "off" ? "off" : webSearchRequests > 0 ? "used" : "enabled";
 
         return {
-            model: profile.chatModel,
+            model: modelUsed,
             rawOutput: completion.choices[0]?.message?.content || "",
             durationMs: Math.max(0, Date.now() - startedAt),
             webStatus,
@@ -355,17 +511,82 @@ export class ModelGateway {
         };
     }
 
-    private static async createChatCompletionWithValidation(
+    private static isRetryableProviderError(error: unknown): boolean {
+        const status = (error as { status?: unknown } | null)?.status;
+        if (status === 429) return true;
+        if (typeof status === "number" && status >= 500) return true;
+        // Credit exhaustion (402 / CreditsError) is never retryable: retrying
+        // burns wall-clock and model-budgeted backoff without any chance of
+        // success until the user tops up.
+        return false;
+    }
+
+    private static sleep(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    /**
+     * One model request with bounded retries on 429/5xx. Client-side retries
+     * stay disabled on the SDK itself; this is the only place backoff lives.
+     */
+    private static async requestWithProviderRetries(
         client: OpenAI,
         request: Record<string, unknown>,
+    ) {
+        let lastError: unknown = null;
+        for (let attempt = 0; attempt <= this.RATE_LIMIT_RETRIES; attempt += 1) {
+            try {
+                return await client.chat.completions.create(request as never);
+            } catch (error) {
+                lastError = error;
+                if (!this.isRetryableProviderError(error) || attempt === this.RATE_LIMIT_RETRIES) {
+                    throw error;
+                }
+                const delay = this.rateLimitBackoffMs[Math.min(attempt, this.rateLimitBackoffMs.length - 1)];
+                await this.sleep(delay);
+            }
+        }
+        throw lastError;
+    }
+
+    /**
+     * Runs the request for the configured model; if a non-default model keeps
+     * failing with provider errors, retries once on the default profile so a
+     * flaky secondary model degrades instead of killing the turn. Local
+     * endpoints never fall back: their errors are their own.
+     */
+    private static async createWithModelFallback(
+        client: OpenAI,
+        request: Record<string, unknown>,
+        profile: ModelProfile,
+    ): Promise<{ completion: unknown; modelUsed: string }> {
+        try {
+            const completion = await this.requestWithProviderRetries(client, request);
+            return { completion, modelUsed: profile.chatModel };
+        } catch (error) {
+            if (!this.usesOpenRouter(profile)) throw error;
+            if (!this.isRetryableProviderError(error)) throw error;
+            const profiles = readModelProfiles();
+            const fallback = profiles.profiles[profiles.defaultProfile];
+            if (!fallback || fallback.chatModel === profile.chatModel) throw error;
+            const completion = await this.requestWithProviderRetries(client, {
+                ...request,
+                model: fallback.chatModel,
+            });
+            return { completion, modelUsed: fallback.chatModel };
+        }
+    }
+
+    private static async createChatCompletionWithValidation(
+        fetchCompletion: () => Promise<unknown>,
         traceLabel: string,
         model: string
-    ) {
+    ): Promise<any> {
         let lastMalformedPayload: unknown = null;
 
         for (let attempt = 0; attempt <= this.MALFORMED_COMPLETION_RETRIES; attempt += 1) {
-            const completion = await client.chat.completions.create(request as any);
-            if (Array.isArray((completion as any)?.choices) && (completion as any).choices.length > 0) {
+            const completion = await fetchCompletion() as { choices?: unknown };
+            if (Array.isArray(completion?.choices) && completion.choices.length > 0) {
                 return completion;
             }
 

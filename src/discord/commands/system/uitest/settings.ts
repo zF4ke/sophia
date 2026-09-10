@@ -30,7 +30,6 @@ type MockRuntimeKey =
     | "retrievalContextWindow"
     | "maxToolCalls"
     | "maxRepeatedCallSignature"
-    | "maxLatencyBudgetMs"
     | "escalationFetchLimit"
     | "approvalTimeoutMs";
 
@@ -97,12 +96,6 @@ const MOCK_RUNTIME_META: Record<MockRuntimeKey, MockRuntimeMeta> = {
         shortDescription: "Quantas vezes o mesmo pedido pode repetir.",
         longDescription: "Tentativas permitidas para a mesma assinatura antes de bloquear loop.",
         presets: [1, 2, 3],
-    },
-    maxLatencyBudgetMs: {
-        label: "⏱️ Tempo máximo por turno",
-        shortDescription: "Tempo total de execução por turno.",
-        longDescription: "Tempo máximo de execução do loop antes de encerrar por orçamento.",
-        presets: [10000, 15000, 20000, 30000, 45000, 60000, 90000, 120000, 180000, 240000, 300000],
     },
     escalationFetchLimit: {
         label: "🚀 Limite de refresh ao vivo",

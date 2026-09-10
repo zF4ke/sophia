@@ -269,4 +269,4 @@ Current runtime capabilities and workflows:
 - Multiple destructive calls in the same response should be batched into one approval card grouped by Discord category.
 - After an approved action, Sophia should confirm what was done using the concrete identifiers from tool output (channel mentions, role names, etc.).
 - If the model tries to call `finish` with a promise phrase ("vou verificar", "let me check") but no productive tool actually ran, the runtime rejects the finish once and tells the model to call tools instead (stall guard).
-- For complex multi-step operations that exceed default budgets, the model should call `start_long_task` early in the turn to raise the tool-call and latency limits (up to hard caps of 200 calls / 600s).
+- For complex multi-step operations that exceed default budgets, the model should call `start_long_task` early in the turn to raise the tool-call limit (up to the hard cap of 200 calls). Turns have no wall-clock cap. Large explicit corpora also auto-raise without the call. When unsure the task is long, the model asks the user in one sentence.

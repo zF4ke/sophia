@@ -14,12 +14,19 @@ This is the default engineering suite and the one used by `npm run check`.
 
 It keeps the model mocked so the runtime can be validated deterministically:
 - capability wiring
+- capability effect and approval-policy consistency
+- workflow steps cannot bypass normal runtime execution
+- workflow deletion removes saved workflows and reports missing names
+- long-task budgets auto-raise on large explicit corpora without start_long_task
+- artifact spec validation (title, sections, TTL bounds) before render
+- artifact guard rejects finishes while a failed artifact_send is unsent, until fixed or corrections exhausted
+- interrupted and legacy crawler queue recovery
 - current-guild discovery
 - retrieval contracts
 - conversation continuity
 - debug rendering
 - storage behavior
-- runtime guardrails (tool-call budget, repeated-call guard, latency budget)
+- runtime guardrails (tool-call budget, repeated-call guard)
 - follow-up evidence reuse across turns
 - continuation input gating (no automatic cross-turn exclusions without explicit continuation intent)
 - strict scoped empty-result recovery retries in retrieval

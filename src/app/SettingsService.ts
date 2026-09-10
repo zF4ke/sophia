@@ -11,7 +11,6 @@ export interface BotSettings {
         checkpointDbPath: string;
         maxToolCalls: number;
         maxRepeatedCallSignature: number;
-        maxLatencyBudgetMs: number;
         maxPriorTurns: number;
         maxChannelMessages: number;
         maxToolRunsContext: number;
@@ -22,9 +21,11 @@ export interface BotSettings {
         approvalTimeoutMs: number;
         autoApproveWrites: boolean;
         maxNotesPerRequest: number;
+        startupSweep: boolean;
+        startupSweepMaxMessages: number;
+        edgePrefetch: boolean;
         longTask: {
             maxToolCalls: number;
-            maxLatencyBudgetMs: number;
             evidenceSliceFloor: number;
             retrievalInlineCrawlBatches: number;
         };
@@ -36,6 +37,8 @@ export interface BotSettings {
     };
     personality: "default" | "mixed" | "classic";
     protectedChannelIds: string[];
+    /** Guild IDs the bot serves. Empty = all guilds allowed. Messages, interactions, and crawls from other guilds are ignored. */
+    guildAllowlist: string[];
     debug: boolean;
 }
 
@@ -54,7 +57,6 @@ const DEFAULT_SETTINGS: BotSettings = {
         checkpointDbPath: path.join(DEFAULT_RUNTIME_DIR, "checkpoints.sqlite"),
         maxToolCalls: 25,
         maxRepeatedCallSignature: 1,
-        maxLatencyBudgetMs: 120000,
         maxPriorTurns: 8,
         maxChannelMessages: 15,
         maxToolRunsContext: 12,
@@ -65,20 +67,23 @@ const DEFAULT_SETTINGS: BotSettings = {
         approvalTimeoutMs: 60_000,
         autoApproveWrites: false,
         maxNotesPerRequest: 200,
+        startupSweep: true,
+        startupSweepMaxMessages: 1000,
+        edgePrefetch: true,
         longTask: {
             maxToolCalls: 200,
-            maxLatencyBudgetMs: 600_000,
             evidenceSliceFloor: 128,
             retrievalInlineCrawlBatches: 3,
         },
     },
     compaction: {
-        summarizerModel: "gemini31flashlite",
-        triggerFraction: 0.85,
-        inputTriggerFraction: 0.4,
+        summarizerModel: DEFAULT_MODEL_PROFILE,
+        triggerFraction: 0.88,
+        inputTriggerFraction: 0.55,
     },
     personality: "default",
     protectedChannelIds: DEFAULT_PROTECTED_CHANNEL_IDS,
+    guildAllowlist: [],
     debug: false,
 };
 
@@ -94,6 +99,7 @@ function deepMerge(defaults: BotSettings, overrides: Partial<BotSettings>): BotS
             : defaults.personality;
     }
     if (overrides.protectedChannelIds !== undefined) result.protectedChannelIds = overrides.protectedChannelIds;
+    if (overrides.guildAllowlist !== undefined) result.guildAllowlist = overrides.guildAllowlist;
     if (overrides.debug !== undefined) result.debug = overrides.debug;
     if (overrides.runtime) {
         const mergedRuntime = { ...defaults.runtime, ...overrides.runtime };
@@ -134,7 +140,12 @@ export class SettingsService {
 
             const needsSave =
                 parsed.modelProfile !== merged.modelProfile ||
-                (parsed.compaction as Partial<BotSettings["compaction"]> | undefined)?.summarizerModel !== merged.compaction.summarizerModel;
+                (parsed.compaction as Partial<BotSettings["compaction"]> | undefined)?.summarizerModel !== merged.compaction.summarizerModel ||
+                // Backfill newly-added runtime knobs into the on-disk file so
+                // operators can see (and tune) them without reading source.
+                (parsed.runtime as Partial<BotSettings["runtime"]> | undefined)?.startupSweep === undefined ||
+                (parsed.runtime as Partial<BotSettings["runtime"]> | undefined)?.startupSweepMaxMessages === undefined ||
+                (parsed.runtime as Partial<BotSettings["runtime"]> | undefined)?.edgePrefetch === undefined;
             if (needsSave) {
                 this.save(merged);
             }
@@ -155,6 +166,15 @@ export class SettingsService {
     public static update(patch: Partial<BotSettings>): BotSettings {
         const current = this.load();
         const updated = deepMerge(current, patch);
+        const profiles = readModelProfiles();
+        updated.modelProfile = resolveModelProfileName(updated.modelProfile, profiles);
+        if (!updated.compaction || !profiles.profiles[updated.compaction.summarizerModel]) {
+            updated.compaction = {
+                ...DEFAULT_SETTINGS.compaction,
+                ...(updated.compaction ?? {}),
+                summarizerModel: profiles.defaultProfile,
+            };
+        }
         this.save(updated);
         return updated;
     }

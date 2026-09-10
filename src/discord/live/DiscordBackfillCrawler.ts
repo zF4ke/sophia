@@ -2,6 +2,8 @@ import type { Client, TextChannel, ThreadChannel } from "discord.js";
 import { ChannelType } from "discord.js";
 import { OperationalStore } from "@/runtime/storage/OperationalStore";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { SettingsService } from "@/app/SettingsService";
+import { isGuildAllowed } from "@/security/guildAllowlist";
 import {
     fetchAndIngestBatch,
     resumeBeforeId,
@@ -91,6 +93,9 @@ export class DiscordBackfillCrawler {
     public static async start(client: Client): Promise<void> {
         if (this.running) return;
         this.client = client;
+        await OperationalStore.initialize();
+        await this.retireLegacyStartupJobs();
+        await this.recoverInterruptedJobs();
         this.running = true;
         this.stopping = false;
         this.workerPromise = this.workerLoop().catch((err) => {
@@ -98,6 +103,109 @@ export class DiscordBackfillCrawler {
             this.running = false;
         });
         this.log("started");
+        // Startup sweep: bounded recency pass per channel (closes the
+        // "bot was offline" gap). NEVER walks full history here — channels
+        // with hundreds of thousands of messages would crawl for hours.
+        // Deep backfill is agent-gated via index_channel mode="deep".
+        void this.sweepAllGuildChannels();
+    }
+
+    /**
+     * Older builds queued every channel for an unbounded crawl at startup.
+     * Those durable rows survive upgrades and would otherwise resume forever,
+     * bypassing the bounded startup sweep introduced later.
+     */
+    private static async retireLegacyStartupJobs(): Promise<void> {
+        const client = OperationalStore.getClient();
+        const result = await client.execute({
+            sql: `
+                UPDATE crawl_queue
+                SET state = 'done',
+                    last_error = NULL,
+                    last_activity_at = :now
+                WHERE reason = 'startup_refresh'
+                  AND state IN ('queued', 'running', 'paused')
+            `,
+            args: { now: Date.now() },
+        });
+        if (result.rowsAffected > 0) {
+            this.log(`retired_legacy_startup_jobs count=${result.rowsAffected}`);
+        }
+    }
+
+    private static async recoverInterruptedJobs(): Promise<void> {
+        const client = OperationalStore.getClient();
+        const result = await client.execute({
+            sql: `
+                UPDATE crawl_queue
+                SET state = 'queued',
+                    last_activity_at = :now
+                WHERE state = 'running'
+                  AND (reason IS NULL OR reason <> 'startup_refresh')
+            `,
+            args: { now: Date.now() },
+        });
+        if (result.rowsAffected > 0) {
+            this.log(`recovered_interrupted_jobs count=${result.rowsAffected}`);
+        }
+    }
+
+    /**
+     * Bounded recency sweep across every guild text channel.
+     * Per channel: skip if already queued/running, skip if the newest
+     * indexed message is < 1h old, otherwise fetch newest→older until we
+     * hit known messages or the configured cap (default 1000 msgs).
+     * Serialized so we never race the worker on the same channel.
+     */
+    public static async sweepAllGuildChannels(): Promise<{ swept: number; skipped: number; ingested: number }> {
+        if (!this.client) return { swept: 0, skipped: 0, ingested: 0 };
+        const settings = SettingsService.load();
+        if (!settings.runtime.startupSweep) {
+            this.log("startup_sweep disabled by settings");
+            return { swept: 0, skipped: 0, ingested: 0 };
+        }
+        const cap = Math.max(100, Math.min(5000, settings.runtime.startupSweepMaxMessages || 1000));
+        const queue = await this.listQueue();
+        const busy = new Set(queue.map((q) => q.channelId));
+
+        let swept = 0;
+        let skipped = 0;
+        let ingested = 0;
+
+        for (const guild of this.client.guilds.cache.values()) {
+            if (!isGuildAllowed(guild.id)) continue;
+            const channels = await guild.channels.fetch().catch(() => null);
+            if (!channels) continue;
+            for (const channel of channels.values()) {
+                if (!channel) continue;
+                const type = (channel as { type?: number }).type;
+                if (type !== ChannelType.GuildText && type !== ChannelType.GuildAnnouncement) continue;
+                if (busy.has(channel.id)) {
+                    skipped += 1;
+                    continue;
+                }
+
+                const indexStates = await DiscordMemoryService.getIndexStateAsync(channel.id);
+                const lastIndexed = indexStates[0]?.lastIndexedTimestamp ?? null;
+                if (lastIndexed != null && Date.now() - lastIndexed < 3_600_000) {
+                    skipped += 1;
+                    continue;
+                }
+
+                const indexable = channel as unknown as IndexableChannel;
+                try {
+                    const result = await this.refreshChannel(indexable, cap);
+                    swept += 1;
+                    ingested += result.ingested;
+                    this.log(`startup_sweep channel=${channel.id} ingested=${result.ingested} hitKnown=${result.hitKnown ? "yes" : "no"} cap=${cap}`);
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    this.log(`startup_sweep_error channel=${channel.id} error=${message}`);
+                }
+            }
+        }
+        this.log(`startup_sweep done swept=${swept} skipped=${skipped} ingested=${ingested}`);
+        return { swept, skipped, ingested };
     }
 
     public static async stop(): Promise<void> {
@@ -132,6 +240,7 @@ export class DiscordBackfillCrawler {
         channelId: string,
         options: { reason?: string; priority?: number; guildId?: string | null } = {}
     ): Promise<void> {
+        if (options.guildId && !isGuildAllowed(options.guildId)) return;
         await OperationalStore.initialize();
         const client = OperationalStore.getClient();
         const existing = (
@@ -318,12 +427,24 @@ export class DiscordBackfillCrawler {
         });
     }
 
+    private static async markQueued(channelId: string): Promise<void> {
+        const client = OperationalStore.getClient();
+        await client.execute({
+            sql: `
+                UPDATE crawl_queue
+                SET state = 'queued', last_activity_at = :now
+                WHERE channel_id = :channelId
+            `,
+            args: { channelId, now: Date.now() },
+        });
+    }
+
     private static async markError(channelId: string, message: string): Promise<void> {
         const client = OperationalStore.getClient();
         await client.execute({
             sql: `
                 UPDATE crawl_queue
-                SET state = 'queued',
+                SET state = 'paused',
                     last_error = :error,
                     last_activity_at = :now
                 WHERE channel_id = :channelId
@@ -365,6 +486,13 @@ export class DiscordBackfillCrawler {
     }
 
     private static async crawlOneChannel(job: CrawlQueueRow): Promise<void> {
+        // Legacy rows from before the guild allowlist existed may still sit in
+        // the queue — drop them lazily instead of crawling foreign guilds.
+        if (job.guildId && !isGuildAllowed(job.guildId)) {
+            this.log(`skipped_disallowed_guild channel=${job.channelId} guild=${job.guildId}`);
+            await this.markDone(job.channelId, 0);
+            return;
+        }
         const channel = await this.resolveChannel(job.channelId);
         if (!channel) {
             this.log(`channel_unresolvable channel=${job.channelId}`);
@@ -374,6 +502,7 @@ export class DiscordBackfillCrawler {
 
         let before = await resumeBeforeId(job.channelId);
         let totalIngestedInJob = 0;
+        let completed = false;
         this.currentChannelId = job.channelId;
 
         while (this.running && !this.stopping) {
@@ -401,6 +530,7 @@ export class DiscordBackfillCrawler {
                 );
 
                 if (result.reachedEnd && result.ingested === 0) {
+                    completed = true;
                     break;
                 }
 
@@ -416,6 +546,11 @@ export class DiscordBackfillCrawler {
         }
 
         this.currentChannelId = null;
+        if (!completed) {
+            await this.markQueued(job.channelId);
+            this.log(`job_interrupted channel=${job.channelId} ingested_this_job=${totalIngestedInJob}`);
+            return;
+        }
         await this.markDone(job.channelId, 0);
         this.log(`job_done channel=${job.channelId} ingested_this_job=${totalIngestedInJob}`);
     }
@@ -443,5 +578,44 @@ export class DiscordBackfillCrawler {
                 await new Promise((r) => setTimeout(r, POLL_IDLE_MS));
             }
         }
+    }
+
+    /**
+     * Freshness sweep for one channel: walk newest→older closing the
+     * "offline gap" (messages sent while the bot was down) until we hit
+     * messages the index already has, or `maxMessages` is reached.
+     * Returns the number of messages actually ingested.
+     */
+    public static async refreshChannel(
+        channel: IndexableChannel,
+        maxMessages = 500
+    ): Promise<{ ingested: number; hitKnown: boolean; lastIndexedTimestamp: number | null }> {
+        const states = await DiscordMemoryService.getChannelCrawlStateAsync(channel.id);
+        // lastIndexedTimestamp lives on index_state, not crawl_state.
+        const indexStates = await DiscordMemoryService.getIndexStateAsync(channel.id);
+        const lastIndexedTimestamp = indexStates[0]?.lastIndexedTimestamp ?? null;
+
+        let ingested = 0;
+        let before: string | null | undefined = undefined; // newest first
+        let hitKnown = false;
+
+        while (ingested < maxMessages) {
+            const batchSize = Math.min(100, maxMessages - ingested);
+            const result = await fetchAndIngestBatch(channel, before ?? null, batchSize);
+            ingested += result.ingested;
+            if (result.reachedEnd && result.ingested === 0) break;
+            if (result.ingested === 0) break;
+            if (
+                lastIndexedTimestamp != null &&
+                result.oldestTimestampInBatch != null &&
+                result.oldestTimestampInBatch <= lastIndexedTimestamp
+            ) {
+                hitKnown = true;
+                break;
+            }
+            before = result.nextBeforeId;
+            await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+        }
+        return { ingested, hitKnown, lastIndexedTimestamp };
     }
 }

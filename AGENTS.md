@@ -35,7 +35,7 @@ The active flow is:
 The runtime keeps only narrow guardrails:
 - capability validation
 - repeated-call protection
-- tool-call and latency budgets
+- tool-call budget (no wall-clock cap on turns)
 - context overflow pruning (Tier-1 truncation + Tier-2 compaction)
 - doom-loop detection (identical tool calls → nudge → force finish)
 - progress-required tracking (long tasks only)
@@ -83,7 +83,24 @@ These capability ids are prompt- and runtime-stable:
 - `note_add`
 - `note_list`
 - `note_clear`
+- `goal_open`
+- `goal_update`
+- `goal_done`
 - `plan_update`
+- `web_search`
+- `fetch_url`
+- `memory_search`
+- `memory_remember`
+- `workflow_create`
+- `workflow_list`
+- `workflow_run`
+- `workflow_delete`
+- `artifact_send`
+- `artifact_edit`
+- `tool_search`
+- `create_poll`
+- `get_poll_results`
+- `index_channel`
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`.
 
@@ -137,16 +154,19 @@ Editable runtime config lives in:
 - `.env` (secrets only: `DISCORD_TOKEN`, `OPENROUTER_API_KEY`)
 - `src/app/AppConfig.ts`
 
-All runtime tuning knobs (tool calls, latency budget, retrieval limits, etc.) live in `SettingsService` defaults and `storage/settings.json`. Do not use environment variables for runtime config.
+All runtime tuning knobs (tool calls, retrieval limits, etc.) live in `SettingsService` defaults and `storage/settings.json`. Do not use environment variables for runtime config.
 
-OpenRouter remains the only model-provider surface. Do not hardcode models in source.
+OpenRouter remains the only remote model-provider surface. Do not hardcode models in source. Model profiles may declare an optional `baseUrl` pointing at any OpenAI-compatible server (e.g. a local LM Studio at `http://127.0.0.1:1234/v1`); such profiles bypass OpenRouter entirely (no `provider` routing block, no default-model fallback) while embeddings still route through OpenRouter.
 
 ## Memory And Storage
 
 Local libSQL storage is the source of truth for Discord retrieval state and runtime traces.
 
 - New messages are ingested from `src/discord/events/message/messageCreate.event.ts`
-- Backfill and repair flows are exposed through `src/discord/commands/system/index.command.ts`
+- **Startup sweep**: `DiscordBackfillCrawler.sweepAllGuildChannels()` runs a *bounded* recency pass per channel on `clientReady` (cap: `runtime.startupSweepMaxMessages`, default 1000) — closes offline gaps without full-history crawls
+- **Edge prefetch**: when `retrieve_messages` pagination touches the indexed boundary, the channel is auto-enqueued for deep backfill (`runtime.edgePrefetch`)
+- **Agent self-service indexing**: the `index_channel` tool lets the model refresh (newest sweep) or deep-backfill (queued) channels on its own judgment, guided by the `Index Freshness` block in the system prompt. Deep backfills are agent-gated only — boot never walks full history
+- Backfill and repair flows remain exposed through `src/discord/commands/system/index.command.ts` (manual override only)
 - Operational storage is local and disposable
 - Bot settings are persisted in `storage/settings.json`
 

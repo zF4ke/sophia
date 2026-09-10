@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ModelGateway } from "@/ai/ModelGateway";
+import { describe, expect, it } from "vitest";
 import { detectStallPromise, type StallDetectionInput } from "@/runtime/stallGuard";
 import type { ToolInvocationRecord } from "@/runtime/contracts";
 import type { DiscordToolEvidenceRole } from "@/shared/discordTools";
@@ -36,54 +35,36 @@ function makeInput(overrides: Partial<StallDetectionInput> = {}): StallDetection
     };
 }
 
-/**
- * Mock the AI classifier. When `stall` is true the classifier says the
- * answer is a promise; when false it says the answer is real content.
- */
-function mockClassifier(stall: boolean) {
-    vi.spyOn(ModelGateway, "generateJson").mockResolvedValue({ stall });
-}
-
 describe("stallGuard", () => {
-    beforeEach(() => {
-        vi.restoreAllMocks();
-        process.env.DISCORD_TOKEN = "test-token";
-        process.env.OPENROUTER_API_KEY = "test-key";
-    });
-
     describe("detectStallPromise", () => {
         it("detects a promise answer with no productive work", async () => {
-            mockClassifier(true);
             const result = await detectStallPromise(makeInput({
                 answer: "Vou dar uma olhada nos canais!",
             }));
             expect(result.stalled).toBe(true);
-            expect(result.matchedPhrase).toBe("ai_classified_promise");
+            expect(result.matchedPhrase).toBe("portuguese_deferred_action");
         });
 
         it("detects an English promise with no productive work", async () => {
-            mockClassifier(true);
             const result = await detectStallPromise(makeInput({
                 answer: "Let me check that for you!",
             }));
             expect(result.stalled).toBe(true);
         });
 
-        it("does not stall when classifier says it's real content", async () => {
-            mockClassifier(false);
+        it("does not stall a concrete answer", async () => {
             const result = await detectStallPromise(makeInput({
                 answer: "O João disse isso ontem no #geral.",
             }));
             expect(result.stalled).toBe(false);
         });
 
-        it("does not stall when answer is empty (no classifier call)", async () => {
+        it("does not stall when answer is empty", async () => {
             const result = await detectStallPromise(makeInput({ answer: "" }));
             expect(result.stalled).toBe(false);
-            expect(ModelGateway.generateJson).not.toHaveBeenCalled;
         });
 
-        it("redeems when a write tool succeeded (skips classifier)", async () => {
+        it("redeems when a write tool succeeded", async () => {
             const result = await detectStallPromise(makeInput({
                 answer: "Vou criar o canal agora",
                 toolHistoryThisTurn: [
@@ -93,7 +74,7 @@ describe("stallGuard", () => {
             expect(result.stalled).toBe(false);
         });
 
-        it("redeems when a destructive tool succeeded (skips classifier)", async () => {
+        it("redeems when a destructive tool succeeded", async () => {
             const result = await detectStallPromise(makeInput({
                 answer: "Vou limpar as mensagens",
                 toolHistoryThisTurn: [
@@ -104,7 +85,6 @@ describe("stallGuard", () => {
         });
 
         it("does not redeem when write tool was blocked", async () => {
-            mockClassifier(true);
             const result = await detectStallPromise(makeInput({
                 answer: "Vou criar o canal",
                 toolHistoryThisTurn: [
@@ -115,7 +95,6 @@ describe("stallGuard", () => {
         });
 
         it("does not redeem when tool had an error", async () => {
-            mockClassifier(true);
             const result = await detectStallPromise(makeInput({
                 answer: "Let me search for that",
                 toolHistoryThisTurn: [
@@ -129,7 +108,7 @@ describe("stallGuard", () => {
             expect(result.stalled).toBe(true);
         });
 
-        it("redeems when productive evidence role is present (skips classifier)", async () => {
+        it("redeems when productive evidence role is present", async () => {
             const result = await detectStallPromise(makeInput({
                 answer: "Vou procurar isso",
                 evidenceRoles: new Set<DiscordToolEvidenceRole>(["message_evidence"]),
@@ -138,7 +117,6 @@ describe("stallGuard", () => {
         });
 
         it("does not redeem for discovery_only evidence role", async () => {
-            mockClassifier(true);
             const result = await detectStallPromise(makeInput({
                 answer: "Vou verificar",
                 evidenceRoles: new Set<DiscordToolEvidenceRole>(["discovery_only"]),
@@ -147,7 +125,6 @@ describe("stallGuard", () => {
         });
 
         it("detects stall when longTaskGranted with prep tools but no evidence", async () => {
-            mockClassifier(false); // Not a promise, but B2 path triggers
             const result = await detectStallPromise(makeInput({
                 answer: "A análise do canal está pronta.",
                 longTaskGranted: true,
@@ -160,7 +137,6 @@ describe("stallGuard", () => {
         });
 
         it("does not stall longTaskGranted when no tools were called", async () => {
-            mockClassifier(false);
             const result = await detectStallPromise(makeInput({
                 answer: "Tudo pronto.",
                 longTaskGranted: true,
@@ -169,8 +145,7 @@ describe("stallGuard", () => {
             expect(result.stalled).toBe(false);
         });
 
-        it("does not stall longTaskGranted when productive evidence exists and classifier says no promise", async () => {
-            mockClassifier(false);
+        it("does not stall longTaskGranted when productive evidence exists", async () => {
             const result = await detectStallPromise(makeInput({
                 answer: "Encontrei 200 mensagens relevantes.",
                 longTaskGranted: true,
@@ -179,8 +154,7 @@ describe("stallGuard", () => {
             expect(result.stalled).toBe(false);
         });
 
-        it("stalls longTaskGranted when classifier detects promise even with evidence", async () => {
-            mockClassifier(true);
+        it("stalls longTaskGranted on a promise even with evidence", async () => {
             const result = await detectStallPromise(makeInput({
                 answer: "Ainda estou no meio da coleta de dados. Assim que terminar te aviso.",
                 longTaskGranted: true,
@@ -200,10 +174,9 @@ describe("stallGuard", () => {
             expect(result.stalled).toBe(false);
         });
 
-        it("fails open when classifier throws an error", async () => {
-            vi.spyOn(ModelGateway, "generateJson").mockRejectedValue(new Error("network error"));
+        it("does not confuse a reported failure with a promise", async () => {
             const result = await detectStallPromise(makeInput({
-                answer: "I'll check that for you!",
+                answer: "I couldn't find any matching messages.",
             }));
             expect(result.stalled).toBe(false);
         });

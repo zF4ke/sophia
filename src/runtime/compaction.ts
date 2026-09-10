@@ -18,10 +18,13 @@ import type { RuntimeTraceEvent } from "@/runtime/contracts";
  */
 
 /** Number of tail messages to keep verbatim (latest interaction). */
-const PRESERVE_TAIL = 6;
+const PRESERVE_TAIL = 8;
 
 /** Max tokens for the summary output. */
 const SUMMARY_MAX_TOKENS = 4096;
+
+/** Minimum middle-block size before compaction is worthwhile — avoids trivial summaries. */
+const MIN_MIDDLE_BLOCK = 4;
 
 /** Compaction tool names whose content is preserved in summaries. */
 const LOAD_BEARING_TOOLS = new Set(["note_add", "note_list", "note_clear", "plan_update"]);
@@ -45,7 +48,13 @@ export interface CompactionResult {
  */
 export function shouldCompact(promptTokens: number, contextWindow: number): boolean {
     const settings = SettingsService.load();
-    const fraction = settings.compaction.triggerFraction;
+    let fraction = settings.compaction.triggerFraction;
+    // For very large windows (GLM 5.3 Flash = 1M), avoid premature compaction on
+    // moderately-sized prompts — cap effective threshold at 0.90 minimum for
+    // windows > 500k to keep more context verbatim longer.
+    if (contextWindow >= 500_000 && fraction < 0.90) {
+        fraction = 0.90;
+    }
     return promptTokens >= contextWindow * fraction;
 }
 
@@ -128,8 +137,8 @@ export async function compactMessages(
         return { compacted: false, removedCount: 0, summaryTokenEstimate: 0 };
     }
 
-    // Need at least system + user + some middle + tail to compact.
-    if (messages.length < 2 + PRESERVE_TAIL + 1) {
+    // Need at least system + user + meaningful middle + tail to compact.
+    if (messages.length < 2 + PRESERVE_TAIL + MIN_MIDDLE_BLOCK) {
         return { compacted: false, removedCount: 0, summaryTokenEstimate: 0 };
     }
 

@@ -4,12 +4,21 @@ import { DiscordGuildDiscoveryService } from "@/discord/live/DiscordGuildDiscove
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { getToolEffect } from "@/tools/registry";
 
 describe("CapabilityRegistry", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         process.env.DISCORD_TOKEN = "test-token";
         process.env.OPENROUTER_API_KEY = "test-key";
+    });
+
+    it("keeps catalog effects and runtime approval levels identical", () => {
+        for (const capability of CapabilityRegistry.list()) {
+            const effect = getToolEffect(capability.id);
+            const expected = effect === "read" ? "none" : effect;
+            expect(capability.sideEffectLevel, capability.id).toBe(expected);
+        }
     });
 
     it("executes retrieve_messages through the unified retrieval pipeline", async () => {
