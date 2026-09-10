@@ -26,8 +26,15 @@ Current runtime storage is focused on:
 - `runtime_runs`
 - `trace_events`
 - `conversation_messages`
+- `long_term_memories` (plus the `long_term_memories_fts` FTS5 mirror, kept in sync by triggers and rebuilt on boot when missing)
+
+Ingestion flattens non-text message bodies into searchable plain text: embeds become `title — description — fields` lines, and Components V2 messages (artifact cards, bot panels) have their component tree walked (`src/memory/ingest/ComponentTextExtractor.ts`), extracting text displays, section bodies, button labels with link URLs, and select options. This is why artifact cards are findable through `retrieve_messages` even though their raw Discord `content` is empty.
 
 The cache is used to support Discord retrieval and runtime continuity. It is not an autonomous long-term belief system yet.
+
+## Long-Term Memory
+
+`memory_remember` / `memory_search` store durable guild/user facts in `long_term_memories`. Search is FTS5-backed: queries are tokenized (diacritics stripped, `[a-z0-9]` only) and matched as prefix OR queries, then re-ranked by lexical overlap plus recency. Guild-shared rows are visible to the whole guild; `user`-scoped rows only to their owner. A compact digest (counts + recent keys, capped ~500 chars) is injected into the system prompt every turn via `src/runtime/memoryDigest.ts` so the model discovers the store without a full-context dump.
 
 ## How Retrieval Uses It
 
@@ -47,6 +54,13 @@ The cache is used to support Discord retrieval and runtime continuity. It is not
 - `/index` manages backfill and repair
 - `/index status` shows local retrieval memory, guild completeness, and runtime storage status, including the current DB size on disk
 - `/nth` reads indexed historical messages
+
+## Background crawl lifecycle
+
+- Startup performs a bounded newest-first sweep. It does not enqueue full-history work.
+- Legacy unbounded `startup_refresh` rows are retired before the worker begins.
+- A demand-driven job left in `running` by a restart returns to `queued` on the next startup.
+- A failed job moves to `paused` instead of retrying forever. Explicitly enqueueing that channel retries it.
 
 ## Reset Semantics
 

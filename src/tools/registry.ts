@@ -47,12 +47,16 @@ import { deleteChannelTool } from "./deleteChannel";
 import { deleteRoleTool } from "./deleteRole";
 import { startLongTaskTool } from "./startLongTask";
 import { noteAddTool, noteListTool, noteClearTool, planUpdateTool } from "./notes";
+import { goalOpenTool, goalUpdateTool, goalDoneTool } from "./goals";
 import { webSearchTool, fetchUrlTool } from "./webSearch";
 import { memoryRememberTool, memorySearchTool } from "./longTermMemory";
-import { workflowCreateTool, workflowListTool, workflowRunTool } from "./workflows";
+import { workflowCreateTool, workflowListTool, workflowRunTool, workflowDeleteTool } from "./workflows";
 import { toolSearchTool } from "./toolSearch";
 import { createPollTool } from "./createPoll";
+import { getPollResultsTool } from "./getPollResults";
 import { indexChannelTool } from "./indexChannel";
+import { artifactSendTool } from "./artifactSend";
+import { artifactEditTool } from "./artifactEdit";
 import { getToolExposure, isDirectTool } from "./toolExposure";
 
 // ── Aggregated tool list ────────────────────────────────────────────
@@ -103,6 +107,10 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     noteListTool,
     noteClearTool,
     planUpdateTool,
+    // ── Goals ──
+    goalOpenTool,
+    goalUpdateTool,
+    goalDoneTool,
     // ── Web ──
     webSearchTool,
     fetchUrlTool,
@@ -113,17 +121,45 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     workflowCreateTool,
     workflowListTool,
     workflowRunTool,
+    workflowDeleteTool,
     // ── Meta (discovery) ──
     toolSearchTool,
     // ── Poll ──
     createPollTool,
+    getPollResultsTool,
     // ── Indexing ──
     indexChannelTool,
+    // ── Artifacts ──
+    artifactSendTool,
+    artifactEditTool,
 ];
 
 const TOOL_MAP = new Map<string, ToolDefinition>(
     ALL_TOOLS.map((t) => [t.name, t]),
 );
+
+function expectedSideEffectLevel(effect: ToolEffect): "none" | "write" | "destructive" {
+    return effect === "read" ? "none" : effect;
+}
+
+function validateToolDefinitions(tools: readonly ToolDefinition[]): void {
+    const names = new Set<string>();
+    for (const tool of tools) {
+        if (names.has(tool.name)) {
+            throw new Error(`Duplicate tool definition "${tool.name}".`);
+        }
+        names.add(tool.name);
+
+        const expected = expectedSideEffectLevel(tool.catalog.effect);
+        if (tool.capability.sideEffectLevel !== expected) {
+            throw new Error(
+                `Tool "${tool.name}" effect mismatch: catalog=${tool.catalog.effect}, capability=${tool.capability.sideEffectLevel}.`,
+            );
+        }
+    }
+}
+
+validateToolDefinitions(ALL_TOOLS);
 
 // ── Effect queries ──────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@ import { Runtime } from "@/runtime/Runtime";
 import { SecurityService } from "@/security/SecurityService";
 import { isGuildAllowed } from "@/security/guildAllowlist";
 import { ACCESS_POLICY_TARGETS } from "@/security/policyTargets";
+import { ActiveRequestTracker } from "@/app/ActiveRequestTracker";
 import { Message, PermissionFlagsBits, TextChannel, ThreadChannel } from "discord.js";
 
 export = {
@@ -69,6 +70,7 @@ export = {
 };
 
 async function respondToMessage(message: Message, trigger: "mention" | "reply") {
+    const releaseRequest = ActiveRequestTracker.begin();
     let debugSession = null;
     let activityIndicator = null;
     let progressStatus = null;
@@ -105,9 +107,12 @@ async function respondToMessage(message: Message, trigger: "mention" | "reply") 
         });
         const result = await Runtime.answer(input);
         await activityIndicator.startTyping();
+        const formatted = UIService.formatAnswer(result.answer, result.citations);
+        // An empty send reads as being ignored. The runtime already guarantees
+        // a non-empty answer; this guard catches anything that slips past it.
         const sentMessages = await UIService.sendLongMessage(
             message,
-            UIService.formatAnswer(result.answer, result.citations)
+            formatted.trim() ? formatted : "Não consegui gerar uma resposta desta vez. Tenta de novo.",
         );
         await ConversationAdapter.bindResponseMessages({
             input,
@@ -120,5 +125,6 @@ async function respondToMessage(message: Message, trigger: "mention" | "reply") 
     } finally {
         await progressStatus?.finalize();
         await activityIndicator?.stop();
+        releaseRequest();
     }
 }

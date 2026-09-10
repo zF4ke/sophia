@@ -40,7 +40,7 @@ export const createPollTool: ToolDefinition = {
             allow_multiselect: z.boolean().optional(),
         }),
         outputSchema: z.any(),
-        sideEffectLevel: "none",
+        sideEffectLevel: "write",
         authRequirements: ["isGuildMember"],
         costClass: "normal",
         latencyClass: "medium",

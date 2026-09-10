@@ -32,6 +32,10 @@ export const DIRECT_TOOLS = new Set<DiscordToolName>([
     "note_list",
     "note_clear",
     "plan_update",
+    // goals (task framing — needed for auto-continue chains)
+    "goal_open",
+    "goal_update",
+    "goal_done",
     // web + memory search (read, common)
     "web_search",
     "memory_search",

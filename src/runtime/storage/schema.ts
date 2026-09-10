@@ -1,1 +1,1 @@
-export const OPERATIONAL_SCHEMA_VERSION = "2026-04-requester-name-1";
+export const OPERATIONAL_SCHEMA_VERSION = "2026-09-ltm-fts-1";

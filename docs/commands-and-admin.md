@@ -18,6 +18,14 @@ These all route to the same conversation runtime.
   - optional `target` for channel/category id or name
   - optional `author` for member/bot id, mention, or name
 
+## Saved Workflows, Long Tasks, Artifacts
+
+Three separate concepts, do not conflate them:
+
+- **Saved workflows** (`workflow_create`, `workflow_list`, `workflow_run`, `workflow_delete`): named tool chains stored per guild and rerun on demand. Use `workflow_delete` to remove one (fixes the undeletable `demo-resumo` case).
+- **Long tasks**: ordinary multi-step work that needs many tool calls. The model declares it with `start_long_task`, or the runtime auto-raises budgets on large explicit corpora. When unsure, the model asks the user in one sentence.
+- **Artifacts** (`artifact_send`, `artifact_edit` tools, `src/discord/artifacts/`): rendered Components V2 cards from retrieved evidence, validated before send. Tabs via dropdown, pagination buttons, https link buttons, TTL auto-deletion (`ttl_days`, 0 keeps forever, default), and in-place edits by message id from the persisted spec.
+
 ## Operator Commands
 
 - `/nth` — read indexed historical messages by position
@@ -37,8 +45,8 @@ These all route to the same conversation runtime.
 ## Settings Panel
 
 `/settings` opens an interactive panel with:
-- **Model tab** — dedicated model selector with context window and OpenRouter pricing
-- **Runtime tab** — 11 tuning knobs for context retention, retrieval, loop guardrails, and approval
+- **Model tab** lists the supported runtime profiles from `resources/models/model-profiles.json`, currently GLM 5.3 Flash, GPT-OSS 120B, Ling 3.0 Flash, and Local LM Studio, with context window and pricing.
+- **Runtime tab** — 10 tuning knobs for context retention, retrieval, loop guardrails, and approval (no wall-clock cap on turns)
 - **Auto-Approve Writes toggle** — skip approval for non-destructive write actions
 - **Reset to Defaults** — restore all settings to factory defaults
 
@@ -54,7 +62,6 @@ These all route to the same conversation runtime.
 | Around-Message Window | Neighbors loaded around a hit | 8, 15, 25, 40 |
 | Max Tool Calls | Hard cap per turn | 2–30 |
 | Repeated Call Guard | Same args retry limit | 1, 2, 3 |
-| Latency Budget | Wall-clock timeout per turn | 10s–5m |
 | Escalation Fetch Limit | Live refresh cap for retries | 50, 100, 150, 250, 400, 600, 800, 1000 |
 | Approval Timeout | Admin approval wait time | 30s–5m |
 

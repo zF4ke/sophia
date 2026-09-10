@@ -35,7 +35,7 @@ Sophia turns your Discord server into something you can talk to. Ask her what ha
 
 **Deep Server Search** — Search through your entire Discord history with intelligent retrieval. Sophia indexes messages locally for fast lookups and automatically fetches live history when needed.
 
-**33 Built-in Tools** — From retrieving messages and resolving members to creating channels, managing roles, editing messages, and planning multi-step tasks. The model decides which tools to use based on your request.
+**49 Built-in Tools** — From retrieving messages and resolving members to creating channels, managing roles, editing messages, and planning multi-step tasks. The model decides which tools to use based on your request.
 
 **Admin Approval System** — Write actions (create channel, send message, manage roles) require admin approval. Destructive actions (delete channel, clear messages) require approval *plus* confirmation. Multiple destructive actions are batched into a single approval card grouped by Discord category.
 
@@ -43,7 +43,7 @@ Sophia turns your Discord server into something you can talk to. Ask her what ha
 
 **Animated Activity Indicators** — Sophia reacts with a cycling emoji sequence while thinking, so you always know she's working.
 
-**Configurable Runtime** — Tune tool-call limits, latency budgets, retrieval depth, approval timeouts, and more through an interactive `/settings` panel. Switch between model profiles on the fly.
+**Configurable Runtime** — Tune tool-call limits, retrieval depth, approval timeouts, and more through an interactive `/settings` panel. Switch between model profiles on the fly.
 
 **Role-Based Access** — Admin and moderator tiers with rate limiting. Admins get full control; moderators get scoped permissions.
 
@@ -148,7 +148,9 @@ Write tools require admin approval. Destructive tools require approval + confirm
 
 ## Model Profiles
 
-Model profiles are defined in `resources/models/model-profiles.json` and selected in `/settings` (tab **Model**). There are currently 17 profiles spanning Google, OpenAI, DeepSeek, Mistral, MiniMax, xAI, and free-tier models. The default is `gemini25flashlite`.
+Model profiles are defined in `resources/models/model-profiles.json` and selected in `/settings` under **Model**. The supported profiles are GLM 5.3 Flash, GPT-OSS 120B, Ling 3.0 Flash, and Local LM Studio. The default is `glm53flash`.
+
+The Local LM Studio profile routes chat through any OpenAI-compatible local server (default `http://127.0.0.1:1234/v1`): set `chatModel` to the exact model id loaded in LM Studio and adjust `contextWindow` to match. Embeddings still run through OpenRouter, so that key is required either way.
 
 Pricing shown in `/settings` comes from the `pricing` metadata in `resources/models/model-profiles.json` (values synced from OpenRouter). Add new profiles by editing the JSON file — no code changes needed.
 
@@ -172,7 +174,7 @@ All runtime tuning is done through `/settings` or `storage/settings.json`:
 
 - **Context retention** — recent turns, channel messages, prior evidence slice
 - **Retrieval** — history page size, context window, crawl limits
-- **Loop guardrails** — max tool calls (2–30), latency budget (10s–5m), repeated call guard
+- **Loop guardrails** — max tool calls (2–30), repeated call guard, no wall-clock cap on turns
 - **Approval** — timeout duration (30s–5m), auto-approve writes toggle
 - **Model profile** — switch model in `/settings` model tab
 

@@ -93,6 +93,9 @@ export class DiscordBackfillCrawler {
     public static async start(client: Client): Promise<void> {
         if (this.running) return;
         this.client = client;
+        await OperationalStore.initialize();
+        await this.retireLegacyStartupJobs();
+        await this.recoverInterruptedJobs();
         this.running = true;
         this.stopping = false;
         this.workerPromise = this.workerLoop().catch((err) => {
@@ -105,6 +108,46 @@ export class DiscordBackfillCrawler {
         // with hundreds of thousands of messages would crawl for hours.
         // Deep backfill is agent-gated via index_channel mode="deep".
         void this.sweepAllGuildChannels();
+    }
+
+    /**
+     * Older builds queued every channel for an unbounded crawl at startup.
+     * Those durable rows survive upgrades and would otherwise resume forever,
+     * bypassing the bounded startup sweep introduced later.
+     */
+    private static async retireLegacyStartupJobs(): Promise<void> {
+        const client = OperationalStore.getClient();
+        const result = await client.execute({
+            sql: `
+                UPDATE crawl_queue
+                SET state = 'done',
+                    last_error = NULL,
+                    last_activity_at = :now
+                WHERE reason = 'startup_refresh'
+                  AND state IN ('queued', 'running', 'paused')
+            `,
+            args: { now: Date.now() },
+        });
+        if (result.rowsAffected > 0) {
+            this.log(`retired_legacy_startup_jobs count=${result.rowsAffected}`);
+        }
+    }
+
+    private static async recoverInterruptedJobs(): Promise<void> {
+        const client = OperationalStore.getClient();
+        const result = await client.execute({
+            sql: `
+                UPDATE crawl_queue
+                SET state = 'queued',
+                    last_activity_at = :now
+                WHERE state = 'running'
+                  AND (reason IS NULL OR reason <> 'startup_refresh')
+            `,
+            args: { now: Date.now() },
+        });
+        if (result.rowsAffected > 0) {
+            this.log(`recovered_interrupted_jobs count=${result.rowsAffected}`);
+        }
     }
 
     /**
@@ -384,12 +427,24 @@ export class DiscordBackfillCrawler {
         });
     }
 
+    private static async markQueued(channelId: string): Promise<void> {
+        const client = OperationalStore.getClient();
+        await client.execute({
+            sql: `
+                UPDATE crawl_queue
+                SET state = 'queued', last_activity_at = :now
+                WHERE channel_id = :channelId
+            `,
+            args: { channelId, now: Date.now() },
+        });
+    }
+
     private static async markError(channelId: string, message: string): Promise<void> {
         const client = OperationalStore.getClient();
         await client.execute({
             sql: `
                 UPDATE crawl_queue
-                SET state = 'queued',
+                SET state = 'paused',
                     last_error = :error,
                     last_activity_at = :now
                 WHERE channel_id = :channelId
@@ -447,6 +502,7 @@ export class DiscordBackfillCrawler {
 
         let before = await resumeBeforeId(job.channelId);
         let totalIngestedInJob = 0;
+        let completed = false;
         this.currentChannelId = job.channelId;
 
         while (this.running && !this.stopping) {
@@ -474,6 +530,7 @@ export class DiscordBackfillCrawler {
                 );
 
                 if (result.reachedEnd && result.ingested === 0) {
+                    completed = true;
                     break;
                 }
 
@@ -489,6 +546,11 @@ export class DiscordBackfillCrawler {
         }
 
         this.currentChannelId = null;
+        if (!completed) {
+            await this.markQueued(job.channelId);
+            this.log(`job_interrupted channel=${job.channelId} ingested_this_job=${totalIngestedInJob}`);
+            return;
+        }
         await this.markDone(job.channelId, 0);
         this.log(`job_done channel=${job.channelId} ingested_this_job=${totalIngestedInJob}`);
     }

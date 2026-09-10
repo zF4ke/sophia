@@ -12,6 +12,7 @@ import { ConversationAdapter } from "@/discord/conversation/ConversationAdapter"
 import { Runtime } from "@/runtime/Runtime";
 import { SecurityService } from "@/security/SecurityService";
 import type { BotClient } from "@/shared/appTypes";
+import { ActiveRequestTracker } from "@/app/ActiveRequestTracker";
 
 export = {
     data: new SlashCommandBuilder()
@@ -32,6 +33,7 @@ export = {
                 .setRequired(false)
         ),
     async execute(interaction: ChatInputCommandInteraction, _client: BotClient) {
+        const releaseRequest = ActiveRequestTracker.begin();
         let debugSession = null;
         let activityIndicator = null;
         let progressStatus = null;
@@ -67,10 +69,11 @@ export = {
             });
             const result = await Runtime.answer(input);
             await activityIndicator.startTyping();
+            const formatted = UIService.formatAnswer(result.answer, result.citations);
             const sentMessages = await UIService.sendLongResponse(
                 interaction,
                 "",
-                UIService.formatAnswer(result.answer, result.citations),
+                formatted.trim() ? formatted : "Não consegui gerar uma resposta desta vez. Tenta de novo.",
                 ephemeral
             );
             await ConversationAdapter.bindResponseMessages({
@@ -91,7 +94,7 @@ export = {
         } finally {
             await progressStatus?.finalize();
             await activityIndicator?.stop();
+            releaseRequest();
         }
     },
 };
-

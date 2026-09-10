@@ -5,8 +5,8 @@
       "chatModel": "z-ai/glm-5.3-flash",
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.45,
-      "maxOutputTokens": 12000,
-      "contextWindow": 1048576,
+      "maxOutputTokens": 24000,
+      "contextWindow": 1310720,
       "parallelToolCalls": true,
       "label": "GLM 5.3 Flash",
       "pricing": {
@@ -14,259 +14,92 @@
         "outputPerMillionUsd": 0.25,
         "cacheReadPerMillionUsd": 0.015,
         "source": "openrouter",
-        "updatedAt": "2026-08-26"
+        "updatedAt": "2026-09-03"
       }
     },
-    "gemini31flashlite": {
-      "chatModel": "google/gemini-3.1-flash-lite-preview",
+    "gptoss120b": {
+      "chatModel": "openai/gpt-oss-120b",
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 1000000,
-      "parallelToolCalls": false,
-      "label": "Gemini 3.1 Flash Lite",
-      "pricing": {
-        "inputPerMillionUsd": 0.25,
-        "outputPerMillionUsd": 1.5,
-        "cacheReadPerMillionUsd": 0.025,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "minimax27": {
-      "chatModel": "minimax/minimax-m2.7",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 190000,
-      "parallelToolCalls": false,
-      "label": "MiniMax M2.7",
-      "pricing": {
-        "inputPerMillionUsd": 0.3,
-        "outputPerMillionUsd": 1.2,
-        "cacheReadPerMillionUsd": 0.059,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "minimax25": {
-      "chatModel": "minimax/minimax-m2.5",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 190000,
-      "parallelToolCalls": false,
-      "label": "MiniMax M2.5",
-      "pricing": {
-        "inputPerMillionUsd": 0.118,
-        "outputPerMillionUsd": 0.99,
-        "cacheReadPerMillionUsd": 0.059,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "mimov2flash": {
-      "chatModel": "xiaomi/mimo-v2-flash",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 260000,
-      "parallelToolCalls": false,
-      "label": "MiMo V2 Flash",
-      "pricing": {
-        "inputPerMillionUsd": 0.09,
-        "outputPerMillionUsd": 0.29,
-        "cacheReadPerMillionUsd": 0.045,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "mistralnemo": {
-      "chatModel": "mistralai/mistral-nemo",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 130000,
-      "parallelToolCalls": false,
-      "label": "Mistral Nemo",
-      "pricing": {
-        "inputPerMillionUsd": 0.02,
-        "outputPerMillionUsd": 0.04,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "deepseek32": {
-      "chatModel": "deepseek/deepseek-v3.2",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 160000,
-      "parallelToolCalls": false,
-      "label": "DeepSeek V3.2",
-      "pricing": {
-        "inputPerMillionUsd": 0.26,
-        "outputPerMillionUsd": 0.38,
-        "cacheReadPerMillionUsd": 0.13,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "gemini25flashlite": {
-      "chatModel": "google/gemini-2.5-flash-lite-preview-09-2025",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
+      "maxOutputTokens": 16000,
       "contextWindow": 131072,
-      "parallelToolCalls": false,
-      "label": "Gemini 2.5 Flash Lite Preview 09-2025",
+      "parallelToolCalls": true,
+      "label": "GPT-OSS 120B",
       "pricing": {
-        "inputPerMillionUsd": 0.1,
-        "outputPerMillionUsd": 0.4,
-        "cacheReadPerMillionUsd": 0.01,
+        "inputPerMillionUsd": 0.037,
+        "outputPerMillionUsd": 0.17,
         "source": "openrouter",
-        "updatedAt": "2026-04-16"
+        "updatedAt": "2026-09-03"
       }
     },
-    "gemini25flashlite_latest": {
-      "chatModel": "google/gemini-2.5-flash-lite",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 131072,
-      "parallelToolCalls": false,
-      "label": "Gemini 2.5 Flash Lite",
-      "pricing": {
-        "inputPerMillionUsd": 0.1,
-        "outputPerMillionUsd": 0.4,
-        "cacheReadPerMillionUsd": 0.01,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "glm5": {
-      "chatModel": "z-ai/glm-5.1",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 80000,
-      "parallelToolCalls": false,
-      "label": "GLM 5.1",
-      "pricing": {
-        "inputPerMillionUsd": 0.95,
-        "outputPerMillionUsd": 3.15,
-        "cacheReadPerMillionUsd": 0.475,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "gpt4omini": {
-      "chatModel": "openai/gpt-4o-mini",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 128000,
-      "parallelToolCalls": false,
-      "label": "GPT-4o Mini",
-      "pricing": {
-        "inputPerMillionUsd": 0.15,
-        "outputPerMillionUsd": 0.6,
-        "cacheReadPerMillionUsd": 0.075,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "gpt5nano": {
-      "label": "GPT-5 Nano",
-      "chatModel": "openai/gpt-5-nano",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 400000,
-      "parallelToolCalls": false,
-      "pricing": {
-        "inputPerMillionUsd": 0.05,
-        "outputPerMillionUsd": 0.4,
-        "cacheReadPerMillionUsd": 0.01,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "gpt41nano": {
-      "label": "GPT-4.1 Nano",
-      "chatModel": "openai/gpt-4.1-nano",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 1000000,
-      "parallelToolCalls": false,
-      "pricing": {
-        "inputPerMillionUsd": 0.1,
-        "outputPerMillionUsd": 0.4,
-        "cacheReadPerMillionUsd": 0.025,
-        "webSearchPerCallUsd": 0.01,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "gpt54nano": {
-      "label": "GPT-5.4 Nano",
-      "chatModel": "openai/gpt-5.4-nano",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 400000,
-      "parallelToolCalls": false,
-      "pricing": {
-        "inputPerMillionUsd": 0.2,
-        "outputPerMillionUsd": 1.25,
-        "cacheReadPerMillionUsd": 0.02,
-        "webSearchPerCallUsd": 0.01,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "free-nvidia": {
-      "label": "Nemotron 3 Nano (free)",
-      "chatModel": "nvidia/nemotron-3-nano-30b-a3b:free",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 131072,
-      "parallelToolCalls": false
-    },
-    "free-elephant": {
-      "label": "Elephant Alpha (free)",
-      "chatModel": "openrouter/elephant-alpha",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 260000,
-      "parallelToolCalls": false
-    },
-    "grok41": {
-      "label": "Grok 4.1 Fast",
-      "chatModel": "x-ai/grok-4.1-fast",
-      "embeddingModel": "openai/text-embedding-3-small",
-      "temperature": 0.5,
-      "maxOutputTokens": 10000,
-      "contextWindow": 2000000,
-      "parallelToolCalls": false,
-      "pricing": {
-        "inputPerMillionUsd": 0.2,
-        "outputPerMillionUsd": 0.5,
-        "source": "openrouter",
-        "updatedAt": "2026-04-16"
-      }
-    },
-    "free-nvidia-super": {
-      "label": "Nemotron 3 Super (free)",
-      "chatModel": "nvidia/nemotron-3-super-120b-a12b:free",
+    "ling30flash": {
+      "chatModel": "inclusionai/ling-3.0-flash",
       "embeddingModel": "openai/text-embedding-3-small",
       "temperature": 0.5,
       "maxOutputTokens": 10000,
       "contextWindow": 262144,
-      "parallelToolCalls": false
+      "parallelToolCalls": false,
+      "label": "Ling 3.0 Flash",
+      "pricing": {
+        "inputPerMillionUsd": 0.021,
+        "outputPerMillionUsd": 0.063,
+        "cacheReadPerMillionUsd": 0.0042,
+        "source": "openrouter",
+        "updatedAt": "2026-09-02"
+      }
+    },
+    "museSpark13Contributor": {
+      "chatModel": "meta/muse-spark-1.3-contributor",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.45,
+      "maxOutputTokens": 24000,
+      "contextWindow": 1048576,
+      "parallelToolCalls": true,
+      "label": "Muse Spark 1.3 Contributor",
+      "pricing": {
+        "inputPerMillionUsd": 0.1,
+        "outputPerMillionUsd": 0.2,
+        "cacheReadPerMillionUsd": 0.002,
+        "webSearchPerCallUsd": 0.0025,
+        "source": "openrouter",
+        "updatedAt": "2026-09-03"
+      }
+    },
+    "museSpark12Zen": {
+      "chatModel": "muse-spark-1.2-contributor-free",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.45,
+      "maxOutputTokens": 16000,
+      "contextWindow": 1048576,
+      "parallelToolCalls": true,
+      "label": "Muse Spark 1.2 (Zen Free)",
+      "baseUrl": "https://opencode.ai/zen/v1",
+      "apiKeyEnv": "OPENCODE_API_KEY",
+      "provider": "opencode",
+      "notes": "Free via OpenCode Zen (https://opencode.ai/docs/zen). Key lives in ~/.local/share/opencode/auth.json; copy it to .env as OPENCODE_API_KEY.",
+      "pricing": {
+        "inputPerMillionUsd": 0,
+        "outputPerMillionUsd": 0,
+        "source": "opencode",
+        "updatedAt": "2026-09-03"
+      }
+    },
+    "localLmStudio": {
+      "chatModel": "local-model",
+      "embeddingModel": "openai/text-embedding-3-small",
+      "temperature": 0.5,
+      "maxOutputTokens": 8000,
+      "contextWindow": 32768,
+      "parallelToolCalls": false,
+      "label": "Local LM Studio",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "notes": "Serves whatever model is loaded in LM Studio. Set chatModel to the exact model id shown in the LM Studio server page (GET /v1/models lists them). Adjust contextWindow to the loaded model. Embeddings still run through OpenRouter.",
+      "pricing": {
+        "inputPerMillionUsd": 0,
+        "outputPerMillionUsd": 0,
+        "source": "local",
+        "updatedAt": "2026-09-03"
+      }
     }
   }
 }

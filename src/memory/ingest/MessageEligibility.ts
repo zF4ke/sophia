@@ -27,6 +27,12 @@ export class MessageEligibility {
             return true;
         }
 
+        // Components V2 messages (artifact cards, bot panels) have empty
+        // content but carry searchable text in their component tree.
+        if (message.components?.length > 0) {
+            return true;
+        }
+
         const content = message.content.trim();
         if (!content || content.startsWith("/")) {
             return false;

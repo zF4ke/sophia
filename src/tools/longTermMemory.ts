@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { T } from "@/shared/discordTools";
 import { OperationalStore } from "@/runtime/storage/OperationalStore";
+import { buildPrefixFtsQuery, normalizeForLexicalMatch, tokenizeQueryTerms } from "@/shared/textSearch";
 import type { ToolDefinition } from "./types";
 
 async function ensureTable() {
@@ -46,7 +47,7 @@ export const memoryRememberTool: ToolDefinition = {
         description: "Store long-term memory.",
         inputSchema: z.object({ key: z.string().min(2).max(64), value: z.string().min(2).max(2000), scope: z.string().optional() }),
         outputSchema: z.any(),
-        sideEffectLevel: "none",
+        sideEffectLevel: "write",
         authRequirements: [],
         costClass: "cheap",
         latencyClass: "fast",
@@ -60,7 +61,7 @@ export const memoryRememberTool: ToolDefinition = {
             const scope = String(args.scope || "guild").toLowerCase();
             const c = OperationalStore.getClient();
             const guildId = scope === "user" ? context.guild?.id ?? null : context.guild?.id ?? null;
-            const userId = scope === "user" ? (context as unknown as { actorId?: string }).actorId ?? null : null;
+            const userId = scope === "user" ? context.actorId ?? null : null;
             // channel scope is stored with guild+channel hint in key
             const id = uid();
             const ts = now();
@@ -82,7 +83,7 @@ export const memoryRememberTool: ToolDefinition = {
 const memorySearchParams = {
     type: "object",
     properties: {
-        query: { type: "string", description: "Search query to find relevant memories (keyword). Leave empty to list recent." },
+        query: { type: "string", description: "Search query to find relevant memories (keywords; prefix matching, diacritic-insensitive). Leave empty to list recent." },
         limit: { type: "number", description: "Max results (1-20, default 8)." },
     },
     required: [],
@@ -92,7 +93,7 @@ export const memorySearchTool: ToolDefinition = {
     name: T.memory_search,
     catalog: { effect: "read", description: "Search long-term memories for the current guild (and user).", evidenceRole: "discovery_only" },
     schema: {
-        description: "Recall persistent memories. Use when you need prior context, preferences, or decisions saved across sessions. Search by keyword or list recent.",
+        description: "Recall persistent memories. Use when you need prior context, preferences, or decisions saved across sessions. Search by keyword (prefix matching, diacritic-insensitive) or list recent.",
         parameters: memorySearchParams,
     },
     capability: {
@@ -108,22 +109,53 @@ export const memorySearchTool: ToolDefinition = {
         async run(context, args) {
             await ensureTable();
             const c = OperationalStore.getClient();
-            const query = String(args.query || "").trim().toLowerCase();
+            const rawQuery = String(args.query || "").trim();
             const limit = Math.max(1, Math.min(20, Number(args.limit) || 8));
             const guildId = context.guild?.id ?? null;
+            const actorId = context.actorId ?? null;
+            // Guild-shared memories are visible to everyone in the guild;
+            // user-scoped memories only to their owner.
+            const scopeSql = "(m.guild_id = :guildId OR m.guild_id IS NULL) AND (m.user_id IS NULL OR m.user_id = :actorId)";
+            const terms = tokenizeQueryTerms(rawQuery);
             let rows: Record<string, unknown>[];
-            if (!query) {
+            if (!terms.length) {
                 const r = await c.execute({
-                    sql: `SELECT * FROM long_term_memories WHERE (guild_id = :guildId OR guild_id IS NULL) ORDER BY updated_timestamp DESC LIMIT :limit`,
-                    args: { guildId, limit },
+                    sql: `SELECT m.* FROM long_term_memories m WHERE ${scopeSql} ORDER BY m.updated_timestamp DESC LIMIT :limit`,
+                    args: { guildId, actorId, limit },
                 });
                 rows = r.rows as Record<string, unknown>[];
             } else {
+                const ftsQuery = buildPrefixFtsQuery(terms);
+                const candidateLimit = Math.max(limit * 6, 30);
                 const r = await c.execute({
-                    sql: `SELECT * FROM long_term_memories WHERE (guild_id = :guildId OR guild_id IS NULL) AND (LOWER(key) LIKE :q OR LOWER(value) LIKE :q) ORDER BY updated_timestamp DESC LIMIT :limit`,
-                    args: { guildId, limit, q: `%${query}%` },
+                    sql: `
+                        SELECT m.*
+                        FROM long_term_memories_fts fts
+                        INNER JOIN long_term_memories m ON m.rowid = fts.rowid
+                        WHERE long_term_memories_fts MATCH :ftsQuery AND ${scopeSql}
+                        ORDER BY fts.rank
+                        LIMIT :candidateLimit
+                    `,
+                    args: { ftsQuery, guildId, actorId, candidateLimit },
                 });
-                rows = r.rows as Record<string, unknown>[];
+                rows = (r.rows as Record<string, unknown>[])
+                    .map((row) => {
+                        const key = String(row.key || "");
+                        const value = String(row.value || "");
+                        const haystack = normalizeForLexicalMatch(`${key} ${value}`);
+                        const lexicalScore = terms.reduce(
+                            (total, term) => total + (haystack.includes(term) ? 1 : 0),
+                            0
+                        );
+                        const recencyScore = Number(row.updated_timestamp || 0) / 1_000_000_000_000;
+                        return { row, totalScore: lexicalScore + recencyScore, updated: Number(row.updated_timestamp || 0) };
+                    })
+                    .sort((left, right) =>
+                        right.totalScore - left.totalScore ||
+                        right.updated - left.updated
+                    )
+                    .slice(0, limit)
+                    .map((scored) => scored.row);
             }
             const memories = rows.map((r) => ({
                 id: String(r.id),
@@ -132,7 +164,7 @@ export const memorySearchTool: ToolDefinition = {
                 kind: String(r.kind),
                 updatedAt: Number(r.updated_timestamp),
             }));
-            if (!memories.length) return { tool: T.memory_search, summary: query ? `No memories for "${query}"` : "No memories yet.", data: { memories: [] } };
+            if (!memories.length) return { tool: T.memory_search, summary: rawQuery ? `No memories for "${rawQuery}"` : "No memories yet.", data: { memories: [] } };
             const summary = memories.map((m) => `• ${m.key}: ${m.value.slice(0, 120)}`).join("\n");
             return { tool: T.memory_search, summary: `Found ${memories.length} memories:\n${summary}`, data: { memories } };
         },

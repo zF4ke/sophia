@@ -1,5 +1,6 @@
 import { MessageType, type Message } from "discord.js";
 import type { StoredMessage } from "@/memory/types";
+import { extractComponentsText } from "@/memory/ingest/ComponentTextExtractor";
 
 /** Map system message types to human-readable descriptions. */
 function describeSystemMessage(message: Message): string | null {
@@ -48,15 +49,17 @@ export class MessageNormalizer {
             message.author.globalName ||
             message.author.username;
 
-        // Build content from text, system description, and embeds
+        // Build content from text, system description, embeds, and components
         const textContent = message.content.trim();
         const systemDesc = describeSystemMessage(message);
         const embedContent = extractEmbedContent(message);
+        const componentsContent = extractComponentsText(message);
 
         const contentParts: string[] = [];
         if (systemDesc) contentParts.push(systemDesc);
         else if (textContent) contentParts.push(textContent);
         if (embedContent) contentParts.push(embedContent);
+        if (componentsContent) contentParts.push(componentsContent);
 
         return {
             id: message.id,

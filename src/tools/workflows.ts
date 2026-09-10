@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { T } from "@/shared/discordTools";
 import { OperationalStore } from "@/runtime/storage/OperationalStore";
-import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 import type { ToolDefinition } from "./types";
-import type { DiscordToolName } from "@/shared/discordTools";
 
 async function ensureTable() {
     await OperationalStore.initialize();
@@ -64,7 +62,7 @@ export const workflowCreateTool: ToolDefinition = {
             steps: z.array(z.object({ tool: z.string(), args: z.record(z.string(), z.unknown()), label: z.string().optional() })).min(1).max(20),
         }),
         outputSchema: z.any(),
-        sideEffectLevel: "none",
+        sideEffectLevel: "write",
         authRequirements: [],
         costClass: "normal",
         latencyClass: "fast",
@@ -86,7 +84,7 @@ export const workflowCreateTool: ToolDefinition = {
             const ts = now();
             await c.execute({
                 sql: `INSERT INTO workflows (id, guild_id, name, description, steps_json, created_by, created_timestamp, updated_timestamp) VALUES (:id,:guildId,:name,:description,:stepsJson,:createdBy,:ts,:ts)`,
-                args: { id, guildId, name, description, stepsJson: JSON.stringify(steps), createdBy: (context as unknown as { actorId?: string }).actorId ?? null, ts },
+                args: { id, guildId, name, description, stepsJson: JSON.stringify(steps), createdBy: context.actorId ?? null, ts },
             });
             return { tool: T.workflow_create, summary: `Created workflow "${name}" with ${steps.length} steps.`, data: { id, name, guildId, steps } };
         },
@@ -140,11 +138,51 @@ const runParams = {
     required: ["name"],
 } as const;
 
+const deleteParams = {
+    type: "object",
+    properties: {
+        name: { type: "string", description: "Workflow name to delete." },
+    },
+    required: ["name"],
+} as const;
+
+export const workflowDeleteTool: ToolDefinition = {
+    name: T.workflow_delete,
+    catalog: { effect: "write", description: "Delete a saved workflow for the current guild.", evidenceRole: "discovery_only" },
+    schema: {
+        description: "Delete a saved workflow by name. Use when the user asks to remove a workflow.",
+        parameters: deleteParams,
+    },
+    capability: {
+        description: "Delete workflow.",
+        inputSchema: z.object({ name: z.string().min(1) }),
+        outputSchema: z.any(),
+        sideEffectLevel: "write",
+        authRequirements: [],
+        costClass: "cheap",
+        latencyClass: "fast",
+        preconditions: [],
+        postconditions: ["workflow removed when it existed"],
+        async run(context, args) {
+            await ensureTable();
+            const name = String(args.name || "").trim().toLowerCase();
+            const guildId = context.guild?.id ?? null;
+            const c = OperationalStore.getClient();
+            const result = await c.execute({ sql: `DELETE FROM workflows WHERE guild_id = :guildId AND name = :name`, args: { guildId, name } });
+            const removed = Number(result.rowsAffected ?? 0);
+            if (!removed) return { tool: T.workflow_delete, summary: `Workflow "${name}" not found.`, data: { name, removed: false } };
+            return { tool: T.workflow_delete, summary: `Deleted workflow "${name}".`, data: { name, removed: true } };
+        },
+    },
+    strategy: { extractEvidence() { return []; } },
+    display: { icon: "🗑️", labelPt: "Apagar workflow" },
+};
+
 export const workflowRunTool: ToolDefinition = {
     name: T.workflow_run,
-    catalog: { effect: "read", description: "Run a saved workflow (executes its steps sequentially).", evidenceRole: "discovery_only" },
+    catalog: { effect: "read", description: "Load a saved workflow so its steps can run through the normal runtime executor.", evidenceRole: "discovery_only" },
     schema: {
-        description: "Execute a saved workflow by name. Each step is run in order; results are collected. If a step mutates (write/destructive), normal approval still applies.",
+        description: "Load a saved workflow by name. Then call each returned step through the normal tool interface, in order. This keeps budgets, tracing, and approvals intact.",
         parameters: runParams,
     },
     capability: {
@@ -156,7 +194,7 @@ export const workflowRunTool: ToolDefinition = {
         costClass: "normal",
         latencyClass: "medium",
         preconditions: [],
-        postconditions: ["workflow executed"],
+        postconditions: ["returns the workflow steps for normal runtime execution"],
         async run(context, args) {
             await ensureTable();
             const name = String(args.name || "").trim().toLowerCase();
@@ -167,25 +205,20 @@ export const workflowRunTool: ToolDefinition = {
             let steps: WorkflowStep[] = [];
             try { steps = JSON.parse(String(row.steps_json)); } catch { steps = []; }
             const overrides = (args.overrides ?? {}) as Record<string, Record<string, unknown>>;
-            const results: { step: number; tool: string; summary: string; data: unknown; error?: string }[] = [];
-            for (let i = 0; i < steps.length; i++) {
-                const step = steps[i];
-                const toolName = String(step.tool);
-                const baseArgs = { ...(step.args ?? {}) } as Record<string, unknown>;
-                const ov = overrides[String(i)];
-                if (ov && typeof ov === "object") Object.assign(baseArgs, ov as Record<string, unknown>);
-                const cap = CapabilityRegistry.get(toolName as DiscordToolName);
-                if (!cap) { results.push({ step: i, tool: toolName, summary: `Unknown tool ${toolName}`, data: null, error: "unknown tool" }); continue; }
-                try {
-                    const out = await cap.run(context as never, baseArgs as never);
-                    results.push({ step: i, tool: toolName, summary: out.summary, data: out.data });
-                } catch (e) {
-                    const msg = e instanceof Error ? e.message : String(e);
-                    results.push({ step: i, tool: toolName, summary: `Error: ${msg}`, data: null, error: msg });
-                }
-            }
-            const summary = results.map((r) => `[${r.step}] ${r.tool}: ${r.summary}`).join("\n");
-            return { tool: T.workflow_run, summary: `Workflow "${name}" executed ${results.length} steps:\n${summary}`, data: { name, results } };
+            const preparedSteps = steps.map((step, index) => {
+                const args = { ...(step.args ?? {}) } as Record<string, unknown>;
+                const override = overrides[String(index)];
+                if (override && typeof override === "object") Object.assign(args, override);
+                return { index, tool: String(step.tool), args, label: step.label ?? null };
+            });
+            const summary = preparedSteps
+                .map((step) => `[${step.index}] ${step.tool}${step.label ? ` (${step.label})` : ""}`)
+                .join("\n");
+            return {
+                tool: T.workflow_run,
+                summary: `Loaded workflow "${name}" with ${preparedSteps.length} step(s). Execute these through normal tool calls:\n${summary}`,
+                data: { name, steps: preparedSteps, executionRequired: true },
+            };
         },
     },
     strategy: { extractEvidence() { return []; } },

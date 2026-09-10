@@ -12,8 +12,8 @@ import type { ToolDefinition } from "./types";
  *   - the capability registry treats it as a known tool, and
  *   - the tool catalog consistency tests stay green.
  *
- * The real behavior (raising per-turn `maxToolCalls` /
- * `maxLatencyBudgetMs`) lives in `src/runtime/Runtime.ts`.
+ * The real behavior (raising per-turn `maxToolCalls` and the evidence
+ * slice) lives in `src/runtime/Runtime.ts`. Turns have no wall-clock cap.
  */
 
 const parameters = {
@@ -36,13 +36,13 @@ export const startLongTaskTool: ToolDefinition = {
         // or triggers the approval gate.
         effect: "read",
         description:
-            "Control tool: raise this turn's tool-call and latency budgets so the model can run a long task (bulk pagination, monitoring, etc.).",
+            "Control tool: raise this turn's tool-call budget so the model can run a long task (bulk pagination, monitoring, etc.).",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Call this FIRST when a task will plausibly need more than 25 tool calls or more than 2 minutes of work (e.g. paginating thousands of messages across many channels). Raises this turn's tool-call and latency budgets to the operator-configured long-task caps (set in /settings → Long task). Do not call for normal questions. Only one call per turn is honored.",
+            "Call this FIRST when a task will plausibly need more than 25 tool calls (e.g. paginating thousands of messages across many channels). Raises this turn's tool-call budget to the operator-configured long-task cap (set in /settings → Long task). Do not call for normal questions. Only one call per turn is honored.",
         parameters,
     },
 
@@ -60,7 +60,7 @@ export const startLongTaskTool: ToolDefinition = {
         preconditions: [],
         postconditions: [
             "per-turn maxToolCalls is raised to settings.runtime.longTask.maxToolCalls",
-            "per-turn maxLatencyBudgetMs is raised to settings.runtime.longTask.maxLatencyBudgetMs",
+            "per-turn maxEvidenceSlice is raised to settings.runtime.longTask.evidenceSliceFloor",
         ],
         async run() {
             // Never actually called — Runtime intercepts the tool name.

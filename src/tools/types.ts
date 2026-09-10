@@ -25,6 +25,8 @@ export type CapabilityContext = {
     requestId?: string | null;
     /** Conversation thread id. Enables opt-in reading of prior requests' notes. */
     threadId?: string | null;
+    /** Requesting Discord user. Persistent user-scoped tools must use this. */
+    actorId?: string | null;
 };
 
 // ── Tool effect classification ──────────────────────────────────────

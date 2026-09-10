@@ -35,7 +35,7 @@ The active flow is:
 The runtime keeps only narrow guardrails:
 - capability validation
 - repeated-call protection
-- tool-call and latency budgets
+- tool-call budget (no wall-clock cap on turns)
 - context overflow pruning (Tier-1 truncation + Tier-2 compaction)
 - doom-loop detection (identical tool calls → nudge → force finish)
 - progress-required tracking (long tasks only)
@@ -51,6 +51,7 @@ These capability ids are prompt- and runtime-stable:
 
 - `retrieve_messages`
 - `search_messages`
+- `random_channel_message`
 - `resolve_member_identity`
 - `list_guild_structure`
 - `resolve_channel_targets`
@@ -83,6 +84,20 @@ These capability ids are prompt- and runtime-stable:
 - `note_list`
 - `note_clear`
 - `plan_update`
+- `web_search`
+- `fetch_url`
+- `memory_search`
+- `memory_remember`
+- `workflow_create`
+- `workflow_list`
+- `workflow_run`
+- `workflow_delete`
+- `artifact_send`
+- `artifact_edit`
+- `tool_search`
+- `create_poll`
+- `get_poll_results`
+- `index_channel`
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`.
 
@@ -98,13 +113,22 @@ If a capability id changes, update:
 - `resources/prompts/runtime/agent_loop.md`
 - the affected tests
 
+Mutating capability output contract (required for all current and future `write`/`destructive` tools):
+- Return identifier-rich `data` fields that are directly reusable in user replies (for Discord resources include both raw IDs and mention-ready fields, e.g. `channelId` and `channelMention: <#id>`).
+- Include the same concrete identifier in `summary` (not only display names), so the model can produce accurate post-action confirmations.
+- Prefer stable identifiers over names when they differ in reliability.
+
 ## Prompt Ownership
 
 Runtime prompts live under `resources/prompts/` and stay external to code:
 
 - `resources/prompts/system/base.md`
 - `resources/prompts/system/personality.md`
+- `resources/prompts/system/personality_mixed_override.md` (applied when `personality = "mixed"`)
+- `resources/prompts/system/personality_classic_override.md` (applied when `personality = "classic"`)
 - `resources/prompts/runtime/agent_loop.md`
+
+Personality mode is selectable via `/settings` → Personalidade. Three modes: `default` (baseline), `mixed` (recommended — sharper, evidence-first, low filler), `classic` (legacy dominant persona).
 
 The stable prompt catalog is:
 
@@ -127,16 +151,19 @@ Editable runtime config lives in:
 - `.env` (secrets only: `DISCORD_TOKEN`, `OPENROUTER_API_KEY`)
 - `src/app/AppConfig.ts`
 
-All runtime tuning knobs (tool calls, latency budget, retrieval limits, etc.) live in `SettingsService` defaults and `storage/settings.json`. Do not use environment variables for runtime config.
+All runtime tuning knobs (tool calls, retrieval limits, etc.) live in `SettingsService` defaults and `storage/settings.json`. Do not use environment variables for runtime config.
 
-OpenRouter remains the only model-provider surface. Do not hardcode models in source.
+OpenRouter remains the only remote model-provider surface. Do not hardcode models in source. Model profiles may declare an optional `baseUrl` pointing at any OpenAI-compatible server (e.g. a local LM Studio at `http://127.0.0.1:1234/v1`); such profiles bypass OpenRouter entirely (no `provider` routing block, no default-model fallback) while embeddings still route through OpenRouter.
 
 ## Memory And Storage
 
 Local libSQL storage is the source of truth for Discord retrieval state and runtime traces.
 
 - New messages are ingested from `src/discord/events/message/messageCreate.event.ts`
-- Backfill and repair flows are exposed through `src/discord/commands/system/index.command.ts`
+- **Startup sweep**: `DiscordBackfillCrawler.sweepAllGuildChannels()` runs a *bounded* recency pass per channel on `clientReady` (cap: `runtime.startupSweepMaxMessages`, default 1000) — closes offline gaps without full-history crawls
+- **Edge prefetch**: when `retrieve_messages` pagination touches the indexed boundary, the channel is auto-enqueued for deep backfill (`runtime.edgePrefetch`)
+- **Agent self-service indexing**: the `index_channel` tool lets the model refresh (newest sweep) or deep-backfill (queued) channels on its own judgment, guided by the `Index Freshness` block in the system prompt. Deep backfills are agent-gated only — boot never walks full history
+- Backfill and repair flows remain exposed through `src/discord/commands/system/index.command.ts` (manual override only)
 - Operational storage is local and disposable
 - Bot settings are persisted in `storage/settings.json`
 

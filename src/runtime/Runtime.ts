@@ -46,7 +46,9 @@ import {
 } from "@/runtime/corpusTaskState";
 import { compactMessages, shouldCompact } from "@/runtime/compaction";
 import { compactInput, shouldCompactInput } from "@/runtime/inputCompaction";
+import { buildMemoryDigest } from "@/runtime/memoryDigest";
 import { countTokens } from "@/shared/tokenizer";
+import { ToolExecutor } from "@/runtime/ToolExecutor";
 import type {
     DiscordToolResult,
     GroundedAnswerMode,
@@ -98,7 +100,9 @@ function looksLikeRawToolMarkup(text: string | null | undefined): boolean {
     if (!text) return false;
     return /<invoke\s+name="[^"]+"\s*>/i.test(text)
         || /<[a-z0-9_-]+:tool_call>/i.test(text)
-        || /<\/[a-z0-9_-]+:tool_call>/i.test(text);
+        || /<\/[a-z0-9_-]+:tool_call>/i.test(text)
+        || /<\/?tool_call\b/i.test(text)
+        || /<arg_key>\s*[a-z_]+\s*<\/arg_key>/i.test(text);
 }
 
 function argsSignature(tool: string, args: ToolArguments) {
@@ -133,6 +137,14 @@ function buildDeniedActionMessage(decidedBy: string, correction?: string): strin
 
 function buildStoppedActionMessage(decidedBy: string): string {
     return `Execution stopped by ${decidedBy}.`;
+}
+
+function buildArtifactRejectionMessage(lastError: string): string {
+    return (
+        `Your artifact card was NOT sent yet. artifact_send failed with: ${lastError} ` +
+        `Fix exactly that problem and call artifact_send again with corrected arguments. ` +
+        `Do not call finish and do not answer in plain text until the card is successfully sent.`
+    );
 }
 
 function createBlockedToolRecord(
@@ -233,6 +245,7 @@ function sanitizeAnswer(answer: string | null | undefined): string {
 }
 
 function extractRequestedCorpusSize(question: string): number | null {
+    if (!question) return null;
     const normalized = question.toLowerCase();
     const match = normalized.match(
         /\b(?:últimas|ultimas|last|based on|baseado em|com base em)?\s*(\d{1,3}(?:[.,]\d{3})+|\d+)\s*(k)?\s*(?:mensagens|messages)\b/i,
@@ -293,7 +306,6 @@ async function synthesizeAnswer(
 
 interface RuntimeConstraints {
     maxToolCalls: number;
-    maxLatencyBudgetMs: number;
     maxRepeatedCallSignature: number;
     maxPriorTurns: number;
     maxChannelMessages: number;
@@ -358,7 +370,6 @@ export class Runtime {
 
         const constraints: RuntimeConstraints = {
             maxToolCalls: config.runtime.maxToolCalls,
-            maxLatencyBudgetMs: config.runtime.maxLatencyBudgetMs,
             maxRepeatedCallSignature: config.runtime.maxRepeatedCallSignature,
             maxPriorTurns: config.runtime.maxPriorTurns,
             maxChannelMessages: config.runtime.maxChannelMessages,
@@ -379,10 +390,17 @@ export class Runtime {
         const doomLoopDetector = new DoomLoopDetector();
         const progressTracker = new ProgressTracker();
         let corpusTask: CorpusTaskState | undefined;
+        // Artifact send tracking: once the model attempts artifact_send and it
+        // fails validation, the turn cannot end until the card is fixed and
+        // sent (or the correction budget is exhausted). Mirrors the corpus
+        // guard but is attempt-driven, not keyword-driven.
+        let artifactLastError: string | null = null;
+        let artifactSendAttempts = 0;
+        let artifactCorrectionsUsed = 0;
 
         // Long-task caps come from configurable settings (runtime.longTask.*).
+        // Turns are bounded by tool-call counts, never by wall-clock time.
         const LONG_TASK_MAX_CALLS = config.runtime.longTask.maxToolCalls;
-        const LONG_TASK_MAX_MS = config.runtime.longTask.maxLatencyBudgetMs;
         const LONG_TASK_EVIDENCE_FLOOR = config.runtime.longTask.evidenceSliceFloor;
 
         const trace = (label: string, detail: string) => {
@@ -453,6 +471,42 @@ export class Runtime {
 
             trace("load_memory", `Loaded ${recentTurns.length} prior turn(s), ${channelContext.length} channel msg(s), reused ${evidence.length} evidence item(s).`);
 
+            // ── 2b. Auto-resume: if the previous turn in this thread failed
+            // (credit exhaustion, truncation, or empty fallback), surface its
+            // notes and plan so the next turn continues instead of resetting.
+            let resumeNotes: Array<{ seq: number; label: string | null; body: string }> = [];
+            let resumePlan: string | null = null;
+            if (recentTurns.length > 0) {
+                const last = recentTurns[recentTurns.length - 1];
+                const lastFailed =
+                    last.confidence === "insufficient" ||
+                    last.stopReason === "budget_exhausted" ||
+                    last.stopReason === "no_useful_next_step" ||
+                    last.answer.includes("Não consegui gerar") ||
+                    last.answer.includes("Não consegui processar") ||
+                    last.answer.includes("would exceed your available credits");
+                if (lastFailed) {
+                    try {
+                        const notes = await DiscordMemoryService.listRequestNotes({
+                            requestId: last.requestId,
+                            threadId,
+                            includeThreadHistory: true,
+                            kind: "note",
+                        });
+                        if (notes.length > 0) {
+                            resumeNotes = notes.slice(-20).map((note) => ({ seq: note.seq, label: note.label, body: note.body }));
+                            resumePlan = await DiscordMemoryService.getRequestPlan(last.requestId);
+                            trace(
+                                "resume_notes",
+                                `Previous turn ${last.requestId} failed (${last.stopReason}/${last.confidence}) with ${notes.length} notes; auto-resuming with ${resumeNotes.length} notes${resumePlan ? " + plan" : ""}.`,
+                            );
+                        }
+                    } catch {
+                        // Non-fatal: resume is best-effort.
+                    }
+                }
+            }
+
             // ── 3. Build system prompt ──
             const promptEvidence = evidence.filter(isReusablePromptEvidence);
             const priorEvidenceSummary = promptEvidence.length
@@ -507,6 +561,7 @@ export class Runtime {
                     personality_override: personalityOverride,
                     deferred_tools: formatDeferredInventory(),
                     index_freshness: await buildIndexFreshness(channelId),
+                    memory_digest: await buildMemoryDigest(guildId, actorId),
                 });
 
             let systemPrompt = await renderSystemPrompt(contextFields);
@@ -552,21 +607,79 @@ export class Runtime {
             }
 
             // ── 4. Agent loop ──
+            const resumeBlock = (() => {
+                if (resumeNotes.length === 0 && !resumePlan) return null;
+                const lines: string[] = [
+                    "⚠️ Previous attempt in this thread was interrupted before finishing (credit limit or empty output). You have collected notes already — resume from them instead of re-collecting everything if the user's new message is a continuation.",
+                ];
+                if (resumePlan) lines.push(`Previous plan:\n${resumePlan}`);
+                if (resumeNotes.length > 0) {
+                    const notesText = resumeNotes.map((note) => `- [${note.label ?? "note"} #${note.seq}] ${note.body.slice(0, 400)}`).join("\n");
+                    lines.push(`Previous notes (${resumeNotes.length}, most recent 20):\n${notesText}`);
+                    lines.push("If the user says 'continua' or repeats the same request, synthesize from these notes + any new evidence. Call note_list with include_thread_history to see the full history if needed.");
+                }
+                return lines.join("\n\n");
+            })();
+
             const messages: ToolChatMessage[] = [
                 { role: "system", content: systemPrompt },
+                ...(resumeBlock ? [{ role: "system" as const, content: resumeBlock }] : []),
                 { role: "user", content: input.question },
             ];
 
-            const startedAt = Date.now();
-            let pausedLatencyMs = 0;
             const repeated = new Map<string, number>();
             let answer = "";
             let totalToolCalls = 0;
             let cumulativePromptTokens = 0;
             let cumulativeCompletionTokens = 0;
             let malformedToolCallCorrections = 0;
+            let blankResponseCorrections = 0;
             // Dynamic tool discovery — deferred tools are loaded via tool_search (opencode/codex pattern).
             const discoveredTools = new Set<string>();
+
+            // Raised once the turn is recognised as long-running: either the
+            // model declared it via start_long_task, or the runtime inferred it
+            // from a large explicit corpus or repeated pagination. Keep this as
+            // a plain function so both paths share one escalation point.
+            const raiseLongTaskBudget = async (reason: string, source: "model" | "auto") => {
+                if (longTaskGrantedThisTurn) {
+                    trace("long_task", "Idempotent — budget already raised this turn.");
+                    return { raised: false, maxToolCalls: constraints.maxToolCalls };
+                }
+                // Estimates are ignored — the model cannot reliably predict work size.
+                // We always raise budgets to the operator-configured long-task caps.
+                const newMaxCalls = Math.max(constraints.maxToolCalls, LONG_TASK_MAX_CALLS);
+                constraints.maxToolCalls = newMaxCalls;
+                // Raise per-turn evidence slice so large retrievals aren't dropped.
+                constraints.maxEvidenceSlice = Math.max(constraints.maxEvidenceSlice, LONG_TASK_EVIDENCE_FLOOR);
+                longTaskGrantedThisTurn = true;
+                if (input.progressNotifier) {
+                    await input.progressNotifier("Extending runtime budget for a long task…").catch(() => {});
+                }
+                trace("long_task", `Budget raised (${source}): calls=${newMaxCalls}. reason=${reason}`);
+                return { raised: true, maxToolCalls: newMaxCalls };
+            };
+
+            const maybeAutoEscalateLongTask = async (): Promise<void> => {
+                if (longTaskGrantedThisTurn) return;
+                // Explicit user corpus (e.g. "based on 2000 messages") is the
+                // clearest implicit signal: the turn needs long-task budgets
+                // even if the model never declares it. Only escalate while
+                // work remains: an exhausted corpus must stay a normal turn so
+                // the stall guard does not reject its honest finish.
+                if (typeof requestedCorpusSize === "number" && requestedCorpusSize > constraints.maxToolRunsContext * 50) {
+                    if (!corpusTask || corpusIsIncomplete(corpusTask)) {
+                        await raiseLongTaskBudget(`explicit corpus of ${requestedCorpusSize} messages`, "auto");
+                    }
+                    return;
+                }
+                // Repeated pagination without progress is the behavioural
+                // signal: several retrieve_messages pages deep, corpus guard
+                // active, still incomplete.
+                if (corpusTask && corpusIsIncomplete(corpusTask) && (corpusTask.guardViolations > 0 || totalToolCalls >= 6)) {
+                    await raiseLongTaskBudget(`corpus ${corpusTask.collected}/${corpusTask.requested} still incomplete`, "auto");
+                }
+            };
 
             /**
              * Runtime-driven forced continuation: when the unified corpus guard
@@ -578,61 +691,43 @@ export class Runtime {
             const forceCorpusContinuation = async (): Promise<boolean> => {
                 if (!corpusShouldForceContinuation(corpusTask)) return false;
                 // Local budget gate — never spend a forced call past the
-                // tool-count or latency cap. If we're out of budget, fall
-                // through to the deterministic incomplete-progress fallback.
+                // tool-count cap. If we're out of budget, fall through to the
+                // deterministic incomplete-progress fallback.
                 if (totalToolCalls >= constraints.maxToolCalls) {
                     trace("corpus_force_continuation_skipped", `tool budget exhausted (${totalToolCalls}/${constraints.maxToolCalls}).`);
                     return false;
                 }
-                const elapsedMs = getActiveElapsedMs();
-                if (elapsedMs >= constraints.maxLatencyBudgetMs) {
-                    trace("corpus_force_continuation_skipped", `latency budget exhausted (${elapsedMs}ms/${constraints.maxLatencyBudgetMs}ms).`);
-                    return false;
-                }
-                const capability = CapabilityRegistry.get(T.retrieve_messages);
-                if (!capability) return false;
                 const forcedArgs = buildForcedRetrieveArgs(corpusTask);
                 const syntheticCallId = `forced_${randomUUID()}`;
                 trace(
                     "corpus_force_continuation",
                     `Runtime forcing retrieve_messages: collected=${corpusTask.collected}/${corpusTask.requested}.`,
                 );
-                const toolStartedAt = Date.now();
-                try {
-                    const output = await capability.run(
-                        {
-                            guild: input.guild || null,
-                            question: input.question,
-                            currentChannelId: channelId,
-                            requestId,
-                            threadId,
-                            onProgress: async (tn, summary) => {
-                                trace("tool_progress", `${tn}: ${summary}`);
-                                await input.debugSession?.setToolProgress?.(tn, summary);
-                            },
-                        },
-                        forcedArgs,
-                    );
-                    const toolDurationMs = Date.now() - toolStartedAt;
-                    const evidenceItems = extractEvidence(output);
-                    const learned = evidenceItems.map((i) => i.content).join(" | ") || output.summary;
-                    const retrieval = getRetrievalSummary(output);
-                    const record: ToolInvocationRecord = {
-                        tool: T.retrieve_messages,
-                        arguments: forcedArgs,
-                        summary: output.summary,
-                        learned,
-                        confidenceImproved: evidenceItems.some((i) => i.strength !== "weak"),
-                        output,
-                        durationMs: toolDurationMs,
-                        retrievalSummary: retrieval,
-                    };
-                    totalToolCalls += 1;
-                    toolHistory.push(record);
-                    evidence.push(...evidenceItems);
-                    for (const item of evidenceItems) evidenceRolesThisTurn.add(item.evidenceRole);
+                const execution = await ToolExecutor.execute(T.retrieve_messages, forcedArgs, {
+                    guild: input.guild || null,
+                    question: input.question,
+                    currentChannelId: channelId,
+                    requestId,
+                    threadId,
+                    actorId,
+                    onProgress: async (tn, summary) => {
+                        trace("tool_progress", `${tn}: ${summary}`);
+                        await input.debugSession?.setToolProgress?.(tn, summary);
+                    },
+                });
+                const { record, retrievalSummary: retrieval } = execution;
+                const output = record.output;
+                totalToolCalls += 1;
+                toolHistory.push(record);
+                evidence.push(...execution.evidence);
+                for (const item of execution.evidence) evidenceRolesThisTurn.add(item.evidenceRole);
 
-                    trace("tool_result", `${T.retrieve_messages} (forced): ${output.summary}`);
+                if (record.blocked) {
+                    trace("corpus_force_continuation_error", record.learned);
+                    return false;
+                }
+
+                trace("tool_result", `${T.retrieve_messages} (forced): ${output.summary}`);
 
                     // Persist the forced tool run just like a normal one so
                     // the operational store, traces, and debug surfaces stay
@@ -644,12 +739,12 @@ export class Runtime {
                         actorId,
                         input.question,
                         T.retrieve_messages,
-                        JSON.stringify(forcedArgs),
+                        JSON.stringify(record.arguments),
                         output.summary,
-                        learned,
+                        record.learned,
                         JSON.stringify(output),
                         record.confidenceImproved,
-                        toolDurationMs,
+                        record.durationMs,
                     );
                     await input.debugSession?.setToolResult(T.retrieve_messages, output.summary);
                     if (retrieval) {
@@ -683,35 +778,19 @@ export class Runtime {
                             },
                         }],
                     });
-                    const resultPayload = output.errorMessage
-                        ? JSON.stringify({ error: output.errorMessage })
-                        : JSON.stringify({ summary: output.summary, data: output.data });
                     messages.push({
                         role: "tool",
                         tool_call_id: syntheticCallId,
-                        content: truncateToolResult(resultPayload),
+                        content: truncateToolResult(execution.resultPayload),
                     });
                     return true;
-                } catch (err) {
-                    const message = (err as { message?: unknown })?.message;
-                    trace("corpus_force_continuation_error", typeof message === "string" ? message : "unknown");
-                    return false;
-                }
             };
-
-            const getActiveElapsedMs = () =>
-                Math.max(0, Date.now() - startedAt - pausedLatencyMs);
 
             await input.debugSession?.setClassification("discord_grounded");
 
+            // No wall-clock cap on turns: the loop is bounded by the tool-call
+            // budget, per-request HTTP timeouts, and the guardrails below.
             for (let iteration = 0; iteration < constraints.maxToolCalls + 1; iteration += 1) {
-                // Latency guard
-                if (getActiveElapsedMs() >= constraints.maxLatencyBudgetMs) {
-                    stopReason = "budget_exhausted";
-                    trace("stop", "Reached the latency budget.");
-                    break;
-                }
-
                 await input.debugSession?.setPlanning(iteration + 1);
 
                 // ── Plan/notes header: inject transient system message so plan
@@ -800,6 +879,37 @@ export class Runtime {
                         }
                         continue;
                     }
+                    // Blank or truncated completion: no tool calls and no usable
+                    // text. Retry with a nudge instead of ending the turn in
+                    // silence. A truncated response needs a different nudge:
+                    // retrying the same oversized step will truncate again.
+                    if (!result.content || !result.content.trim()) {
+                        const truncated = result.finishReason === "length";
+                        if (blankResponseCorrections < 2) {
+                            blankResponseCorrections += 1;
+                            if (truncated) {
+                                trace("truncated_response", `Model hit the output token limit and was cut off (retry ${blankResponseCorrections}/2). Nudging to write a smaller next step.`);
+                                messages.push({
+                                    role: "system",
+                                    content:
+                                        "Your previous response hit the output token limit and was CUT OFF mid-generation. Your last step was TOO LARGE. Write much less in one go: trim section bodies, shorten handlers, or build the card in stages (send a lean artifact first, then extend it with artifact_edit calls). Then finish.",
+                                });
+                            } else {
+                                trace("blank_response", `Model returned an empty completion (retry ${blankResponseCorrections}/2).`);
+                                messages.push({
+                                    role: "system",
+                                    content:
+                                        "Your previous response was empty. Respond now: call finish with your answer, or call a tool if you need more information first.",
+                                });
+                            }
+                            continue;
+                        }
+                        stopReason = "no_useful_next_step";
+                        trace("stop", truncated
+                            ? "Model hit the output token limit on every attempt."
+                            : "Model returned empty completions repeatedly.");
+                        break;
+                    }
                     if (result.content && corpusShouldRejectFinish(corpusTask)) {
                         recordCorpusViolation(corpusTask);
                         trace(
@@ -815,6 +925,22 @@ export class Runtime {
                             content: buildRejectionMessage(corpusTask),
                         });
                         await forceCorpusContinuation();
+                        continue;
+                    }
+                    if (result.content && artifactLastError !== null && artifactCorrectionsUsed < 2) {
+                        artifactCorrectionsUsed += 1;
+                        trace(
+                            "artifact_guard",
+                            `Rejected raw-text answer while an artifact is pending (${artifactSendAttempts} failed send(s), correction ${artifactCorrectionsUsed}/2).`,
+                        );
+                        messages.push({
+                            role: "assistant",
+                            content: result.content,
+                        });
+                        messages.push({
+                            role: "system",
+                            content: buildArtifactRejectionMessage(artifactLastError),
+                        });
                         continue;
                     }
                     if (result.content) {
@@ -843,108 +969,85 @@ export class Runtime {
                     toolName: DiscordToolName,
                     parsedArgs: ToolArguments,
                 ) => {
-                    const capability = CapabilityRegistry.get(toolName);
-
                     await input.debugSession?.setToolRunning(toolName, []);
-                    // Notify progress if available
                     if (input.progressNotifier) {
                         await input.progressNotifier(`Running ${toolName}…`).catch(() => {});
                     }
-                    const toolStartedAt = Date.now();
-                    try {
-                        const output = await capability.run(
-                            {
-                                guild: input.guild || null,
-                                question: input.question,
-                                currentChannelId: channelId,
-                                requestId,
-                                threadId,
-                                onProgress: async (tn, summary) => {
-                                    trace("tool_progress", `${tn}: ${summary}`);
-                                    await input.debugSession?.setToolProgress?.(tn, summary);
-                                },
-                            },
+                    const execution = await ToolExecutor.execute(toolName, parsedArgs, {
+                        guild: input.guild || null,
+                        question: input.question,
+                        currentChannelId: channelId,
+                        requestId,
+                        threadId,
+                        actorId,
+                        onProgress: async (tn, summary) => {
+                            trace("tool_progress", `${tn}: ${summary}`);
+                            await input.debugSession?.setToolProgress?.(tn, summary);
+                        },
+                    });
+                    totalToolCalls += 1;
+                    toolHistory.push(execution.record);
+                    evidence.push(...execution.evidence);
+                    for (const item of execution.evidence) {
+                        evidenceRolesThisTurn.add(item.evidenceRole);
+                    }
+
+                    const output = execution.record.output;
+                    trace(execution.record.blocked ? "tool_error" : "tool_result", execution.record.blocked
+                        ? execution.record.learned
+                        : `${toolName}: ${output.summary}`);
+                    messages.push({
+                        role: "tool",
+                        tool_call_id: tc.id,
+                        content: truncateToolResult(execution.resultPayload),
+                    });
+
+                    await DiscordMemoryService.recordToolRun(
+                        requestId,
+                        guildId,
+                        channelId,
+                        actorId,
+                        input.question,
+                        toolName,
+                        JSON.stringify(execution.record.arguments),
+                        output.summary,
+                        execution.record.learned,
+                        JSON.stringify(output),
+                        execution.record.confidenceImproved,
+                        execution.record.durationMs,
+                    );
+                    await input.debugSession?.setToolResult(toolName, output.summary);
+
+                    if (toolName === T.tool_search && output.data && typeof output.data === "object") {
+                        const discovered = (output.data as { results?: { name: string }[] }).results ?? [];
+                        for (const item of discovered) {
+                            if (item?.name) discoveredTools.add(item.name);
+                        }
+                        if (discovered.length) {
+                            trace("tool_discovery", `Discovered: ${discovered.map((item) => item.name).join(", ")}`);
+                        }
+                    }
+
+                    const retrieval = execution.retrievalSummary;
+                    if (toolName === T.retrieve_messages && retrieval) {
+                        const prevViolations = corpusTask?.guardViolations ?? 0;
+                        corpusTask = updateCorpusTask(
+                            corpusTask,
+                            retrieval,
                             parsedArgs,
+                            settings.runtime.retrievalHistoryLimit,
+                            requestedCorpusSize,
                         );
-                        const toolDurationMs = Date.now() - toolStartedAt;
-                        totalToolCalls += 1;
-
-                        const evidenceItems = extractEvidence(output);
-                        const learned = evidenceItems.map((item) => item.content).join(" | ") || output.summary;
-                        const retrieval = getRetrievalSummary(output);
-
-                        const record: ToolInvocationRecord = {
-                            tool: toolName,
-                            arguments: parsedArgs,
-                            summary: output.summary,
-                            learned,
-                            confidenceImproved: evidenceItems.some((item) => item.strength !== "weak"),
-                            output,
-                            durationMs: toolDurationMs,
-                            retrievalSummary: retrieval,
-                        };
-                        toolHistory.push(record);
-                        evidence.push(...evidenceItems);
-                        for (const item of evidenceItems) {
-                            evidenceRolesThisTurn.add(item.evidenceRole);
-                        }
-
-                        trace("tool_result", `${toolName}: ${output.summary}`);
-
-                        const resultPayload = output.errorMessage
-                            ? JSON.stringify({ error: output.errorMessage })
-                            : JSON.stringify({ summary: output.summary, data: output.data });
-                        messages.push({
-                            role: "tool",
-                            tool_call_id: tc.id,
-                            content: truncateToolResult(resultPayload),
-                        });
-
-                        await DiscordMemoryService.recordToolRun(
-                            requestId,
-                            guildId,
-                            channelId,
-                            actorId,
-                            input.question,
-                            toolName,
-                            JSON.stringify(parsedArgs),
-                            output.summary,
-                            learned,
-                            JSON.stringify(output),
-                            record.confidenceImproved,
-                            toolDurationMs,
-                        );
-
-                        await input.debugSession?.setToolResult(toolName, output.summary);
-                        // Dynamic discovery: if tool_search returned results, expose them next iteration.
-                        if (toolName === T.tool_search && output.data && typeof output.data === "object") {
-                            try {
-                                const d = output.data as { results?: { name: string }[] };
-                                for (const r of d.results ?? []) {
-                                    if (r?.name) discoveredTools.add(r.name);
-                                }
-                                if (d.results?.length) trace("tool_discovery", `Discovered: ${d.results.map((r) => r.name).join(", ")}`);
-                            } catch { /* best-effort */ }
-                        }
-                        if (toolName === T.retrieve_messages && retrieval) {
-                            const prevViolations = corpusTask?.guardViolations ?? 0;
-                            corpusTask = updateCorpusTask(
-                                corpusTask,
-                                retrieval,
-                                parsedArgs,
-                                settings.runtime.retrievalHistoryLimit,
-                                requestedCorpusSize,
+                        if (corpusTask) {
+                            corpusTask.guardViolations = prevViolations;
+                            trace(
+                                "corpus_task",
+                                `collected=${corpusTask.collected}/${corpusTask.requested} continuationAvailable=${corpusTask.continuationAvailable} historyExhausted=${corpusTask.historyExhausted}`,
                             );
-                            if (corpusTask) {
-                                // Preserve the unified violation counter across updates.
-                                corpusTask.guardViolations = prevViolations;
-                                trace(
-                                    "corpus_task",
-                                    `collected=${corpusTask.collected}/${corpusTask.requested} continuationAvailable=${corpusTask.continuationAvailable} historyExhausted=${corpusTask.historyExhausted}`,
-                                );
-                            }
+                            await maybeAutoEscalateLongTask();
                         }
-                        await input.debugSession?.setRetrievalSummary?.(retrieval || {
+                    }
+                    await input.debugSession?.setRetrievalSummary?.(retrieval || {
                             mode: "history",
                             cacheHit: false,
                             liveEscalated: false,
@@ -969,55 +1072,7 @@ export class Runtime {
                             beforeTimestamp: null,
                             afterTimestamp: null,
                             activeChannelIds: [],
-                        });
-                    } catch (error) {
-                        const toolDurationMs = Date.now() - toolStartedAt;
-                        totalToolCalls += 1;
-
-                        const err = error as {
-                            message?: unknown;
-                            code?: unknown;
-                            status?: unknown;
-                            rawError?: unknown;
-                        };
-                        const messageText = typeof err.message === "string"
-                            ? err.message
-                            : "Unknown tool error.";
-                        const codeText = err.code == null ? "" : ` (code: ${String(err.code)})`;
-                        const statusText = err.status == null ? "" : ` (status: ${String(err.status)})`;
-                        const rawText = err.rawError == null
-                            ? ""
-                            : ` Raw: ${JSON.stringify(err.rawError)}`;
-                        const toolErrorText = `Tool ${toolName} failed: ${messageText}${codeText}${statusText}.${rawText}`;
-
-                        trace("tool_error", toolErrorText);
-
-                        const failedOutput = {
-                            tool: toolName,
-                            summary: `Failed to execute ${toolName}.`,
-                            data: null,
-                            errorMessage: toolErrorText,
-                        };
-
-                        messages.push({
-                            role: "tool",
-                            tool_call_id: tc.id,
-                            content: truncateToolResult(JSON.stringify({ error: toolErrorText })),
-                        });
-
-                        toolHistory.push({
-                            tool: toolName,
-                            arguments: parsedArgs,
-                            summary: failedOutput.summary,
-                            learned: toolErrorText,
-                            confidenceImproved: false,
-                            output: failedOutput,
-                            durationMs: toolDurationMs,
-                            blocked: true,
-                        });
-
-                        await input.debugSession?.setToolResult(toolName, failedOutput.summary);
-                    }
+                    });
                 };
 
                 const getProtectedTargetChannelId = (
@@ -1106,38 +1161,29 @@ export class Runtime {
 
                     // ── Handle "start_long_task" tool (intercepted — never dispatched) ──
                     if (toolName === "start_long_task") {
-                        if (longTaskGrantedThisTurn) {
-                            messages.push({
-                                role: "tool",
-                                tool_call_id: tc.id,
-                                content: JSON.stringify({ ok: true, note: "Budget already raised this turn." }),
-                            });
-                            trace("long_task", "Idempotent — budget already raised this turn.");
-                        } else {
-                            // Estimates are ignored — the model cannot reliably predict work size.
-                            // We always raise budgets to the operator-configured long-task caps.
-                            const newMaxCalls = Math.max(constraints.maxToolCalls, LONG_TASK_MAX_CALLS);
-                            const newMaxMs = Math.max(constraints.maxLatencyBudgetMs, LONG_TASK_MAX_MS);
-                            constraints.maxToolCalls = newMaxCalls;
-                            constraints.maxLatencyBudgetMs = newMaxMs;
-                            // Raise per-turn evidence slice so large retrievals aren't dropped.
-                            constraints.maxEvidenceSlice = Math.max(constraints.maxEvidenceSlice, LONG_TASK_EVIDENCE_FLOOR);
-                            longTaskGrantedThisTurn = true;
-                            if (input.progressNotifier) {
-                                await input.progressNotifier("Extending runtime budget for a long task…").catch(() => {});
-                            }
-                            trace("long_task", `Budget raised: calls=${newMaxCalls}, latency=${newMaxMs}ms. reason=${String(parsedArgs.reason ?? "none")}`);
-                            messages.push({
-                                role: "tool",
-                                tool_call_id: tc.id,
-                                content: JSON.stringify({ ok: true, maxToolCalls: newMaxCalls, maxLatencyBudgetMs: newMaxMs }),
-                            });
-                        }
+                        const escalation = await raiseLongTaskBudget(String(parsedArgs.reason ?? "none"), "model");
+                        messages.push({
+                            role: "tool",
+                            tool_call_id: tc.id,
+                            content: JSON.stringify(escalation.raised
+                                ? { ok: true, maxToolCalls: escalation.maxToolCalls }
+                                : { ok: true, note: "Budget already raised this turn." }),
+                        });
                         continue;
                     }
 
                     // ── Handle "finish" tool ──
                     if (toolName === "finish") {
+                        if (result.toolCalls.length > 1) {
+                            const correction = "Do not call finish in the same response as other tools. Read their results, then finish in the next step.";
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: JSON.stringify({ error: correction }),
+                            });
+                            trace("finish_deferred", "Rejected finish mixed with executable tool calls.");
+                            continue;
+                        }
                         answer = (parsedArgs.answer as string) || result.content || "";
 
                         // ── Corpus task guard: reject finish while under explicit target ──
@@ -1157,6 +1203,23 @@ export class Runtime {
                             // After the threshold, the runtime stops asking the model
                             // nicely and executes retrieve_messages itself.
                             await forceCorpusContinuation();
+                            continue;
+                        }
+
+                        // ── Artifact guard: reject finish while a card is attempted but unsent ──
+                        if (artifactLastError !== null && artifactCorrectionsUsed < 2) {
+                            artifactCorrectionsUsed += 1;
+                            const rejection = buildArtifactRejectionMessage(artifactLastError);
+                            trace(
+                                "artifact_guard",
+                                `Rejected finish: ${artifactSendAttempts} failed artifact_send attempt(s) (correction ${artifactCorrectionsUsed}/2).`,
+                            );
+                            messages.push({
+                                role: "tool",
+                                tool_call_id: tc.id,
+                                content: JSON.stringify({ error: rejection }),
+                            });
+                            answer = "";
                             continue;
                         }
 
@@ -1303,17 +1366,8 @@ export class Runtime {
                         // Stop typing while waiting for human approval
                         await input.activityIndicator?.stop();
 
-                        const approvalWaitStartedAt = Date.now();
                         const approvalResult = await input.approvalGate(approvalRequest);
-                        const approvalWaitMs = Math.max(
-                            0,
-                            Date.now() - approvalWaitStartedAt,
-                        );
-                        pausedLatencyMs += approvalWaitMs;
-                        trace(
-                            "approval_wait",
-                            `${toolName}: waited ${approvalWaitMs}ms for admin approval (excluded from latency budget).`,
-                        );
+                        trace("approval_wait", `${toolName}: resolved admin approval.`);
                         if (approvalResult.haltExecution) {
                             const stopMsg = buildStoppedActionMessage(approvalResult.decidedBy);
                             messages.push({
@@ -1389,6 +1443,19 @@ export class Runtime {
                         await executeToolCall(tc, toolName, parsedArgs);
                         const producedEvidence = evidence.length > evidenceBefore;
 
+                        // ── Artifact send tracking: a failed artifact_send locks the turn ──
+                        if (toolName === T.artifact_send) {
+                            const artifactRecord = toolHistory[toolHistory.length - 1];
+                            if (artifactRecord && (artifactRecord.blocked || artifactRecord.output?.errorMessage)) {
+                                artifactLastError = artifactRecord.output?.errorMessage || artifactRecord.learned || "unknown error";
+                                artifactSendAttempts += 1;
+                                trace("artifact_pending", `artifact_send failed: ${artifactLastError}`);
+                            } else if (artifactLastError !== null) {
+                                artifactLastError = null;
+                                trace("artifact_resolved", "artifact_send succeeded; the card is live.");
+                            }
+                        }
+
                         // Inject doom-loop nudge after execution.
                         if (doomResult.action === "nudge") {
                             messages.push({
@@ -1428,11 +1495,8 @@ export class Runtime {
                         await input.debugSession?.setToolRunning(item.toolName, ["⏳ Awaiting admin approval"]);
                         await input.activityIndicator?.stop();
 
-                        const singleDestructiveWaitStartedAt = Date.now();
                         const approvalResult = await input.approvalGate(approvalRequest);
-                        const singleDestructiveWaitMs = Math.max(0, Date.now() - singleDestructiveWaitStartedAt);
-                        pausedLatencyMs += singleDestructiveWaitMs;
-                        trace("approval_wait", `${item.toolName}: waited ${singleDestructiveWaitMs}ms for admin approval (excluded from latency budget).`);
+                        trace("approval_wait", `${item.toolName}: resolved admin approval.`);
 
                         if (approvalResult.haltExecution) {
                             const stopMsg = buildStoppedActionMessage(approvalResult.decidedBy);
@@ -1517,11 +1581,8 @@ export class Runtime {
                         await input.debugSession?.setToolRunning("batch_approval", [`⏳ Awaiting batch approval (${destructiveBatch.length} actions)`]);
                         await input.activityIndicator?.stop();
 
-                        const batchWaitStartedAt = Date.now();
                         const batchResult = await input.batchApprovalGate(batchRequest);
-                        const batchWaitMs = Math.max(0, Date.now() - batchWaitStartedAt);
-                        pausedLatencyMs += batchWaitMs;
-                        trace("batch_approval_wait", `Waited ${batchWaitMs}ms for batch approval (excluded from latency budget).`);
+                        trace("batch_approval_wait", "Resolved batch approval.");
 
                         if (batchResult.haltExecution) {
                             for (const item of destructiveBatch) {
@@ -1651,11 +1712,30 @@ export class Runtime {
                     answer = toolHistory.length > 0
                         ? await synthesizeAnswer(systemPrompt, input.question, toolHistory, evidence, traceEvents)
                         : "";
+                    // Synthesis itself can fail (same provider error that
+                    // broke the loop). Another 401/429/5xx here means another
+                    // wall-clock wait and zero new information, so bail out
+                    // immediately to the deterministic fallback instead.
+                    if (!answer) {
+                        trace("synthesis_abandoned", "Synthesis call failed; skipping further fallbacks.");
+                    }
                 }
             } else {
                 answer = sanitizeAnswer(answer);
                 if (!stopReason) stopReason = "direct_answer";
                 confidence = toolHistory.length > 0 ? "confident" : "best_effort";
+            }
+
+            // ── 5b. Empty-answer guarantee ──
+            // Every fallback above can itself fail (same provider error that
+            // broke the loop), and an empty answer means the Discord paths
+            // send nothing at all, which reads as being ignored. Never
+            // return silence: always leave this function with something.
+            if (!answer) {
+                answer = "Não consegui gerar uma resposta desta vez — o modelo falhou a meio da tarefa. Tenta de novo; se voltar a acontecer, o problema é meu, não teu.";
+                if (!stopReason) stopReason = "insufficient_evidence";
+                confidence = "insufficient";
+                trace("empty_answer_fallback", "All model-driven synthesis failed; sent the deterministic fallback message.");
             }
 
             const runtimeMode = toolHistory.length > 0 ? "research" : "conversation";
@@ -1727,7 +1807,7 @@ export class Runtime {
             await input.debugSession?.setGenerating();
             await input.debugSession?.finishSuccess(stopReason || "completed");
 
-            return {
+            const finalAnswer: RuntimeAnswer = {
                 requestId,
                 threadId,
                 answer,
@@ -1736,6 +1816,38 @@ export class Runtime {
                 toolRuns: toolHistory.filter((item) => !item.blocked).map((item) => item.output),
                 confidence,
             };
+
+            // ── 8. Auto-continue: when any goal in this thread is still open
+            // (or an implicit corpus task ended while incomplete), chain the
+            // next turn automatically instead of waiting for the user to say
+            // "continua". Driven entirely by persisted tool-call state —
+            // open goal rows — never by answer-text matching. Legs never
+            // re-chain (trigger is auto_continue) so depth is exactly 1.
+            if (input.autoContinue !== false && input.trigger !== "auto_continue") {
+                try {
+                    const openGoals = await DiscordMemoryService.listRequestGoals({
+                        requestId,
+                        threadId,
+                        includeThreadHistory: true,
+                    });
+                    const unfinished = openGoals.filter(
+                        (goal) => goal.status === "open" || goal.status === "in_progress",
+                    );
+                    // Implicit fallback: a corpus task the model never framed
+                    // as a goal still deserves continuation.
+                    const shouldChain = unfinished.length > 0 || corpusIsIncomplete(corpusTask);
+                    if (shouldChain) {
+                        const { runAutoContinue } = await import("@/runtime/AutoContinue");
+                        const chained = await runAutoContinue(finalAnswer, { ...input, trigger: "auto_continue" }, corpusTask ?? null);
+                        trace("auto_continue", `Chained ${chained.legs} continuation leg(s), stopped: ${chained.stoppedBecause}.`);
+                        return chained.answer;
+                    }
+                } catch (error) {
+                    trace("auto_continue_error", `Auto-continue failed: ${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+
+            return finalAnswer;
         } catch (error) {
             const errorDetail = error instanceof Error
                 ? { message: error.message, stack: error.stack, ...(error as any) }
@@ -1766,13 +1878,18 @@ export class Runtime {
             await input.debugSession?.finishError(error);
             // Surface a one-line failure to the user — an empty answer reads as
             // "Sophia ignored me", which is worse than admitting the fault.
-            const userHint = error instanceof Error && error.message
-                ? error.message.slice(0, 120)
-                : "erro interno";
+            // Provider rate limits get a plain-language hint instead of raw
+            // HTTP noise like "429 Provider returned error".
+            const status = (error as { status?: unknown } | null)?.status;
+            const userHint = status === 429
+                ? "o modelo está sobrecarregado neste momento (rate limit), tenta daqui a pouco"
+                : error instanceof Error && error.message
+                    ? error.message.slice(0, 120)
+                    : "erro interno";
             return {
                 requestId,
                 threadId,
-                answer: `Não consegui processar isso agora (${userHint}). Tenta de novo — se persistir, o problema é meu, não teu.`,
+                answer: `Não consegui processar isso agora (${userHint}). Tenta de novo. Se persistir, o problema é meu, não teu.`,
                 citations: [],
                 classification: classify("conversation"),
                 toolRuns: [],

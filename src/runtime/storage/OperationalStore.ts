@@ -406,6 +406,24 @@ export class OperationalStore {
             CREATE INDEX IF NOT EXISTS idx_request_notes_thread_time
             ON request_notes(thread_id, created_timestamp DESC);
 
+            CREATE TABLE IF NOT EXISTS request_goals (
+                request_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                label TEXT,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_timestamp INTEGER NOT NULL,
+                updated_timestamp INTEGER NOT NULL,
+                PRIMARY KEY (request_id, seq)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_request_goals_request_status
+            ON request_goals(request_id, status);
+
+            CREATE INDEX IF NOT EXISTS idx_request_goals_thread_time
+            ON request_goals(thread_id, created_timestamp DESC);
+
             CREATE TABLE IF NOT EXISTS long_term_memories (
                 id TEXT PRIMARY KEY,
                 guild_id TEXT,
@@ -437,6 +455,9 @@ export class OperationalStore {
             CREATE INDEX IF NOT EXISTS idx_workflows_guild
             ON workflows(guild_id);
 
+            CREATE VIRTUAL TABLE IF NOT EXISTS long_term_memories_fts
+            USING fts5(key, value, content='long_term_memories', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
+
             CREATE VIRTUAL TABLE IF NOT EXISTS message_chunks_fts
             USING fts5(content, content='message_chunks', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
         `);
@@ -457,6 +478,37 @@ export class OperationalStore {
                 INSERT INTO message_chunks_fts(rowid, content) VALUES (new.rowid, new.content);
             END
         `);
+
+        await client.execute(`
+            CREATE TRIGGER IF NOT EXISTS long_term_memories_fts_ai AFTER INSERT ON long_term_memories BEGIN
+                INSERT INTO long_term_memories_fts(rowid, key, value) VALUES (new.rowid, new.key, new.value);
+            END
+        `);
+        await client.execute(`
+            CREATE TRIGGER IF NOT EXISTS long_term_memories_fts_ad AFTER DELETE ON long_term_memories BEGIN
+                INSERT INTO long_term_memories_fts(long_term_memories_fts, rowid, key, value) VALUES('delete', old.rowid, old.key, old.value);
+            END
+        `);
+        await client.execute(`
+            CREATE TRIGGER IF NOT EXISTS long_term_memories_fts_au AFTER UPDATE ON long_term_memories BEGIN
+                INSERT INTO long_term_memories_fts(long_term_memories_fts, rowid, key, value) VALUES('delete', old.rowid, old.key, old.value);
+                INSERT INTO long_term_memories_fts(rowid, key, value) VALUES (new.rowid, new.key, new.value);
+            END
+        `);
+
+        // One-time backfill: databases created before long_term_memories_fts
+        // existed have memory rows with an empty FTS index. The external-content
+        // 'rebuild' command repopulates the whole index from the base table.
+        const ltmBackfilled = await querySingleValue(
+            client,
+            `SELECT value FROM runtime_metadata WHERE key = 'ltm_fts_backfilled'`
+        );
+        if (ltmBackfilled !== "1") {
+            await client.execute(`INSERT INTO long_term_memories_fts(long_term_memories_fts) VALUES('rebuild')`);
+            await client.execute(`
+                INSERT INTO runtime_metadata (key, value) VALUES ('ltm_fts_backfilled', '1')
+            `);
+        }
 
         await client.execute({
             sql: `

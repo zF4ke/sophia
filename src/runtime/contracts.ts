@@ -10,7 +10,7 @@ import type {
 } from "@/shared/appTypes";
 import type { DiscordToolEvidenceRole, DiscordToolName } from "@/shared/discordTools";
 
-export type TurnTrigger = "talk" | "mention" | "reply";
+export type TurnTrigger = "talk" | "mention" | "reply" | "auto_continue";
 export type RuntimeMode = "conversation" | "research" | "refusal";
 export type StopReason =
     | "direct_answer"
@@ -91,10 +91,16 @@ export interface TurnInput {
     /**
      * Optional channel-side progress notifier. When set, Runtime pushes
      * short human-readable status updates (e.g. "Procurando mensagens
-     * do João…") during long tool calls so the user sees live progress.
+     * do João.") during long tool calls so the user sees live progress.
      * Best-effort: failures are swallowed by the caller.
      */
     progressNotifier?: ((summary: string) => Promise<void>) | null;
+    /**
+     * When true (default), an unfinished corpus task at end-of-turn chains
+     * the next turn automatically instead of waiting for the user to say
+     * "continua". Continuation legs themselves never re-chain.
+     */
+    autoContinue?: boolean;
 }
 
 export type SideEffectLevel = "none" | "write" | "destructive";

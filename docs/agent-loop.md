@@ -58,7 +58,14 @@ The model sees these capabilities as native function-calling tools:
 
 ### Control
 - `finish` — delivers the final answer and exits the loop
-- `start_long_task` — declares the current task needs an elevated tool-call/latency budget (runtime-intercepted, never dispatched to capability layer)
+- `start_long_task` — declares the current task needs an elevated tool-call budget (runtime-intercepted, never dispatched to capability layer; also auto-raised on large explicit corpora)
+
+### Workflow Tools
+- `workflow_create`, `workflow_list`, `workflow_run`, `workflow_delete` — saved tool chains stored per guild. `workflow_delete` removes a saved workflow by name.
+
+### Artifact Tools
+- `artifact_send` — send an interactive Components V2 card (sections, optional tab dropdown or pagination, link buttons, TTL auto-deletion). Spec is validated before send.
+- `artifact_edit` — edit a previously sent card in place by `message_id`, changing only the given fields; the merged spec is re-validated.
 
 Tool schemas are defined in `src/runtime/toolSchemas.ts`. Capability handlers are registered in `src/capabilities/CapabilityRegistry.ts`.
 
@@ -97,18 +104,29 @@ For strict scoped reads (author/time bounded), retrieval performs guarded empty-
 ## Runtime Guardrails
 
 Hard limits:
-- max tool calls per turn (configurable, default 6, range 2–30; raiseable to 200 via `start_long_task`)
+- max tool calls per turn (configurable, default 25, range 2–30; raiseable to 200 via `start_long_task` or automatically on large explicit corpora)
 - repeated-call guard (same tool + same arguments blocked)
-- latency budget (configurable, default 20s, range 10s–5m; raiseable to 600s via `start_long_task`)
 - context overflow pruning (old tool outputs are pruned when approaching the context window)
 
 ### Stall Guard
 
-When the model calls `finish`, the runtime checks for empty-promise stalling: if the answer contains a promise phrase (PT/EN) but no productive tool ran and no productive evidence was produced in the turn, the finish is rejected once and the model is told to call tools instead. At most 1 correction per turn.
+When the model calls `finish`, the runtime checks for empty-promise stalling. If the answer contains a promise phrase but no productive tool ran and no productive evidence was produced, the finish is rejected and the model is told to call tools instead. At most 2 corrections are allowed per turn.
+
+`finish` must be the only call in a model response. If the model mixes it with executable tool calls, the runtime executes the other calls and rejects the premature finish. The model must read the results before answering.
+
+### Artifact Guard
+
+If the model attempts `artifact_send` and the send fails (validation error or execution failure), the turn is locked: `finish` and raw-text answers are rejected with the exact validation problem, and the model must call `artifact_send` again with corrected arguments. Two corrections are allowed per turn; after that the best-effort answer goes through. A successful send clears the lock immediately.
+
+## Tool execution
+
+`ToolExecutor` is the only module that invokes capability implementations. It validates arguments with the capability's Zod schema, converts thrown errors into tool results, extracts evidence, and returns a durable invocation record. The runtime owns approval, budgets, conversation messages, and persistence around that result.
+
+The registry rejects duplicate names and rejects any mismatch between the catalog effect and the capability side-effect level. This keeps approval policy from drifting across two metadata fields.
 
 ### Long-Task Budget
 
-The `start_long_task` tool allows the model to self-declare that a task needs more budget. The runtime intercepts the call (it is never dispatched to the capability layer) and raises `maxToolCalls` and `maxLatencyBudgetMs` up to hard caps (200 calls, 600s). Idempotent per turn.
+The `start_long_task` tool allows the model to self-declare that a task needs more budget. The runtime intercepts the call (it is never dispatched to the capability layer) and raises `maxToolCalls` up to the hard cap (200 calls), plus the evidence slice floor. Idempotent per turn. The runtime also raises the budget automatically when the user asked for a large explicit corpus or pagination keeps missing its target, so long work does not depend on the model remembering to declare it. When in doubt whether the task is long, the model should ask the user in one sentence. There is no wall-clock cap on turns: long work is bounded by the tool-call budget, not by the clock.
 
 ## Context Retention
 

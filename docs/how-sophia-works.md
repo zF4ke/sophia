@@ -116,7 +116,7 @@ The model then decides on its own whether to call tools or answer directly by ca
 The runtime enforces only narrow guardrails:
 - capability validation (tool name must be in the registry)
 - repeated-call guard (blocks exact-same-arguments duplicates)
-- tool-call budget and latency budget
+- tool-call budget
 - context overflow pruning (old tool outputs pruned when approaching the context window limit)
 - refusal prevention for ordinary conversation
 

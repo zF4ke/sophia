@@ -23,7 +23,6 @@ vi.mock("@/app/AppConfig", () => ({
             checkpointDbPath: "storage/runtime/checkpoints.sqlite",
             maxToolCalls: 6,
             maxRepeatedCallSignature: 1,
-            maxLatencyBudgetMs: 15000,
             maxPriorTurns: 5,
             maxChannelMessages: 15,
             maxToolRunsContext: 12,
@@ -257,6 +256,7 @@ describe("ModelGateway", () => {
 
         expect(create).toHaveBeenCalledWith(
             expect.objectContaining({
+                provider: { sort: "throughput" },
                 tools: [
                     {
                         type: "openrouter:web_search",
@@ -279,6 +279,57 @@ describe("ModelGateway", () => {
             webStatus: "used",
             webSearchRequests: 2,
         });
+    });
+
+    it("routes tool calls through the highest-throughput provider", async () => {
+        const create = vi.fn().mockResolvedValue({
+            choices: [{ message: { content: null, tool_calls: [] }, finish_reason: "stop" }],
+        });
+        (ModelGateway as any).client.chat.completions.create = create;
+
+        await ModelGateway.generateWithTools(
+            [{ role: "user", content: "Teste" }],
+            { tools: [] }
+        );
+
+        expect(create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                provider: { sort: "throughput" },
+                parallel_tool_calls: false,
+            })
+        );
+    });
+
+    it("sends local-endpoint requests without the OpenRouter routing block", async () => {
+        const create = vi.fn().mockResolvedValue({
+            choices: [{ message: { content: "resposta local" } }],
+        });
+        const localBase = "http://127.0.0.1:1234/v1";
+        (ModelGateway as any).profileClients = new Map([
+            [localBase, { chat: { completions: { create } } }],
+        ]);
+
+        const result = await ModelGateway.generateWithTools(
+            [{ role: "user", content: "Teste" }],
+            {
+                tools: [],
+                profile: {
+                    chatModel: "local-model",
+                    embeddingModel: "openai/text-embedding-3-small",
+                    temperature: 0.5,
+                    maxOutputTokens: 1024,
+                    contextWindow: 32768,
+                    baseUrl: localBase,
+                },
+                traceContext: { traceLabel: "local_test" },
+            }
+        );
+
+        expect(create).toHaveBeenCalledTimes(1);
+        const request = create.mock.calls[0][0] as Record<string, unknown>;
+        expect(request.model).toBe("local-model");
+        expect("provider" in request).toBe(false);
+        expect(result.model).toBe("local-model");
     });
 
     it("retries once when the provider returns a malformed completion for tool chat", async () => {
@@ -370,5 +421,59 @@ describe("ModelGateway", () => {
         expect(result.content).toBeNull();
         expect(result.toolCalls).toEqual([]);
         expect(result.malformedToolCallText).toContain("<invoke name=\"search__messages\">");
+    });
+
+    it("retries provider rate limits with backoff and succeeds", async () => {
+        (ModelGateway as any).rateLimitBackoffMs = [1, 1];
+        const rateLimitError = Object.assign(new Error("Provider returned error"), { status: 429 });
+        const create = vi.fn()
+            .mockRejectedValueOnce(rateLimitError)
+            .mockResolvedValueOnce({
+                choices: [{ message: { content: "Sobrevivi ao 429" } }],
+            });
+        (ModelGateway as any).client.chat.completions.create = create;
+
+        const result = await ModelGateway.generateWithTools(
+            [{ role: "user", content: "Teste" }],
+            { tools: [], traceContext: { traceLabel: "retry_test" } }
+        );
+
+        expect(create).toHaveBeenCalledTimes(2);
+        expect(result.content).toBe("Sobrevivi ao 429");
+    });
+
+    it("does not retry non-retryable provider errors", async () => {
+        (ModelGateway as any).rateLimitBackoffMs = [1, 1];
+        const create = vi.fn()
+            .mockRejectedValue(Object.assign(new Error("bad request"), { status: 400 }));
+        (ModelGateway as any).client.chat.completions.create = create;
+
+        await expect(
+            ModelGateway.generateWithTools([{ role: "user", content: "Teste" }], { tools: [] })
+        ).rejects.toThrow("bad request");
+        expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls back to the default model when a secondary model keeps rate-limiting", async () => {
+        (ModelGateway as any).rateLimitBackoffMs = [1, 1];
+        const rateLimitError = Object.assign(new Error("Provider returned error"), { status: 429 });
+        const create = vi.fn().mockRejectedValue(rateLimitError);
+        // Succeed only when the request switched to the default profile's model.
+        create.mockImplementation(async (request: { model: string }) => {
+            if (request.model === "z-ai/glm-5.3-flash") {
+                return { choices: [{ message: { content: "fallback!" } }] };
+            }
+            throw rateLimitError;
+        });
+        (ModelGateway as any).client.chat.completions.create = create;
+
+        const result = await ModelGateway.generateWithTools(
+            [{ role: "user", content: "Teste" }],
+            { tools: [], traceContext: { traceLabel: "fallback_test" } }
+        );
+
+        expect(create.mock.calls.some(([request]) => (request as { model: string }).model === "z-ai/glm-5.3-flash")).toBe(true);
+        expect(result.model).toBe("z-ai/glm-5.3-flash");
+        expect(result.content).toBe("fallback!");
     });
 });

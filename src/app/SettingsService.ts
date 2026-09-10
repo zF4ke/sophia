@@ -11,7 +11,6 @@ export interface BotSettings {
         checkpointDbPath: string;
         maxToolCalls: number;
         maxRepeatedCallSignature: number;
-        maxLatencyBudgetMs: number;
         maxPriorTurns: number;
         maxChannelMessages: number;
         maxToolRunsContext: number;
@@ -27,7 +26,6 @@ export interface BotSettings {
         edgePrefetch: boolean;
         longTask: {
             maxToolCalls: number;
-            maxLatencyBudgetMs: number;
             evidenceSliceFloor: number;
             retrievalInlineCrawlBatches: number;
         };
@@ -59,7 +57,6 @@ const DEFAULT_SETTINGS: BotSettings = {
         checkpointDbPath: path.join(DEFAULT_RUNTIME_DIR, "checkpoints.sqlite"),
         maxToolCalls: 25,
         maxRepeatedCallSignature: 1,
-        maxLatencyBudgetMs: 120000,
         maxPriorTurns: 8,
         maxChannelMessages: 15,
         maxToolRunsContext: 12,
@@ -75,13 +72,12 @@ const DEFAULT_SETTINGS: BotSettings = {
         edgePrefetch: true,
         longTask: {
             maxToolCalls: 200,
-            maxLatencyBudgetMs: 600_000,
             evidenceSliceFloor: 128,
             retrievalInlineCrawlBatches: 3,
         },
     },
     compaction: {
-        summarizerModel: "glm53flash",
+        summarizerModel: DEFAULT_MODEL_PROFILE,
         triggerFraction: 0.88,
         inputTriggerFraction: 0.55,
     },
@@ -170,6 +166,15 @@ export class SettingsService {
     public static update(patch: Partial<BotSettings>): BotSettings {
         const current = this.load();
         const updated = deepMerge(current, patch);
+        const profiles = readModelProfiles();
+        updated.modelProfile = resolveModelProfileName(updated.modelProfile, profiles);
+        if (!updated.compaction || !profiles.profiles[updated.compaction.summarizerModel]) {
+            updated.compaction = {
+                ...DEFAULT_SETTINGS.compaction,
+                ...(updated.compaction ?? {}),
+                summarizerModel: profiles.defaultProfile,
+            };
+        }
         this.save(updated);
         return updated;
     }
