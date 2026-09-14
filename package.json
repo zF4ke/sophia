@@ -3,7 +3,7 @@
   "version": "5.0.0",
   "main": "index.js",
   "engines": {
-    "node": ">=20.12.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
     "dev": "nodemon --watch \"src/**/*\" --watch \"resources/**/*\" --ext ts,js,json,md --exec \"tsx src/index.ts\"",
@@ -49,8 +49,9 @@
   "devDependencies": {
     "nodemon": "^3.1.9",
     "ts-node": "^10.9.2",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.3",
-    "vitest": "^3.1.1"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
   }
 }

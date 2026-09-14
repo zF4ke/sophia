@@ -4,7 +4,7 @@ sidebar:
   order: 1
 ---
 
-Use a supported Node.js release and a Linux Docker engine. Node 22.19 or newer supports both the bot and documentation toolchain. The bot alone requires Node 20.12 or newer. Windows uses Docker Desktop with its WSL 2 backend; macOS uses Docker Desktop; Linux can use Docker Engine.
+Use a supported Node.js release and a Linux Docker engine. Node 22.19 or newer supports both the bot and documentation toolchain. The bot toolchain supports Node 20.19 or Node 22.12 and newer. Windows uses Docker Desktop with its WSL 2 backend; macOS uses Docker Desktop; Linux can use Docker Engine.
 
 ## Prepare the project
 

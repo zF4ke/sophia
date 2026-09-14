@@ -128,6 +128,7 @@ describe("messageCreate reply gating", () => {
     });
     beforeEach(() => {
         vi.restoreAllMocks();
+        vi.clearAllMocks();
         vi.spyOn(SecurityService, "initialize").mockResolvedValue();
         SettingsService.update({ guildAllowlist: ["g1"], access: { directMessages: false, roles: [], users: [{ userId: "user-1", guildId: "g1", level: "read", mode: "ask" }] } });
         vi.spyOn(SecurityService, "checkTriggerRateLimit").mockResolvedValue(true);

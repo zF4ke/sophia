@@ -28,7 +28,7 @@ The release pass found and fixed these additional defects:
 - Skills and memories inherited the obsolete administrator-only command check. Authorized users can inspect their own records; legacy adoption still requires an operator.
 - Cancellation reached queued model calls but not active HTTP requests or approval waits. Both provider transports now receive the execution signal. Pending single and batch approvals resolve without approval, remove their controls and release the durable pending record on cancellation.
 
-The final validation includes the deterministic suite, ten Muse Spark personality/conversation/task-control scenarios, four real sandbox scenarios and eight real card-script scenarios. Production dependency audits reported zero known vulnerabilities for the bot and handbook. The website is built and checked at both `/` and `/sophia/` before publication.
+The final validation includes the deterministic suite, ten Muse Spark personality/conversation/task-control scenarios, four real sandbox scenarios and eight real card-script scenarios. Full dependency audits, including development tools, reported zero known vulnerabilities for the bot and handbook after updating Vitest and tsx. A separate clean npm ci verified the lockfile. Linux CI exposed a Windows-only path assertion; it now uses path.join. The website is built and checked at both `/` and `/sophia/` before publication.
 
 ## Boundary checks
 

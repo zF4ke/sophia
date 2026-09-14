@@ -26,7 +26,7 @@ Sophia can research Discord history and the web, work with files in an isolated 
 
 ## Run locally
 
-Use Node.js 22.19 or newer for the bot and docs together; the bot alone supports 20.12 or newer. Install dependencies with `npm ci`, copy `.env.example` to `.env`, and configure the Discord token, OpenRouter key and `OPENCODE_API_KEY`. Set `BOOTSTRAP_ADMIN_IDS` to the operator's verified Discord user ID for initial administration. Secrets belong in `.env`; runtime settings belong in `storage/settings.json`.
+Use Node.js 22.19 or newer for the bot and docs together; the bot toolchain supports Node 20.19 or Node 22.12 and newer. Install dependencies with `npm ci`, copy `.env.example` to `.env`, and configure the Discord token, OpenRouter key and `OPENCODE_API_KEY`. Set `BOOTSTRAP_ADMIN_IDS` to the operator's verified Discord user ID for initial administration. Secrets belong in `.env`; runtime settings belong in `storage/settings.json`.
 
 Muse Spark 1.3 Free through OpenCode Zen is the fresh-install default. Sophia uses its own runtime with the Responses API and task session metadata. OpenRouter profiles and local compatible servers remain selectable in `/settings`. Existing installations retain their saved selection. Embeddings still use OpenRouter. See the [model guide](website/src/content/docs/setup/models.md) for provider availability and data-use terms.
 

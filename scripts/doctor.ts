@@ -7,7 +7,7 @@ const { SettingsService } = require('../src/app/SettingsService') as typeof impo
 let failed = false;
 function check(name: string, ok: boolean, detail: string) { console.log(`${ok ? 'OK' : 'NEEDS ATTENTION'}  ${name}: ${detail}`); if (!ok) failed = true; }
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
-check('Node', nodeMajor > 20 || (nodeMajor === 20 && nodeMinor >= 12), process.versions.node);
+check('Node', nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 12) || (nodeMajor === 20 && nodeMinor >= 19), process.versions.node);
 for (const key of ['DISCORD_TOKEN', 'OPENROUTER_API_KEY']) check(key, Boolean(process.env[key]), process.env[key] ? 'configured; value hidden' : 'add to .env');
 try {
     const config = readModelProfiles();
