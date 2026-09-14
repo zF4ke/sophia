@@ -14,7 +14,7 @@ cd sophia
 npm ci
 ```
 
-Copy `.env.example` to `.env` using your file manager or shell. Fill in `DISCORD_TOKEN`, `OPENROUTER_API_KEY`, `OPENCODE_API_KEY` for Zen, and your verified Discord user ID in `BOOTSTRAP_ADMIN_IDS`. Never commit `.env`.
+Copy `.env.example` to `.env` using your file manager or shell. Fill in `DISCORD_TOKEN`, `OPENROUTER_API_KEY`, `OPENCODE_API_KEY` for Zen, and your verified Discord user ID in `BOOTSTRAP_ADMIN_IDS`. Never commit `.env`. For reliable web search, also set `SERPER_API_KEY` from [Serper](https://serper.dev). Without it, Sophia uses Brave if configured, or keyless DuckDuckGo, which can block automated requests.
 
 Sophia still needs OpenRouter for embeddings, even when the main model is local or uses Zen. Runtime settings belong in `storage/settings.json`. Secrets belong in `.env`.
 

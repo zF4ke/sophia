@@ -26,19 +26,35 @@ export function parseSearchResults(html: string, count: number): SearchResult[] 
     return results;
 }
 async function searchWeb(query: string, count: number, signal?: AbortSignal) {
+    if (process.env.SERPER_API_KEY?.trim()) {
+        const url = new URL("https://google.serper.dev/search");
+        url.searchParams.set("q", query);
+        url.searchParams.set("num", String(count));
+        const response = await SafeWebClient.read(url.toString(), { signal, headers: { "X-API-KEY": process.env.SERPER_API_KEY.trim() } });
+        const parsed = z.object({ organic: z.array(z.object({ title: z.string(), link: z.string(), snippet: z.string().optional() })) }).safeParse(JSON.parse(response.body));
+        if (!parsed.success) throw new Error("Serper returned an invalid search response. Search did not complete.");
+        const results: SearchResult[] = [];
+        for (const result of parsed.data.organic) {
+            try {
+                const url = publicWebUrl(result.link).toString();
+                if (!results.some(existing => existing.url === url)) results.push({ title: result.title, url, snippet: result.snippet ?? "" });
+            } catch { /* Invalid destinations cannot become sources. */ }
+            if (results.length >= count) break;
+        }
+        if (parsed.data.organic.length && !results.length) throw new Error("Serper returned results, but none had supported public URLs.");
+        return { provider: "serper", results };
+    }
     if (process.env.BRAVE_SEARCH_API_KEY) {
-        try {
             const response = await SafeWebClient.read(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`, { signal, headers: { "X-Subscription-Token": process.env.BRAVE_SEARCH_API_KEY } });
             const data = z.object({ web: z.object({ results: z.array(z.object({ title: z.string(), url: z.string(), description: z.string().optional() })) }).optional() }).parse(JSON.parse(response.body));
             return { provider: "brave", results: (data.web?.results ?? []).slice(0, count).map(result => ({ title: result.title, url: publicWebUrl(result.url).toString(), snippet: result.description ?? "" })) };
-        } catch (error) { if (signal?.aborted) throw error; }
     }
     const response = await SafeWebClient.read(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, { signal });
     return { provider: "duckduckgo", results: parseSearchResults(response.body, count) };
 }
 export const webSearchTool: ToolDefinition = {
     name: T.web_search, catalog: { effect: "read", description: "Search public web pages and return candidate sources.", evidenceRole: "discovery_only" },
-    schema: { description: "Search the web through configured Brave search or DuckDuckGo. Results are snippets, not inspected page evidence. Open relevant pages with fetch_url before relying on their contents. Provider failures are distinct from an empty search.", parameters: { type: "object", properties: { query: { type: "string" }, count: { type: "number" } }, required: ["query"] } },
+    schema: { description: "Search the web through configured Serper, Brave, or keyless DuckDuckGo. Results are snippets, not inspected page evidence. Open relevant pages with fetch_url before relying on their contents. Provider failures are distinct from an empty search.", parameters: { type: "object", properties: { query: { type: "string" }, count: { type: "number" } }, required: ["query"] } },
     capability: { ...common, description: "Search public web.", sideEffectLevel: "none", inputSchema: z.object({ query: z.string().min(2).max(400), count: z.number().int().min(1).max(10).optional() }), async run(context, args) {
         const query = String(args.query);
         const result = await searchWeb(query, Number(args.count ?? 5), context.execution?.signal);

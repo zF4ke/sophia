@@ -1,6 +1,6 @@
 # Web research
 
-`web_search` uses Brave when its secret API key is configured, otherwise DuckDuckGo HTML search. Each snippet comes from the same result block as its URL. An unavailable or unrecognized provider response is an error, not a claim that no sources exist. The former Google HTML scraper and the misleading "always free" output field are removed.
+`web_search` uses Serper when `SERPER_API_KEY` is configured, then Brave when only `BRAVE_SEARCH_API_KEY` is configured, otherwise keyless DuckDuckGo HTML search. Serper returns structured Google search results through `https://google.serper.dev/search`; the key is sent in the `X-API-KEY` header. Results retain their titles, URLs and associated snippets, with duplicate and unsupported destinations removed. Configured provider failures are reported directly without silently switching providers. An unavailable or invalid response is an error, not a claim that no sources exist.
 
 `fetch_url` opens a public page and preserves its extracted text in the owning task. Results include the requested URL, final URL, title, capture timestamp, source ID, total length and exact next offset. `source_read` reads more of that captured source without another network request. This is task evidence; other actors, tasks and locations cannot reuse the handle.
 
