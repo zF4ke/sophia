@@ -24,7 +24,7 @@ export async function refreshPanel(
         await interaction.message?.edit(payload);
         await interaction.reply({
             content: state.notice ?? "Painel atualizado.",
-            ephemeral: true,
+            ephemeral: interaction.message?.flags.has("Ephemeral") ?? false,
         });
         return;
     }

@@ -5,6 +5,7 @@ import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetri
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { Runtime } from "@/runtime/Runtime";
 import type { TurnInput } from "@/runtime/contracts";
+import { boundLiveModelCalls } from "./modelBudget";
 
 const LIVE_MODEL_TESTS_ENABLED =
     process.env.LIVE_MODEL_TESTS === "1" &&
@@ -18,7 +19,9 @@ function createInput(overrides: Partial<TurnInput> = {}): TurnInput {
         question: "test",
         user: { id: "u-requester" } as any,
         requesterDisplayName: "Requester",
-        guild: { id: "g1", name: "Oz Synthesis" } as any,
+        guild: { id: "g1", name: "Oz Synthesis", members: { fetch: vi.fn().mockResolvedValue({}) },
+            channels: { fetch: vi.fn().mockResolvedValue({ isTextBased: () => true, permissionsFor: () => ({ has: () => true }) }), cache: new Map() } } as any,
+        authorize: async effect => effect === "none" ? "allow" : "deny",
         currentChannelId: "c1",
         nativeThreadId: null,
         requestedWebMode: "off",
@@ -40,6 +43,7 @@ describeLive("live runtime behavior", () => {
     beforeEach(async () => {
         vi.restoreAllMocks();
         process.env.DISCORD_TOKEN ||= "test-token";
+        boundLiveModelCalls();
 
         vi.spyOn(DiscordMemoryService, "getRecentRuntimeRunsAsync").mockResolvedValue([]);
         vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([]);
@@ -176,6 +180,8 @@ describeLive("live runtime behavior", () => {
                     missingOrDeletedPossible: false,
                 },
             ]);
+            // This fixture contains one complete message. Do not advertise an infinite
+            // next page that repeats the same evidence forever.
             vi.spyOn(UnifiedMessageRetrieval, "retrieve").mockResolvedValue({
                 query: "O que <@111111111111111111> disse em <#123456789012345678> sobre a imagem?",
                 mode: "mixed",
@@ -230,21 +236,21 @@ describeLive("live runtime behavior", () => {
                 continuation: {
                     history: {
                         perChannelOldestMessageId: { "123456789012345678": "m1" },
-                        continuationAvailable: true,
+                        continuationAvailable: false,
                     },
                     semantic: {
                         cursor: null,
                         continuationAvailable: false,
                     },
                     perChannelOldestMessageId: { "123456789012345678": "m1" },
-                    continuationAvailable: true,
+                    continuationAvailable: false,
                 },
                 exhaustion: {
-                    historyExhaustedChannelIds: [],
-                    historyExhausted: false,
+                    historyExhaustedChannelIds: ["123456789012345678"],
+                    historyExhausted: true,
                     semanticExhausted: true,
-                    exhaustedChannelIds: [],
-                    exhausted: false,
+                    exhaustedChannelIds: ["123456789012345678"],
+                    exhausted: true,
                 },
                 accumulatedWindow: {
                     beforeTimestamp: null,
@@ -267,6 +273,7 @@ describeLive("live runtime behavior", () => {
             const tools = result.toolRuns.map((run) => run.tool);
             const normalized = result.answer.toLowerCase();
 
+            console.log(JSON.stringify({ scenario: "grounded-image-reference", tools, outcome: result.outcome, answer: result.answer }));
             expect(tools).toContain("retrieve_messages");
             expect(normalized).toContain("imagem");
             expect(normalized).not.toContain("based on what i found");
@@ -472,6 +479,7 @@ describeLive("live runtime behavior", () => {
             const normalized = result.answer.toLowerCase();
 
             // Model must have done category/channel discovery via at least one of these
+            console.info(JSON.stringify({ scenario: "category-services", answer: result.answer, tools }));
             expect(
                 tools.includes("resolve_channel_targets") || tools.includes("list_guild_structure")
             ).toBe(true);
@@ -479,6 +487,7 @@ describeLive("live runtime behavior", () => {
             expect(normalized).toContain("serv");
             expect(normalized).toContain("bot");
             expect(normalized).not.toContain("vazia");
+            expect(normalized).not.toMatch(/webhooks?|scripts?|pagamentos?|tickets?/);
             expect(normalized).not.toContain("empty");
         },
         120000

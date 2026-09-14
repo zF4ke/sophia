@@ -9,7 +9,9 @@ import {
 } from "discord.js";
 import { buildArtifactComponents, type ArtifactSpec } from "./ArtifactBuilder";
 import { ArtifactStore } from "./ArtifactStore";
+import { assertPublicationAudience } from "@/security/DerivedSources";
 import { runArtifactScript } from "./ArtifactScript";
+import { deliverArtifactMessage } from "./ArtifactDelivery";
 
 // Current format: "artifact:<nonce>:<action>". Legacy cards emitted
 // "<12-hex nonce>:<action>" with no prefix; both are handled so every
@@ -32,6 +34,12 @@ export function isArtifactCustomId(customId: string): boolean {
 export async function handleArtifactInteraction(
     interaction: ButtonInteraction | AnySelectMenuInteraction,
 ): Promise<boolean> {
+    if (!isArtifactCustomId(interaction.customId)) return false;
+    await interaction.deferUpdate();
+    return ArtifactStore.locks.run(interaction.message.id, () => applyArtifactInteraction(interaction));
+}
+
+async function applyArtifactInteraction(interaction: ButtonInteraction | AnySelectMenuInteraction): Promise<boolean> {
     const customId = interaction.customId;
     const navMatch = NAV_PATTERN.exec(customId);
     const isCustomAction = CUSTOM_PREFIX_PATTERN.test(customId);
@@ -41,16 +49,23 @@ export async function handleArtifactInteraction(
     const row = await ArtifactStore.get(interaction.message.id).catch(() => null);
     if (!row || !row.specJson) {
         await interaction
-            .reply({ content: "Este cartão perdeu o estado guardado. Pede para reenviar ou editar o artefacto.", flags: MessageFlags.Ephemeral })
+            .followUp({ content: "Este cartão perdeu o estado guardado. Pede para reenviar ou editar o artefacto.", flags: MessageFlags.Ephemeral })
             .catch(() => undefined);
         return true;
     }
     if (row.guildId && interaction.guildId && row.guildId !== interaction.guildId) {
-        await interaction.deferUpdate().catch(() => undefined);
+        // The interaction was acknowledged before acquiring the card lock.
         return true;
     }
 
     let spec: ArtifactSpec;
+    try {
+        await assertPublicationAudience({ guild: interaction.guild, client: interaction.client, actorId: interaction.user.id,
+            currentChannelId: interaction.channelId, question: "Card interaction" }, row.channelId, await ArtifactStore.sources(row.messageId));
+    } catch {
+        await interaction.followUp({ content: "Uma fonte deste cartão já não está disponível para este público. Não posso voltar a apresentar esse conteúdo.", flags: MessageFlags.Ephemeral }).catch(() => undefined);
+        return true;
+    }
     try {
         const parsed = JSON.parse(row.specJson) as ArtifactSpec;
         const validated = parsed && parsed.sections?.length ? parsed : null;
@@ -58,7 +73,7 @@ export async function handleArtifactInteraction(
         spec = validated;
     } catch {
         await interaction
-            .reply({ content: "O conteúdo guardado deste cartão está ilegível. Pede para editar ou reenviar o artefacto.", flags: MessageFlags.Ephemeral })
+            .followUp({ content: "O conteúdo guardado deste cartão está ilegível. Pede para editar ou reenviar o artefacto.", flags: MessageFlags.Ephemeral })
             .catch(() => undefined);
         return true;
     }
@@ -72,14 +87,14 @@ export async function handleArtifactInteraction(
             const rawValue = interaction.isStringSelectMenu() ? (interaction as StringSelectMenuInteraction).values?.[0] : undefined;
             const index = Number(rawValue);
             if (!Number.isFinite(index)) {
-                await interaction.deferUpdate().catch(() => undefined);
+                // The interaction was acknowledged before acquiring the card lock.
                 return true;
             }
             section = Math.min(Math.max(Math.floor(index), 0), pageCount - 1);
         }
         // "count" is the disabled page indicator; nothing to change.
         if (action === "count") {
-            await interaction.deferUpdate().catch(() => undefined);
+            // The interaction was acknowledged before acquiring the card lock.
             return true;
         }
 
@@ -87,9 +102,9 @@ export async function handleArtifactInteraction(
         // are arbitrary as long as they match the pattern.
         const nonce = randomUUID().replace(/-/g, "").slice(0, 12);
         const built = buildArtifactComponents(spec, { section }, nonce);
-        await ArtifactStore.updateViewState(interaction.message.id, section).catch(() => undefined);
+        await ArtifactStore.updateViewState(interaction.message.id, section);
         await interaction
-            .update({ components: built.components, flags: MessageFlags.IsComponentsV2 })
+            .editReply({ components: built.components, flags: MessageFlags.IsComponentsV2 })
             .catch(() => undefined);
         return true;
     }
@@ -101,7 +116,7 @@ export async function handleArtifactInteraction(
 async function handleCustomAction(
     interaction: ButtonInteraction | AnySelectMenuInteraction,
     spec: ArtifactSpec,
-    row: { messageId: string; gameStateJson: string | null },
+    row: { messageId: string; gameStateJson: string | null; viewSection: number },
 ): Promise<boolean> {
     const customId = interaction.customId;
 
@@ -116,7 +131,8 @@ async function handleCustomAction(
     // the persisted state and a bounded API (reply/send/render helpers).
     const handlerCode = spec.handlers?.[customId];
     if (handlerCode) {
-        const scriptResult = runArtifactScript({
+
+        const scriptResult = await runArtifactScript({
             code: handlerCode,
             state,
             user: { id: interaction.user.id, username: interaction.user.username },
@@ -127,20 +143,18 @@ async function handleCustomAction(
 
         if (scriptResult.error) {
             await interaction
-                .reply({ content: `⚠️ Script error: ${scriptResult.error}`, flags: MessageFlags.Ephemeral })
+                .followUp({ content: `Não consegui executar este cartão: ${scriptResult.error}`, flags: MessageFlags.Ephemeral })
                 .catch(() => undefined);
             return true;
         }
-
-        await ArtifactStore.updateGameState(row.messageId, scriptResult.state).catch(() => undefined);
 
         // Re-render when the script changed card-level state.
         const sectionChanged = scriptResult.section != null;
         const titleChanged = scriptResult.title != null;
         const accentChanged = scriptResult.accentColor != null;
         const spoilerChanged = scriptResult.spoiler != null;
-        if (sectionChanged || titleChanged || accentChanged || spoilerChanged) {
-            const nextSection = sectionChanged ? Math.max(0, Math.floor(scriptResult.section!)) : undefined;
+        if (sectionChanged || titleChanged || accentChanged || spoilerChanged || scriptResult.summary != null) {
+            const nextSection = sectionChanged ? Math.max(0, Math.floor(scriptResult.section!)) : row.viewSection;
             const updatedSpec: ArtifactSpec = {
                 ...spec,
                 ...(titleChanged ? { title: scriptResult.title! } : {}),
@@ -149,22 +163,21 @@ async function handleCustomAction(
                 ...(spoilerChanged ? { spoiler: scriptResult.spoiler! } : {}),
             };
             const nonce = randomUUID().replace(/-/g, "").slice(0, 12);
-            const built = buildArtifactComponents(updatedSpec, { section: nextSection ?? 0 }, nonce);
+            const built = buildArtifactComponents(updatedSpec, { section: nextSection }, nonce);
+            await ArtifactStore.saveInteraction(row.messageId, JSON.stringify(updatedSpec), scriptResult.state, built.section);
             await interaction
-                .update({ components: built.components, flags: MessageFlags.IsComponentsV2 })
+                .editReply({ components: built.components, flags: MessageFlags.IsComponentsV2 })
                 .catch(() => undefined);
         } else {
-            await interaction.deferUpdate().catch(() => undefined);
+            await ArtifactStore.updateGameState(row.messageId, scriptResult.state);
         }
 
         // Deliver scripted sends (max 3) to their target channels.
-        const channel = interaction.channel;
         for (const outgoing of scriptResult.sends) {
             try {
-                const target = outgoing.channelId === (channel?.id ?? "") ? channel : await interaction.client.channels.fetch(outgoing.channelId);
-                if (target && "send" in target) await (target as { send: (o: unknown) => Promise<unknown> }).send({ content: outgoing.content });
-            } catch {
-                // A failing send target must not break the card.
+                await deliverArtifactMessage(interaction, outgoing);
+            } catch (error) {
+                await interaction.followUp({ content: (error as Error).message.slice(0, 1500), flags: MessageFlags.Ephemeral }).catch(() => undefined);
             }
         }
 
@@ -190,10 +203,10 @@ async function handleCustomAction(
         state[key] = Number.isFinite(current) ? current + 1 : 1;
         state["_lastAction"] = customId;
         state["_lastUser"] = interaction.user.id;
-        await ArtifactStore.updateGameState(row.messageId, state).catch(() => undefined);
+        await ArtifactStore.updateGameState(row.messageId, state);
         const prettyKey = key === "score" ? "score" : key;
         await interaction
-            .reply({
+            .followUp({
                 content: label ? `✅ ${label} (${key}): ${String(state[key])}` : `✅ ${prettyKey}: ${String(state[key])}`,
                 flags: MessageFlags.Ephemeral,
             })
@@ -207,7 +220,7 @@ async function handleCustomAction(
         if (interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu() || interaction.isMentionableSelectMenu() || interaction.isChannelSelectMenu()) {
             const values = (interaction as AnySelectMenuInteraction).values ?? [];
             await interaction
-                .reply({
+                .followUp({
                     content: label ? `Selecionaste em **${label}**: ${values.join(", ") || "(vazio)"}` : `Selecionaste: ${values.join(", ") || "(vazio)"}`,
                     flags: MessageFlags.Ephemeral,
                 })
@@ -215,13 +228,13 @@ async function handleCustomAction(
             return true;
         }
         await interaction
-            .reply({ content: label ? `Clicaste em **${label}**.` : "Interação recebida.", flags: MessageFlags.Ephemeral })
+            .followUp({ content: label ? `Clicaste em **${label}**.` : "Interação recebida.", flags: MessageFlags.Ephemeral })
             .catch(() => undefined);
         return true;
     }
 
     // Fallback: unknown custom prefix, still acknowledge
-    await interaction.deferUpdate().catch(() => undefined);
+    // The interaction was acknowledged before acquiring the card lock.
     return true;
 }
 

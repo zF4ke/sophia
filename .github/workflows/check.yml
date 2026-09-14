@@ -1,0 +1,57 @@
+name: Validate Sophia
+
+on:
+  pull_request:
+  push:
+    branches: [master, 'codex/**']
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+  handbook:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            website/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: website
+      - run: npm run docs:build && npm run docs:check
+      - run: npm run docs:build && npm run docs:check
+        env:
+          DOCS_BASE: /sophia
+          DOCS_SITE: https://zf4ke.github.io
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run sandbox:build
+      - run: npm run test:sandbox
+        env:
+          LIVE_SANDBOX: '1'
+      - run: npm run test:live -- tests/live/ArtifactScript.live.test.ts

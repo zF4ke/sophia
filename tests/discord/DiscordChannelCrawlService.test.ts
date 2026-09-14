@@ -43,7 +43,6 @@ describe("DiscordChannelCrawlService", () => {
             runtime: {
                 ...SettingsService.load().runtime,
                 operationalDbPath,
-                checkpointDbPath,
             },
         });
         await DiscordMemoryService.resetForTests();
@@ -135,12 +134,11 @@ describe("DiscordChannelCrawlService", () => {
             250,
             "scart"
         );
-        await DiscordChannelCrawlService.waitForBackgroundIngest();
 
         expect(result.messagesFetched).toBe(2);
         expect(result.messagesStored).toBe(2);
         expect(result.exhausted).toBe(true);
-        expect(result.backgroundIngestQueued).toBe(true);
+        expect(result.backgroundIngestQueued).toBe(false);
         expect(result.previewMessages).toHaveLength(0);
         expect(ingestMessage).toHaveBeenCalledTimes(2);
         expect(upsertChannel).toHaveBeenCalledWith(

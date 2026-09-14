@@ -12,6 +12,6 @@ export default defineConfig({
         include: ["tests/live/**/*.test.ts"],
         testTimeout: 120000,
         hookTimeout: 120000,
-        setupFiles: ["tests/setup/testStorage.ts"],
+        setupFiles: ["tests/setup/storageRoot.ts"],
     },
 });

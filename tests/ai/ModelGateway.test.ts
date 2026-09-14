@@ -1,9 +1,12 @@
+import { ModelUsage } from "@/ai/ModelUsage";
 import fs from "fs";
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EmptyModelOutputError } from "@/ai/EmptyModelOutputError";
 import { ModelGateway } from "@/ai/ModelGateway";
+import * as modelProfiles from "@/app/modelProfiles";
 import { AppPaths } from "@/app/AppPaths";
+import { taskStore } from "@/runtime/tasks/TaskStore";
 
 vi.mock("@/app/AppConfig", () => ({
     getAppConfig: () => ({
@@ -20,8 +23,7 @@ vi.mock("@/app/AppConfig", () => ({
         },
         runtime: {
             operationalDbPath: "storage/runtime/operational.sqlite",
-            checkpointDbPath: "storage/runtime/checkpoints.sqlite",
-            maxToolCalls: 6,
+            toolCallLimit: 0,
             maxRepeatedCallSignature: 1,
             maxPriorTurns: 5,
             maxChannelMessages: 15,
@@ -106,6 +108,19 @@ describe("ModelGateway", () => {
             webMode: "off",
             webStatus: "off",
         });
+    });
+
+    it("records every retry attempt at the provider boundary", async () => {
+        const record = vi.spyOn(taskStore, "recordModelUsage").mockResolvedValue(undefined);
+        const previousBackoff = (ModelGateway as any).rateLimitBackoffMs;
+        (ModelGateway as any).rateLimitBackoffMs = [0, 0];
+        (ModelGateway as any).client.chat.completions.create = vi.fn()
+            .mockRejectedValueOnce(Object.assign(new Error("throttled"), { status: 429 }))
+            .mockResolvedValueOnce({ choices: [{ message: { content: "ready" } }], usage: { prompt_tokens: 10, completion_tokens: 2 } });
+        try {
+            expect(await ModelGateway.generateText([{ role: "user", content: "hello" }])).toBe("ready");
+            expect(record.mock.calls.map(([row]) => [row.status, row.promptTokens])).toEqual([["failed", null], ["returned", 10]]);
+        } finally { (ModelGateway as any).rateLimitBackoffMs = previousBackoff; }
     });
 
     it("logs json generations with parsed output", async () => {
@@ -267,7 +282,8 @@ describe("ModelGateway", () => {
                         },
                     },
                 ],
-            })
+            }),
+            { signal: undefined },
         );
 
         const entries = readLogEntries();
@@ -296,7 +312,8 @@ describe("ModelGateway", () => {
             expect.objectContaining({
                 provider: { sort: "throughput" },
                 parallel_tool_calls: false,
-            })
+            }),
+            { signal: undefined },
         );
     });
 
@@ -306,7 +323,7 @@ describe("ModelGateway", () => {
         });
         const localBase = "http://127.0.0.1:1234/v1";
         (ModelGateway as any).profileClients = new Map([
-            [localBase, { chat: { completions: { create } } }],
+            [JSON.stringify([localBase, "not-needed"]), { chat: { completions: { create } } }],
         ]);
 
         const result = await ModelGateway.generateWithTools(
@@ -454,7 +471,19 @@ describe("ModelGateway", () => {
         expect(create).toHaveBeenCalledTimes(1);
     });
 
+    it("does not send an external default model to OpenRouter after a failure", async () => {
+        const config = modelProfiles.readModelProfiles();
+        vi.spyOn(modelProfiles, "readModelProfiles").mockReturnValue({ ...config, defaultProfile: "external", profiles: { ...config.profiles, external: { ...config.profiles.glm53flash, chatModel: "external-model", baseUrl: "https://example.com/v1", api: "responses" } } });
+        (ModelGateway as any).rateLimitBackoffMs = [1, 1];
+        const create = vi.fn().mockRejectedValue(Object.assign(new Error("rate limited"), { status: 429 }));
+        (ModelGateway as any).client.chat.completions.create = create;
+        await expect(ModelGateway.generateWithTools([{ role: "user", content: "Test" }], { tools: [] })).rejects.toThrow("rate limited");
+        expect(create).toHaveBeenCalledTimes(3);
+        expect(create.mock.calls.some(([request]) => request.model === "external-model")).toBe(false);
+    });
     it("falls back to the default model when a secondary model keeps rate-limiting", async () => {
+        const config = modelProfiles.readModelProfiles();
+        vi.spyOn(modelProfiles, "readModelProfiles").mockReturnValue({ ...config, defaultProfile: "glm53flash" });
         (ModelGateway as any).rateLimitBackoffMs = [1, 1];
         const rateLimitError = Object.assign(new Error("Provider returned error"), { status: 429 });
         const create = vi.fn().mockRejectedValue(rateLimitError);
@@ -476,4 +505,18 @@ describe("ModelGateway", () => {
         expect(result.model).toBe("z-ai/glm-5.3-flash");
         expect(result.content).toBe("fallback!");
     });
+});
+
+it("passes execution cancellation to active chat-completions requests", async () => {
+    const controller = new AbortController();
+    const create = vi.fn((_body, options) => new Promise((_resolve, reject) => {
+        expect(options.signal).toBe(controller.signal);
+        options.signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+        controller.abort();
+    }));
+    await expect(ModelUsage.scope({ actorId: "cancel-test" }, () => {
+        ModelUsage.bindExecution(controller.signal);
+        return (ModelGateway as any).requestWithProviderRetries({ chat: { completions: { create } } }, {}, { chatModel: "test" }, "test");
+    })).rejects.toThrow("cancelled");
+    expect(create).toHaveBeenCalledOnce();
 });

@@ -1,9 +1,11 @@
-import vm from "node:vm";
+import { ContainerSandbox } from "@/runtime/sandbox/ContainerSandbox";
+import { z } from "zod";
+declare const vm: typeof import("node:vm");
 
 /**
  * Sandboxed per-card scripts. The model writes small JavaScript handlers at
- * send/edit time; they execute inside a bare `node:vm` context (no require,
- * no process, no network) with a bounded API surface and a hard timeout.
+ * send/edit time. A container provides isolation from the host and network.
+ * Inside it, node:vm exposes the card API and bounds handler execution time.
  *
  * Sandbox contract (exactly what the handler code may touch):
  * - `state`   — the card's persisted game state object (mutations are saved)
@@ -49,6 +51,16 @@ export const SCRIPT_LIMITS = {
     maxLogs: 5,
 } as const;
 
+const scriptResultSchema = z.object({
+    state: z.record(z.string(), z.unknown()).refine(value => JSON.stringify(value).length <= SCRIPT_LIMITS.maxStateChars),
+    reply: z.string().max(SCRIPT_LIMITS.maxReplyChars).nullable(),
+    sends: z.array(z.object({ channelId: z.string().regex(/^\d{5,25}$/), content: z.string().min(1).max(SCRIPT_LIMITS.maxReplyChars) })).max(SCRIPT_LIMITS.maxSends),
+    title: z.string().max(120).optional(), summary: z.string().max(400).optional(),
+    section: z.number().int().nonnegative().safe().optional(),
+    accentColor: z.number().int().min(0).max(0xffffff).optional(), spoiler: z.boolean().optional(),
+    logs: z.array(z.string().max(200)).max(SCRIPT_LIMITS.maxLogs), error: z.string().max(4000).nullable(),
+});
+
 const SCRIPT_API_DOC = [
     "Available in handlers:",
     "- state (object, persisted; mutate freely or return a new object)",
@@ -63,7 +75,7 @@ export function describeScriptApi(): string {
     return SCRIPT_API_DOC;
 }
 
-export function runArtifactScript(input: ArtifactScriptInput): ArtifactScriptResult {
+function artifactHandler(input: ArtifactScriptInput): ArtifactScriptResult {
     const { code, state, user, values, customId, cardId } = input;
 
     if (code.length > SCRIPT_LIMITS.maxCodeChars) {
@@ -147,4 +159,16 @@ export function runArtifactScript(input: ArtifactScriptInput): ArtifactScriptRes
         logs,
         error: null,
     };
+}
+
+/** The function above is serialized into a container; it is never called on the host. */
+export async function runArtifactScript(input: ArtifactScriptInput): Promise<ArtifactScriptResult> {
+    try {
+        const code = `const vm = require('node:vm'); const SCRIPT_LIMITS = ${JSON.stringify(SCRIPT_LIMITS)};\nconsole.log(JSON.stringify((${artifactHandler.toString()})(${JSON.stringify(input)})));`;
+        const output = await ContainerSandbox.execute({ language: "javascript", code, timeoutMs: 10_000 });
+        if (output.exitCode !== 0) throw new Error(output.stderr || `Script exited ${output.exitCode}`);
+        return scriptResultSchema.parse(JSON.parse(output.stdout));
+    } catch (error) {
+        return { state: input.state, reply: null, sends: [], logs: [], error: error instanceof Error ? error.message : String(error) };
+    }
 }

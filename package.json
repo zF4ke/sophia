@@ -13,7 +13,15 @@
     "test": "vitest run -c vitest.config.ts",
     "test:live": "vitest run -c vitest.live.config.ts",
     "test:all": "npm run test && npm run test:live",
-    "clean": "node -e \"const fs=require('fs');const p=require('path');const dirs=['storage/runtime','storage/memory','storage/test-memory','storage/test-runtime-store','storage/logs','storage/security'];dirs.forEach(d=>{const full=p.resolve(d);try{if(fs.existsSync(full)){fs.rmSync(full,{recursive:true,force:true});fs.mkdirSync(full,{recursive:true});console.log('Cleaned '+d)}}catch(e){console.log('SKIP '+d+': '+e.code)}});const settings=p.resolve('storage/settings.json');try{if(fs.existsSync(settings)){fs.unlinkSync(settings);console.log('Removed settings.json')}}catch(e){console.log('SKIP settings.json: '+e.code)}\""
+    "clean": "node scripts/clean.mjs",
+    "state": "tsx scripts/state.ts",
+    "sandbox:build": "docker build -t sophia-sandbox:5 resources/sandbox",
+    "docs:dev": "npm --prefix website run dev",
+    "docs:build": "npm --prefix website run build",
+    "docs:preview": "npm --prefix website run preview",
+    "doctor": "tsx scripts/doctor.ts",
+    "test:sandbox": "vitest run -c vitest.live.config.ts tests/live/sandbox.live.test.ts",
+    "docs:check": "node website/scripts/check-links.mjs"
   },
   "keywords": [
     "discord",
@@ -28,11 +36,13 @@
   "author": "Pedro Silva",
   "license": "SEE LICENSE IN LICENSE",
   "type": "commonjs",
-  "description": "A conversational AI agent for Discord that searches server history and takes moderation actions through natural language, with admin approval on every write.",
+  "description": "A Discord assistant with durable tasks, scoped memory, research tools, an isolated workspace and explicit action permissions.",
   "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1",
     "@libsql/client": "^0.17.2",
     "discord.js": "^14.26.2",
     "gpt-tokenizer": "^3.4.0",
+    "linkedom": "^0.18.13",
     "openai": "^6.34.0",
     "zod": "^4.3.6"
   },

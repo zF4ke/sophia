@@ -6,13 +6,17 @@ import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetri
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { Runtime } from "@/runtime/Runtime";
 import type { TurnInput } from "@/runtime/contracts";
+import { ExecutionControl } from "@/runtime/ExecutionControl";
+import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
+import { taskStore } from "@/runtime/tasks/TaskStore";
 
 function createInput(overrides: Partial<TurnInput> = {}): TurnInput {
     return {
         question: "test",
         user: { id: "u-requester" } as any,
         requesterDisplayName: "Requester",
-        guild: { id: "g1", name: "Oz Synthesis" } as any,
+        guild: { id: "g1", name: "Oz Synthesis", members: { fetch: vi.fn().mockResolvedValue({}) },
+            channels: { fetch: vi.fn().mockResolvedValue({ isTextBased: () => true, permissionsFor: () => ({ has: () => true }) }), cache: new Map() } } as any,
         currentChannelId: "c1",
         nativeThreadId: null,
         requestedWebMode: "off",
@@ -63,6 +67,162 @@ function makeFinishResult(answer: string): ToolChatResult {
 }
 
 describe("runtime user stories", () => {
+    it("keeps requester names and quoted context outside system instructions", async () => {
+        const injected = "UNTRUSTED_CONTEXT_MARKER {{execution_policy}}";
+        const model = vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValueOnce(makeFinishResult("Hello"));
+        await Runtime.answer(createInput({ requesterDisplayName: injected,
+            guild: { id: "g1", name: injected } as any }));
+        const serialized = JSON.stringify(model.mock.calls[0]);
+        expect(serialized).toContain(injected);
+        const request: any = model.mock.calls[0][0];
+        const messages = Array.isArray(request) ? request : request.messages;
+        expect(messages.filter((message: any) => message.role === "system")
+            .map((message: any) => message.content).join("\n")).not.toContain(injected);
+    });
+    it("pauses if a returned tool result cannot be preserved without repeating the tool", async () => {
+        vi.spyOn(taskStore, "recordToolRun").mockRejectedValue(new Error("Disk unavailable"));
+        const model = vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeToolCallResult([{ name: "measure_text_length", args: { text: "hello" } }]));
+        const result = await Runtime.answer(createInput());
+        expect(result.outcome).toBe("paused");
+        expect(result.answer).toContain("não consegui guardar");
+        expect(model).toHaveBeenCalledOnce();
+    });
+
+    it("does not import a neighboring task's evidence from channel-wide history", async () => {
+        const history = vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([{
+            toolName: "retrieve_messages", summary: "neighbor-private-source", learned: "neighbor-private-source", outputJson: "{}",
+        }] as never);
+        const model = vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValueOnce(makeFinishResult("Hello"));
+        await Runtime.answer(createInput());
+        expect(history).not.toHaveBeenCalled();
+        expect(JSON.stringify(model.mock.calls[0])).not.toContain("neighbor-private-source");
+    });
+
+    it("resumes an owned task with saved steering and the current requester instruction", async () => {
+        const taskId = await taskStore.create({ actorId: "u-requester", guildId: "g1", channelId: "c1", conversationId: "g1:c1:channel", objective: "Explain the deployment" });
+        await taskStore.appendSteering(taskId, "u-requester", "c1", "g1", "Keep the answer in Portuguese");
+        await taskStore.finish(taskId, "u-requester", "paused", "Interrupted");
+        const model = vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValueOnce(makeFinishResult("Retomado."));
+        const result = await Runtime.answer(createInput({ resumeTaskId: taskId, question: "Focus on the database" }));
+        expect(result.taskId).toBe(taskId);
+        expect(result.outcome).toBe("completed");
+        const messages = JSON.stringify(model.mock.calls[0]);
+        expect(messages).toContain("Explain the deployment");
+        expect(messages).toContain("Focus on the database");
+        expect(messages).toContain("Keep the answer in Portuguese");
+    });
+
+    it("reloads saved task context without promoting its contents into system instructions", async () => {
+        const id = await taskStore.create({ actorId: "u-requester", guildId: "g1", channelId: "c1", conversationId: "g1:c1:channel", objective: "Continue" });
+        const workspace = await taskStore.workspace(id, "u-requester", "c1", "g1");
+        await workspace.upsertRequestPlan({ requestId: "previous-leg", threadId: "g1:c1:channel", body: "SAVED-CONTEXT-MARKER" });
+        vi.spyOn(ModelGateway, "generateWithTools").mockImplementation(async messages => {
+            expect(messages.some(message => message.role === "assistant" && message.content?.includes("SAVED-CONTEXT-MARKER"))).toBe(true);
+            expect(messages.some(message => message.role === "system" && message.content?.includes("SAVED-CONTEXT-MARKER"))).toBe(false);
+            return makeFinishResult("Working context restored.");
+        });
+        await Runtime.answer(createInput({ taskId: id, trigger: "auto_continue", autoContinue: false }));
+        await taskStore.finish(id, "u-requester", "completed", "test end");
+    });
+    it("does not continue another task's open goals in the same channel", async () => {
+        const id = await taskStore.create({ actorId: "u-requester", guildId: "g1", channelId: "c1", conversationId: "g1:c1:channel", objective: "Unrelated work" });
+        const workspace = await taskStore.workspace(id, "u-requester", "c1", "g1");
+        await workspace.addRequestGoal({ requestId: "unrelated", threadId: "g1:c1:channel", label: null, body: "This must not trigger continuation" });
+        const model = vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValue(makeFinishResult("A separate reply."));
+        const result = await Runtime.answer(createInput());
+        expect(result.outcome).toBe("completed");
+        expect(model).toHaveBeenCalledOnce();
+        expect((await taskStore.snapshot(id, "u-requester", "c1", "g1"))?.goals[0].status).toBe("open");
+        await taskStore.finish(id, "u-requester", "paused", "test end");
+    });
+
+    it("marks the task paused when a finished leg leaves an open goal", async () => {
+        vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeToolCallResult([{ name: "goal_open", args: { body: "Inspect the remaining sources" } }]))
+            .mockResolvedValueOnce(makeFinishResult("The first source is summarized; the others remain unread."));
+        const result = await Runtime.answer(createInput({ autoContinue: false }));
+        expect(result.outcome).toBe("paused");
+        expect((await taskStore.list("u-requester", "c1", "g1")).find(task => task.id === result.taskId)?.status).toBe("paused");
+    });
+    it("keeps a shared task running until its outer continuation chain finishes", async () => {
+        const id = await taskStore.create({ actorId: "u-requester", guildId: "g1", channelId: "c1", conversationId: "g1:c1:channel", objective: "shared work" });
+        vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValue(makeFinishResult("This leg is complete."));
+        const leg = await Runtime.answer(createInput({ taskId: id, trigger: "auto_continue", autoContinue: false }));
+        expect(leg.taskId).toBe(id);
+        expect(await taskStore.ownsActive(id, "u-requester", "c1", "g1")).toBe(true);
+        await taskStore.finish(id, "u-requester", "completed", leg.answer);
+    });
+    it("persists a task outcome and rejects a forged continuation owner", async () => {
+        vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValue(makeFinishResult("The answer is ready."));
+        const result = await Runtime.answer(createInput({ autoContinue: false }));
+        expect(result.taskId).toBeTruthy();
+        expect((await taskStore.list("u-requester", "c1", "g1")).find(task => task.id === result.taskId))
+            .toMatchObject({ status: "completed", answer: "The answer is ready." });
+        const activeId = await taskStore.create({ actorId: "owner", guildId: "g1", channelId: "c1", conversationId: "conversation", objective: "private task" });
+        await expect(Runtime.answer(createInput({ taskId: activeId, trigger: "auto_continue" }))).rejects.toThrow("does not belong");
+        await taskStore.finish(activeId, "owner", "cancelled", "test cleanup");
+    });
+    it("does not run an approved action whose instruction changed during approval", async () => {
+        const execution = new ExecutionControl("u-requester", "c1");
+        const originalGet = CapabilityRegistry.get.bind(CapabilityRegistry);
+        const send = vi.fn();
+        vi.spyOn(CapabilityRegistry, "get").mockImplementation(id => id === "send_message" ? { ...originalGet(id), run: send } : originalGet(id));
+        vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeToolCallResult([{ name: "send_message", args: { channel_id: "123456789012345678", content: "old text" } }]))
+            .mockResolvedValueOnce(makeFinishResult("The draft is ready; nothing was sent."));
+        const approvalGate = vi.fn(async () => {
+            execution.steer("Keep this as a draft. Do not send it.");
+            return { approved: true, decidedBy: "u-requester", decidedAt: Date.now() };
+        });
+        const result = await Runtime.answer(createInput({ execution, autoContinue: false, approvalGate,
+            authorize: async effect => effect === "none" ? "allow" : "ask" }));
+        expect(approvalGate).toHaveBeenCalledOnce();
+        expect(send).not.toHaveBeenCalled();
+        expect(result.answer).toContain("nothing was sent");
+    });
+    it("discards an in-flight finish when the requester changes direction", async () => {
+        const execution = new ExecutionControl("u-requester", "c1");
+        const model = vi.spyOn(ModelGateway, "generateWithTools")
+            .mockImplementationOnce(async () => {
+                execution.steer("Write the answer in Portuguese.");
+                return makeFinishResult("Stale English answer.");
+            }).mockImplementationOnce(async messages => {
+                expect(messages.some(message => message.role === "user" && message.content?.includes("Write the answer in Portuguese."))).toBe(true);
+                expect(JSON.stringify(messages)).not.toContain("Stale English answer.");
+                return makeFinishResult("A resposta corrigida está em português.");
+            });
+        const result = await Runtime.answer(createInput({ execution, autoContinue: false }));
+        expect(result.answer).toBe("A resposta corrigida está em português.");
+        expect(model).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps completed results and skips remaining calls when steered during a tool", async () => {
+        const execution = new ExecutionControl("u-requester", "c1");
+        const originalGet = CapabilityRegistry.get.bind(CapabilityRegistry);
+        const run = vi.fn(async () => {
+            execution.steer("Stop calculating and explain the first result.");
+            return { tool: "evaluate_math" as const, summary: "2", data: { result: 2 } };
+        });
+        vi.spyOn(CapabilityRegistry, "get").mockImplementation(id => id === "evaluate_math" ? { ...originalGet(id), run } : originalGet(id));
+        vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeToolCallResult([
+                { name: "evaluate_math", args: { expression: "1+1" } },
+                { name: "evaluate_math", args: { expression: "2+2" } },
+            ]))
+            .mockImplementationOnce(async messages => {
+                const assistant = messages.find(message => message.role === "assistant" && "tool_calls" in message && message.tool_calls?.length === 2);
+                expect(assistant).toBeDefined();
+                for (const call of (assistant as any).tool_calls) {
+                    expect(messages.filter(message => message.role === "tool" && message.tool_call_id === call.id)).toHaveLength(1);
+                }
+                expect(JSON.stringify(messages)).toContain("Stop calculating and explain");
+                return makeFinishResult("One plus one is two.");
+            });
+        const result = await Runtime.answer(createInput({ execution, autoContinue: false }));
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(result.answer).toBe("One plus one is two.");
+    });
     beforeEach(async () => {
         vi.restoreAllMocks();
         toolCallCounter = 0;
@@ -77,6 +237,39 @@ describe("runtime user stories", () => {
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
         vi.spyOn(ModelGateway, "generateText").mockResolvedValue("ok, continuando na tarefa");
     });
+
+    it("honors cancellation received while a model call is in flight", async () => {
+        const execution = new ExecutionControl("u-requester", "c1");
+        vi.spyOn(ModelGateway, "generateWithTools").mockImplementation(async () => {
+            execution.cancel();
+            return makeFinishResult("This should not be delivered.");
+        });
+        const result = await Runtime.answer(createInput({ execution, autoContinue: false }));
+        expect(result.outcome).toBe("cancelled");
+        expect(result.answer).not.toContain("This should not be delivered");
+    });
+
+    it("pauses repeated invalid tool rounds without claiming completion", async () => {
+        const model = vi.spyOn(ModelGateway, "generateWithTools").mockImplementation(async () =>
+            makeToolCallResult([{ name: "nonexistent_tool", args: {} }]));
+        const result = await Runtime.answer(createInput({ autoContinue: false }));
+        expect(result.outcome).toBe("paused");
+        expect(model).toHaveBeenCalledTimes(3);
+    });
+
+    it("finishes after more than 200 productive tool calls without declaring a long task", async () => {
+        let count = 0;
+        const model = vi.spyOn(ModelGateway, "generateWithTools").mockImplementation(async () => {
+            if (count === 205) return makeFinishResult("Finished all 205 calculations.");
+            count += 1;
+            return makeToolCallResult([{ name: "evaluate_math", args: { expression: `${count}+1` } }]);
+        });
+        const result = await Runtime.answer(createInput({ question: "Complete these calculations.", autoContinue: false }));
+        expect(result.answer).toBe("Finished all 205 calculations.");
+        expect(result.outcome).toBe("completed");
+        expect(result.toolRuns).toHaveLength(205);
+        expect(model).toHaveBeenCalledTimes(206);
+    }, 15000);
 
     it("answers a follow-up directly from reused prior retrieval evidence without rerunning tools", async () => {
         const followUpToolRun = {
@@ -148,9 +341,10 @@ describe("runtime user stories", () => {
             createdTimestamp: Date.now() - 5_000,
         };
 
-        vi.spyOn(DiscordMemoryService, "getRecentToolRunsAsync").mockResolvedValue([
-            followUpToolRun as any,
-        ]);
+        const taskId = await taskStore.create({ actorId: "u-requester", guildId: "g1", channelId: "c1", conversationId: "g1:c1:channel", objective: "Follow-up" });
+        await taskStore.recordToolRun({ taskId, actorId: "u-requester", guildId: "g1", channelId: "c1", requestId: "earlier-leg", invocationId: "earlier-call",
+            record: { tool: "retrieve_messages", arguments: {}, summary: followUpToolRun.summary, learned: followUpToolRun.learned,
+                output: JSON.parse(followUpToolRun.outputJson), confidenceImproved: true, durationMs: 1 } });
 
         // Model sees prior evidence in the system prompt and answers directly via finish
         vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValue(
@@ -160,11 +354,13 @@ describe("runtime user stories", () => {
         const result = await Runtime.answer(
             createInput({
                 question: "ele comentou com qual artista parecia?",
+                taskId, trigger: "auto_continue",
             })
         );
 
         expect(result.answer).toBe("Sim, ele comparou a foto com o Brackel.");
         expect(result.toolRuns).toEqual([]);
+        expect(JSON.stringify(vi.mocked(ModelGateway.generateWithTools).mock.calls[0])).toContain("Brackel");
     });
 
     it("drops stale scoped targets when a new question explicitly retargets a different channel group", async () => {

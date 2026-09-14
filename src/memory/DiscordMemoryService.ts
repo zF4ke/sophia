@@ -1,4 +1,9 @@
+import { revisedMessageSource } from "@/shared/sourceReference";
 import type { InArgs } from "@libsql/client";
+import { knowledgeStore } from "./KnowledgeStore";
+import { taskStore } from "@/runtime/tasks/TaskStore";
+import { ExecutionControl } from "@/runtime/ExecutionControl";
+import { KeyedLock } from "@/shared/KeyedLock";
 import type { Message } from "discord.js";
 import { MessageEligibility } from "@/memory/ingest/MessageEligibility";
 import { MessageNormalizer } from "@/memory/ingest/MessageNormalizer";
@@ -169,6 +174,26 @@ function mapStoredMessage(row: Record<string, unknown>): StoredMessage {
 }
 
 export class DiscordMemoryService {
+    public static async forgetRuntimeRequests(requestIds: string[]): Promise<void> {
+        if (!requestIds.length) return;
+        await this.ensureInitialized();
+        await OperationalStore.getClient().batch(["runtime_runs", "trace_events", "tool_runs", "conversation_messages"].map(table => ({ sql: `DELETE FROM ${table} WHERE request_id IN(SELECT value FROM json_each(?))`, args: [JSON.stringify(requestIds)] })), "write");
+    }
+    private static readonly messageLocks = new KeyedLock();
+    public static async deleteMessage(messageId: string, channelId: string, guildId: string | null): Promise<void> {
+        const source = `https://discord.com/channels/${guildId ?? "@me"}/${channelId}/${messageId}`;
+        await knowledgeStore.invalidateSource(source);
+        await taskStore.invalidateCorpusMessage(messageId);
+        ExecutionControl.invalidateSource(messageId);
+        await this.messageLocks.run(messageId, async () => {
+            await this.ensureInitialized();
+            await OperationalStore.getClient().batch([
+                { sql: "DELETE FROM message_chunks WHERE message_id=?", args: [messageId] },
+                { sql: "DELETE FROM messages WHERE id=?", args: [messageId] },
+            ], "write");
+            await this.refreshSnapshots();
+        });
+    }
     private static statsSnapshot = { ...EMPTY_STATS };
     private static indexStateSnapshot = new Map<string, ChannelIndexState>();
     private static knownChannelsSnapshot = new Map<string, KnownChannelRecord>();
@@ -308,6 +333,30 @@ export class DiscordMemoryService {
     }
 
     public static async ingestStoredMessage(stored: StoredMessage): Promise<void> {
+        await this.messageLocks.run(stored.id, async () => {
+            if (await taskStore.hasDeletedSources([stored.id])) return;
+            await this.ensureInitialized();
+            const previous = (await OperationalStore.getClient().execute({ sql: "SELECT content,attachments_json,reference_message_id,jump_link FROM messages WHERE id=?", args: [stored.id] })).rows[0];
+            const old = previous ? { content: String(previous.content), attachmentsJson: String(previous.attachments_json),
+                referenceMessageId: previous.reference_message_id == null ? null : String(previous.reference_message_id), jumpLink: String(previous.jump_link) } : null;
+            const latestSource = await taskStore.currentMessageSource(stored.id);
+            const previousEdit = Math.max(Number(/#sophia-revision=(\d+)-/.exec(old?.jumpLink ?? "")?.[1] ?? 0), Number(/#sophia-revision=(\d+)-/.exec(latestSource ?? "")?.[1] ?? 0));
+            const incomingEdit = Number(stored.editedTimestamp ?? /#sophia-revision=(\d+)-/.exec(stored.jumpLink)?.[1] ?? 0);
+            if (incomingEdit < previousEdit) return;
+            const changed = old && revisedMessageSource(old) !== revisedMessageSource(stored);
+            const base = stored.jumpLink.split("#")[0];
+            if (changed || stored.editedTimestamp || stored.jumpLink.includes("#") || await knowledgeStore.isSourceInvalid(base)) stored = { ...stored, jumpLink: revisedMessageSource(stored) };
+            else if (old) stored = { ...stored, jumpLink: old.jumpLink };
+            if (await knowledgeStore.isSourceInvalid(stored.jumpLink)) return;
+            if (changed || (!old && stored.editedTimestamp)) {
+                ExecutionControl.invalidateSource(stored.id);
+                for (const source of new Set([base, ...old ? [old.jumpLink, revisedMessageSource(old)] : []])) await knowledgeStore.invalidateSource(source, false);
+                await taskStore.invalidateCorpusMessage(stored.id, false, stored.jumpLink);
+            }
+            await this.ingestStoredMessageInternal(stored);
+        });
+    }
+    private static async ingestStoredMessageInternal(stored: StoredMessage): Promise<void> {
         await this.ensureInitialized();
         const client = OperationalStore.getClient();
         const existingChunkCount = (

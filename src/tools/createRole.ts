@@ -41,19 +41,19 @@ export const createRoleTool: ToolDefinition = {
     catalog: {
         effect: "write",
         description:
-            "Create a new role in the guild. Write — requires admin approval.",
+            "Create a new role in the guild. Write — follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Create a new role in the guild. This is a WRITE action that requires admin approval. Use only when explicitly asked to create a role.",
+            "Create a new role in the guild. This is a WRITE action that follows the requester action tier and approval mode. Use only when explicitly asked to create a role.",
         parameters,
     },
 
     capability: {
         description:
-            "Create a new role in the guild. Write — requires admin approval.",
+            "Create a new role in the guild. Write — follows the requester action tier and approval mode.",
         inputSchema: z.object({
             name: z.string().describe("Name for the new role."),
             color: z
@@ -75,7 +75,7 @@ export const createRoleTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist"],

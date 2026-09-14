@@ -1,112 +1,65 @@
-import path from "path";
-import { beforeEach, describe, expect, it } from "vitest";
-import { SettingsService } from "@/app/SettingsService";
-import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
-import { OperationalStore } from "@/runtime/storage/OperationalStore";
-import { memoryRememberTool, memorySearchTool } from "@/tools/longTermMemory";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AppPaths } from "@/app/AppPaths";
+import { KnowledgeStore, knowledgeStore } from "@/memory/KnowledgeStore";
+import { memoryRememberTool, memorySearchTool, memoryUpdateTool, memoryForgetTool } from "@/tools/longTermMemory";
 import type { CapabilityContext } from "@/tools/types";
 
-function context(guildId: string | null, actorId: string | null): CapabilityContext {
-    return {
-        guild: guildId ? ({ id: guildId } as any) : null,
-        question: "memory test",
-        actorId,
-    } as CapabilityContext;
+let store: KnowledgeStore;
+const audience = { actorId: "u1", guildId: "g1", channelId: "c1" };
+function context(actorId = "u1", guildId: string | null = "g1", channelId = "c1"): CapabilityContext {
+    return { actorId, guild: guildId ? { id: guildId, members: { fetch: async () => ({ id: actorId }) }, channels: { fetch: async () => ({ isTextBased: () => true, permissionsFor: () => ({ has: () => true }) }) } } as never : null, currentChannelId: channelId, question: "Memory" };
 }
+beforeEach(() => {
+    store = new KnowledgeStore(path.join(AppPaths.storageRoot, `${randomUUID()}.sqlite`));
+    vi.spyOn(knowledgeStore, "remember").mockImplementation(store.remember.bind(store));
+    vi.spyOn(knowledgeStore, "search").mockImplementation(store.search.bind(store));
+    vi.spyOn(knowledgeStore, "revise").mockImplementation(store.revise.bind(store));
+    vi.spyOn(knowledgeStore, "ownedMetadata").mockImplementation(store.ownedMetadata.bind(store));
+});
+afterEach(async () => { vi.restoreAllMocks(); await store.close(); });
 
-async function remember(
-    guildId: string | null,
-    actorId: string | null,
-    args: { key: string; value: string; scope?: string },
-) {
-    return memoryRememberTool.capability.run(context(guildId, actorId), args as any);
-}
-
-function keysOf(data: unknown): string[] {
-    return (data as { memories: Array<{ key: string }> }).memories.map((m) => m.key);
-}
-
-describe("long-term memory tools (FTS search)", () => {
-    beforeEach(async () => {
-        const operationalDbPath = path.join(
-            process.cwd(),
-            "storage",
-            "test-memory",
-            `ltm-${Date.now()}-${Math.random()}.sqlite`,
-        );
-        const checkpointDbPath = path.join(
-            process.cwd(),
-            "storage",
-            "test-memory",
-            `ltm-checkpoint-${Date.now()}-${Math.random()}.sqlite`,
-        );
-        process.env.DISCORD_TOKEN = "test-token";
-        process.env.OPENROUTER_API_KEY = "test-key";
-        SettingsService.update({
-            runtime: {
-                ...SettingsService.load().runtime,
-                operationalDbPath,
-                checkpointDbPath,
-            },
-        });
-        await DiscordMemoryService.resetForTests();
+describe("durable memory tools", () => {
+    it("keeps private memories out of public discovery while recalling them privately in another guild", async () => {
+        await memoryRememberTool.capability.run({ ...context(), privateResponse: true }, { key: "personal-project", value: "Private project checkpoint" });
+        expect((await memorySearchTool.capability.run(context(), {})).data).toMatchObject({ memories: [] });
+        expect((await memorySearchTool.capability.run({ ...context("u1", "g2", "c2"), privateResponse: true }, {})).data).toMatchObject({ memories: [{ key: "personal-project", scope: "user" }] });
+        expect((await memorySearchTool.capability.run({ ...context("u2", "g2", "c2"), privateResponse: true }, {})).data).toMatchObject({ memories: [] });
+        await expect(memoryRememberTool.capability.run({ ...context(), privateResponse: true }, { key: "private-fact", value: "Sensitive fact", scope: "guild" })).rejects.toThrow("private conversation");
     });
-
-    it("finds memories by keyword with diacritic-insensitive prefix matching", async () => {
-        await remember("g1", "u1", { key: "deploy-prefs", value: "Preferem pnpm nos deploys em São Paulo" });
-        await remember("g1", "u1", { key: "owner-note", value: "O aniversário do servidor é em março" });
-
-        const diacritic = await memorySearchTool.capability.run(context("g1", "u1"), { query: "sao paulo" });
-        expect(keysOf(diacritic.data)).toEqual(["deploy-prefs"]);
-
-        const prefix = await memorySearchTool.capability.run(context("g1", "u1"), { query: "dep" });
-        expect(keysOf(prefix.data)).toContain("deploy-prefs");
+    it("finds accented words and prefixes while preserving source links", async () => {
+        await memoryRememberTool.capability.run(context(), { key: "deploy-prefs", value: "Preferem pnpm em São Paulo", sources: ["https://discord.com/channels/g1/c1/m1"] });
+        for (const query of ["sao paulo", "dep"]) {
+            const output = await memorySearchTool.capability.run(context(), { query });
+            expect(output.data).toMatchObject({ memories: [{ key: "deploy-prefs", sources: ["https://discord.com/channels/g1/c1/m1"] }] });
+        }
     });
-
-    it("keeps memories guild-scoped", async () => {
-        await remember("g1", "u1", { key: "secret-g1", value: "only in guild one" });
-        await remember("g2", "u1", { key: "secret-g2", value: "only in guild two" });
-
-        const fromG1 = await memorySearchTool.capability.run(context("g1", "u1"), { query: "secret" });
-        expect(keysOf(fromG1.data)).toEqual(["secret-g1"]);
+    it("enforces channel, guild and personal audiences across locations", async () => {
+        await store.remember(audience, { key: "channel", value: "private channel fact", scope: "channel" });
+        await store.remember(audience, { key: "guild", value: "shared guild fact", scope: "guild" });
+        await store.remember(audience, { key: "personal", value: "owner preference", scope: "user" });
+        expect((await store.search({ ...audience, actorId: "u2" })).map(m => m.key)).toEqual(["guild", "channel"]);
+        expect((await store.search({ ...audience, channelId: "c2" })).map(m => m.key)).toEqual(["guild"]);
+        expect(await store.search({ ...audience, guildId: "g2", channelId: "c2" })).toEqual([]);
+        expect((await store.search({ actorId: "u1", guildId: null, channelId: "dm" })).map(m => m.key)).toEqual(["personal"]);
+        expect(await store.search({ actorId: "u2", guildId: null, channelId: "dm" })).toEqual([]);
     });
-
-    it("hides other users' user-scoped memories but shows their own", async () => {
-        await remember("g1", "u1", { key: "alice-pref", value: "alice likes night mode", scope: "user" });
-        await remember("g1", "u2", { key: "bob-pref", value: "bob likes light mode", scope: "user" });
-        await remember("g1", null, { key: "shared-rule", value: "no politics in general" });
-
-        const forAlice = await memorySearchTool.capability.run(context("g1", "u1"), { query: "" });
-        const aliceKeys = keysOf(forAlice.data);
-        expect(aliceKeys).toContain("alice-pref");
-        expect(aliceKeys).not.toContain("bob-pref");
-        expect(aliceKeys).toContain("shared-rule");
-
-        const forBob = await memorySearchTool.capability.run(context("g1", "u2"), { query: "mode" });
-        expect(keysOf(forBob.data)).toEqual(["bob-pref"]);
+    it("uses revision checks and ownership for correction and forgetting", async () => {
+        const memory = await store.remember(audience, { key: "preference", value: "old preference", scope: "channel" });
+        const args = { memory_id: memory.id, revision: 1, value: "new preference" };
+        await expect(memoryUpdateTool.capability.run(context("u2"), args)).rejects.toThrow();
+        await memoryUpdateTool.capability.run(context(), args);
+        await expect(memoryUpdateTool.capability.run(context(), args)).rejects.toThrow();
+        await memoryForgetTool.capability.run(context(), { memory_id: memory.id, revision: 2 });
+        expect(await store.search(audience)).toEqual([]);
+        await expect(store.remember(audience, { key: "preference", value: "old preference", scope: "channel" })).rejects.toThrow("forgotten");
     });
-
-    it("lists recent memories when query is empty", async () => {
-        await remember("g1", "u1", { key: "old", value: "first saved" });
-        await remember("g1", "u1", { key: "new", value: "second saved" });
-
-        const result = await memorySearchTool.capability.run(context("g1", "u1"), {});
-        expect(keysOf(result.data)).toEqual(["new", "old"]);
-    });
-
-    it("rebuilds the FTS index for rows written before the index existed", async () => {
-        await remember("g1", "u1", { key: "legacy", value: "written before backfill ran" });
-
-        // Simulate a legacy DB: wipe the FTS mirror + marker, then re-init.
-        const c = OperationalStore.getClient();
-        await c.executeMultiple(`
-            DELETE FROM long_term_memories_fts;
-            DELETE FROM runtime_metadata WHERE key = 'ltm_fts_backfilled';
-        `);
-        await OperationalStore.reset();
-        await OperationalStore.initialize();
-
-        const result = await memorySearchTool.capability.run(context("g1", "u1"), { query: "legacy" });
-        expect(keysOf(result.data)).toEqual(["legacy"]);
+    it("keeps the same identity and knowledge after reopening", async () => {
+        const first = await store.identity();
+        await store.remember(audience, { key: "retained", value: "durable fact", scope: "channel" });
+        await store.close();
+        expect(await store.identity()).toEqual(first);
+        expect(await store.search(audience)).toHaveLength(1);
     });
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { captureDerivedSources } from "@/security/DerivedSources";
 import { T } from "@/shared/discordTools";
 import { sendInteractiveArtifact } from "@/discord/artifacts/ArtifactSession";
 import { validateArtifactSpec } from "@/discord/artifacts/ArtifactBuilder";
@@ -153,6 +154,7 @@ const parameters = {
 
 export const artifactSendTool: ToolDefinition = {
     name: T.artifact_send,
+    publicationTarget: (context, args) => String(args.channel_id || context.currentChannelId || ""),
 
     catalog: {
         effect: "write",
@@ -204,7 +206,7 @@ export const artifactSendTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist"],
@@ -230,6 +232,8 @@ export const artifactSendTool: ToolDefinition = {
 
             const sent = await sendInteractiveArtifact(channel, spec, {
                 guildId: context.guild.id,
+                ownerId: context.actorId,
+                sources: await captureDerivedSources(context),
                 ttlDays: spec.ttlDays ?? 0,
             });
 
@@ -237,6 +241,7 @@ export const artifactSendTool: ToolDefinition = {
             return {
                 tool: T.artifact_send,
                 summary: `Artifact "${spec.title}" sent in ${channelMention} (${spec.sections.length} section(s)${spec.navigation ? `, ${spec.navigation.type} nav` : ""}${spec.ttlDays ? `, TTL ${spec.ttlDays}d` : ""}).`,
+                errorMessage: sent.persistenceError,
                 data: {
                     messageId: sent.messageId,
                     channelId: sent.channelId,

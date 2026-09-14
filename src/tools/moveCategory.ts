@@ -26,26 +26,26 @@ export const moveCategoryTool: ToolDefinition = {
     catalog: {
         effect: "write",
         description:
-            "Move a category to a new position in the guild. Write — requires admin approval.",
+            "Move a category to a new position in the guild. Write — follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Move a category to a different position in the guild channel list. This is a WRITE action that requires admin approval. Use to reorder categories.",
+            "Move a category to a different position in the guild channel list. This is a WRITE action that follows the requester action tier and approval mode. Use to reorder categories.",
         parameters,
     },
 
     capability: {
         description:
-            "Move a category to a different position in the guild. Write — requires admin approval.",
+            "Move a category to a different position in the guild. Write — follows the requester action tier and approval mode.",
         inputSchema: z.object({
             category_id: z.string().describe("Category ID to move."),
             position: z.number().describe("New position index. 0 = top."),
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist"],

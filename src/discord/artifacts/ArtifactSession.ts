@@ -12,6 +12,7 @@ export interface SentArtifact {
     messageId: string;
     channelId: string;
     messageUrl: string;
+    persistenceError?: string;
 }
 
 /**
@@ -22,7 +23,7 @@ export interface SentArtifact {
 export async function sendInteractiveArtifact(
     channel: SendableChannels,
     spec: ArtifactSpec,
-    opts: { guildId: string | null; ttlDays: number },
+    opts: { guildId: string | null; ttlDays: number; ownerId?: string | null; sources?: string[] },
 ): Promise<SentArtifact> {
     const nonce = newNonce();
     const built = buildArtifactComponents(spec, { section: 0 }, nonce);
@@ -38,16 +39,17 @@ export async function sendInteractiveArtifact(
     } as never);
 
     const expiresAt = artifactExpiryTimestamp(opts.ttlDays);
-    try {
-        await ArtifactStore.record({
+    try { await ArtifactStore.record({
             messageId: message.id,
             channelId: channel.id,
-            guildId: opts.guildId,
+              guildId: opts.guildId,
+              ownerId: opts.ownerId,
+            sources: opts.sources,
             expiresAt,
             specJson: JSON.stringify(spec),
-        });
-    } catch {
-        // TTL bookkeeping must never fail the send itself.
+        }); } catch {
+        return { messageId: message.id, channelId: channel.id, messageUrl: message.url,
+            persistenceError: `Card message ${message.id} was sent, but its editable state could not be saved. Do not send a duplicate; inspect the existing message.` };
     }
 
     return { messageId: message.id, channelId: channel.id, messageUrl: message.url };

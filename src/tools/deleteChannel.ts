@@ -25,26 +25,26 @@ export const deleteChannelTool: ToolDefinition = {
     catalog: {
         effect: "destructive",
         description:
-            "Delete a channel from the guild. Destructive — requires admin approval.",
+            "Delete a channel from the guild. Destructive — follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Delete a channel from the guild. This is a DESTRUCTIVE action that requires admin approval. Use only when explicitly asked to delete a channel.",
+            "Delete a channel from the guild. This is a DESTRUCTIVE action that follows the requester action tier and approval mode. Use only when explicitly asked to delete a channel.",
         parameters,
     },
 
     capability: {
         description:
-            "Delete a channel from the guild. Destructive — requires admin approval.",
+            "Delete a channel from the guild. Destructive — follows the requester action tier and approval mode.",
         inputSchema: z.object({
             channel_id: z.string().describe("Channel ID to delete."),
             reason: z.string().optional().describe("Reason for deletion."),
         }),
         outputSchema: z.any(),
         sideEffectLevel: "destructive",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist", "channel must exist"],

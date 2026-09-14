@@ -1,4 +1,5 @@
 export interface StoredMessage {
+    editedTimestamp?: number | null;
     id: string;
     guildId: string | null;
     channelId: string;

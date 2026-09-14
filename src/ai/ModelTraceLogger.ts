@@ -54,10 +54,15 @@ export class ModelTraceLogger {
     public static log(entry: ModelTraceEntry): void {
         try {
             FileSystemService.ensureDirectoryExists(LOGS_DIR);
-            fs.appendFileSync(getLogFilePath(), `${JSON.stringify(entry)}\n`, "utf8");
+            const messages = entry.messages.map(message => {
+                const { audio, images, ...text } = message as ToolTraceMessage & { audio?: Array<{ data: string; format: string }>; images?: Array<{ url: string }> };
+                return { ...text,
+                    ...(audio ? { audio: audio.map(clip => ({ format: clip.format, bytes: Buffer.byteLength(clip.data, "base64") })) } : {}),
+                    ...(images ? { images: images.map(image => ({ ...image, url: image.url.startsWith("data:") ? "[inline image omitted]" : image.url })) } : {}) };
+            });
+            fs.appendFileSync(getLogFilePath(), `${JSON.stringify({ ...entry, messages })}\n`, "utf8");
         } catch (error) {
             console.error("Error writing model trace log:", error);
         }
     }
 }
-

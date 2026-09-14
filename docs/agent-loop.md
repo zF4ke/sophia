@@ -1,176 +1,45 @@
-# Agent Loop
+# Agent loop
 
-Sophia uses a while-loop with native function calling. One unified system prompt gives the model context and tools. The model calls tools iteratively and calls `finish` when it has an answer.
+Sophia uses native function calling in one model-led loop. It does not use a separate deterministic intent router.
 
-## Loop Shape
+## A turn
 
-1. Ingest turn (normalize input, resolve conversation key)
-2. Load memory (recent turns, channel context, prior evidence from persisted tool runs)
-3. Build system prompt (`runtime/agent_loop` with all context injected)
-4. Enter while-loop: model receives messages and available tools via `generateWithTools`
-5. Model calls tools → runtime validates and executes them → results fed back as tool messages
-6. Write/destructive tool calls pass through the approval gate before execution
-7. Model calls `finish` → loop exits with the answer
-8. Persist runtime run, tool runs, and trace events
+1. Normalize the authenticated event, including attachments, reply authorship and response visibility.
+2. Create or verify an owned task in the current location. Explicit resume claims inactive work atomically and refuses unresolved actions.
+3. Load recent conversation context and the current task's saved evidence, notes, goals and eligible memory hints.
+4. Render `runtime/agent_loop` from authenticated identifiers and configuration. Put source context in separate messages, then retain the actual user request.
+5. Estimate the next request including tool schemas and media overhead. Reserve output space, prune or compact if necessary, and pause if the required context still cannot fit.
+6. Send the selected model the transcript and visible tools. Persist returned main-loop usage before applying its decision.
+7. Recheck steering and authority. Validate calls; obtain caller-owned approval for changes when required; persist mutation intent before dispatch.
+8. Save tool evidence and action receipts. Append every tool response before inserting visual evidence for the next model turn.
+9. Accept a supported final answer or continue useful tool work. Persist outcomes and bind actual delivered messages through the adapter.
 
-If the model never calls `finish`, the runtime produces a conversational fallback based on whatever evidence was collected.
+## Task continuity
 
-## Conversation Entry
+`ExecutionControl` is shared across continuation turns. There is no default total call or time limit, and no note quota. An explicit `runtime.toolCallLimit` pauses at its configured threshold; zero disables it. Tool/network/container deadlines bound individual operations and do not declare the task complete.
 
-All conversational entrypoints feed the same runtime:
-- `/talk`
-- mentions
-- replies
+The same task owns all continuation notes, plans, goals, files and evidence. Continuation preserves the original user instruction and carries unfinished state as source context. It never claims new approval, invents user unavailability or starts a second executor. Paused and failed results do not automatically restart.
 
-Replies add referenced-message context, but they do not fork into a separate runtime.
+`/steer` persists corrections from the authenticated owner or a named collaborator on a public task. Collaborator corrections carry their user ID and require owner approval for subsequent changes. A correction invalidates a stale model decision and skips unstarted calls; completed effects remain recorded. `/stop` cooperatively cancels the owner's work. In-flight external operations can finish after cancellation.
 
-## Capability Model
+## Narrow failure handling
 
-The model sees these capabilities as native function-calling tools:
+Capability/schema validation happens before dispatch. Repeated unchanged calls and repeated failures trigger bounded corrections or pause. Useful changing cursors can continue. Provider errors, missing credentials and context capacity failures remain distinct from completion.
 
-### Read & Discovery Tools
-- `retrieve_messages` — cache-first scoped history search with semantic lane, pagination, time bounds, author filters
-- `resolve_member_identity` — resolve members by ID, username, nickname, display name (batch)
-- `list_guild_structure` — list readable channels/categories + cached-only remembered entries
-- `resolve_channel_targets` — resolve channel/category names, IDs, mentions; expands categories to child channels
-- `get_member_profile` — rich profile data (roles, join date, account created, Nitro, avatar, etc.)
-- `list_members` — live guild members with offset pagination and optional name filter
-- `get_guild_context` — guild-level metadata (name, member count, etc.)
-- `get_role_info` — role details (members, permissions, color, position)
-- `list_threads` — active + recently archived threads in a channel
-- `read_thread_messages` — read messages from a specific thread
+Mutation receipts record exact validated arguments, dispatch intent and returned resource identifiers. A lost connection or failed receipt after dispatch is an unknown outcome. The runtime pauses before asking the model to retry. Explicit owner verification can resolve uncertainty, but never executes the action again.
 
-### Utility Tools
-- `measure_text_length` — count characters, words, lines
-- `evaluate_math` — safe arithmetic evaluation
+## Context and sources
 
-### Write Tools (require admin approval)
-- `create_channel` — create a new channel
-- `create_category` — create a new category
-- `create_thread` — create a thread in a channel
-- `move_channel` — move a channel to a different category/position
-- `manage_member_roles` — add/remove roles from a member
-- `send_message` — send a message to a channel or thread
+`task_tool_runs` retains full results beyond model context trimming. `source_read` paginates a captured web source without refetching. Context selection is not a reusable tool-result cache and cannot substitute old observations for requested current reads.
 
-### Destructive Tools (require approval + confirmation)
-- `clear_messages` — delete messages from a channel
-- `delete_channel` — permanently delete a channel
+Compaction keeps the original request and whole tool-call/result groups. The summarizer receives source excerpts as user data; summaries remain assistant working context. Voice changes presentation only. Prompt interpolation is single-pass.
 
-### Control
-- `finish` — delivers the final answer and exits the loop
-- `start_long_task` — declares the current task needs an elevated tool-call budget (runtime-intercepted, never dispatched to capability layer; also auto-raised on large explicit corpora)
+## Delivery
 
-### Workflow Tools
-- `workflow_create`, `workflow_list`, `workflow_run`, `workflow_delete` — saved tool chains stored per guild. `workflow_delete` removes a saved workflow by name.
+Normal conversation uses text. Cards and files use their dedicated delivery paths. Private interaction approvals remain ephemeral. Scheduling requires a saved schedule receipt; an ordinary finish cannot promise future execution. Conditional scheduled checks may suppress an unchanged completed result while preserving its findings. Failure and blocked-tool outcomes remain reportable.
 
-### Artifact Tools
-- `artifact_send` — send an interactive Components V2 card (sections, optional tab dropdown or pagination, link buttons, TTL auto-deletion). Spec is validated before send.
-- `artifact_edit` — edit a previously sent card in place by `message_id`, changing only the given fields; the merged spec is re-validated.
+See [task lifecycle](task-lifecycle.md), [access policy](access-policy.md), [workspace and media](workspace-and-media.md), and [the remaining v5 release work](v5-plan.md).
 
-Tool schemas are defined in `src/runtime/toolSchemas.ts`. Capability handlers are registered in `src/capabilities/CapabilityRegistry.ts`.
+## Conversational follow-ups
 
-## Approval Gate
-
-Write and destructive tool calls do not execute immediately. They pass through an approval gate:
-
-- **Write tools**: An approval card is shown to the admin with Aceitar (approve) / Recusar (deny) buttons. If `autoApproveWrites` is enabled in settings, these are auto-approved.
-- **Destructive tools**: Always require explicit admin approval via an approval card, followed by a confirmation dialog ("Esta ação é destrutiva. Tens a certeza?").
-- **Batch destructive**: Multiple destructive calls in the same model response are grouped into a single batch approval card. The batch card shows all pending actions and allows approve-all, deny-all, or approve-by-category (grouped by Discord parent category).
-
-Approval cards include:
-- Tool name and description
-- Side-effect level badge (yellow for write, red for destructive)
-- Timeout countdown (configurable via `approvalTimeoutMs`)
-- Post-action status icons (✅ approved, ❌ denied, ✏️ corrected, ⏳ timed out, 🛑 stopped)
-
-The "Recusar e corrigir" button opens a modal where the admin can explain what should be done differently. That feedback is returned to the model.
-
-## Retrieval Deep Dive
-
-`retrieve_messages` is the main Discord evidence path. It is history-first and lane-based:
-- ordered scoped history messages are the default lane
-- semantic matches are a second lane from the same scoped channels
-- retrieval can continue across turns through a persisted scoped session without rereading duplicate messages
-
-Continuation inputs are intentionally gated:
-- cursor + excluded message ids are reused only for explicit continuation intent
-- fresh follow-up turns in the same scope do not automatically inherit dedupe exclusions
-
-For strict scoped reads (author/time bounded), retrieval performs guarded empty-result recovery:
-- retry once without excluded ids
-- retry once without cursor when needed
-- record diagnostics in tool output and debug timeline
-
-## Runtime Guardrails
-
-Hard limits:
-- max tool calls per turn (configurable, default 25, range 2–30; raiseable to 200 via `start_long_task` or automatically on large explicit corpora)
-- repeated-call guard (same tool + same arguments blocked)
-- context overflow pruning (old tool outputs are pruned when approaching the context window)
-
-### Stall Guard
-
-When the model calls `finish`, the runtime checks for empty-promise stalling. If the answer contains a promise phrase but no productive tool ran and no productive evidence was produced, the finish is rejected and the model is told to call tools instead. At most 2 corrections are allowed per turn.
-
-`finish` must be the only call in a model response. If the model mixes it with executable tool calls, the runtime executes the other calls and rejects the premature finish. The model must read the results before answering.
-
-### Artifact Guard
-
-If the model attempts `artifact_send` and the send fails (validation error or execution failure), the turn is locked: `finish` and raw-text answers are rejected with the exact validation problem, and the model must call `artifact_send` again with corrected arguments. Two corrections are allowed per turn; after that the best-effort answer goes through. A successful send clears the lock immediately.
-
-## Tool execution
-
-`ToolExecutor` is the only module that invokes capability implementations. It validates arguments with the capability's Zod schema, converts thrown errors into tool results, extracts evidence, and returns a durable invocation record. The runtime owns approval, budgets, conversation messages, and persistence around that result.
-
-The registry rejects duplicate names and rejects any mismatch between the catalog effect and the capability side-effect level. This keeps approval policy from drifting across two metadata fields.
-
-### Long-Task Budget
-
-The `start_long_task` tool allows the model to self-declare that a task needs more budget. The runtime intercepts the call (it is never dispatched to the capability layer) and raises `maxToolCalls` up to the hard cap (200 calls), plus the evidence slice floor. Idempotent per turn. The runtime also raises the budget automatically when the user asked for a large explicit corpus or pagination keeps missing its target, so long work does not depend on the model remembering to declare it. When in doubt whether the task is long, the model should ask the user in one sentence. There is no wall-clock cap on turns: long work is bounded by the tool-call budget, not by the clock.
-
-## Context Retention
-
-Sophia can read through thousands of stored Discord messages across multiple `retrieve_messages` calls, but it does not keep all of those rows in the live model context at once.
-
-What is kept in the prompt:
-- the unified system prompt
-- the current user message
-- recent conversation turns (`maxPriorTurns`)
-- recent ambient channel messages (`maxChannelMessages`)
-- prior evidence reconstructed from persisted tool runs (`maxEvidenceSlice`)
-- the latest tool interaction inside the active loop
-
-What is trimmed or pruned:
-- old tool outputs are pruned first when prompt usage reaches about 80% of the selected model profile context window
-- each individual tool result injected back into the loop is capped before insertion
-- older persisted evidence outside the configured carry-over slice is dropped before the next turn starts
-
-The practical effect is: retrieval can search very deep history, but the prompt keeps only a bounded working set plus the newest loop messages.
-
-Soft exit:
-- model calls `finish` when it has enough
-- fallback answer when model produces no tool calls and no text
-
-## Mutating Tool Output Contract
-
-For all `write` and `destructive` capabilities (current and future), tool output must be mention-ready so post-action confirmations can reference the exact affected resource.
-
-Required shape and behavior:
-- `summary` must include a concrete resource identifier, not only a display name.
-- `data` must include stable IDs and a mention-ready field when relevant (example for channels: `channelId` and `channelMention` with `<#id>`).
-- Final user-facing confirmations should reuse these identifiers from tool output to avoid ambiguity.
-
-## Message Evidence Rule
-
-Questions like "what did X say" or "what happened in channel Y" require message evidence from `retrieve_messages`. Live member or guild metadata alone is not enough.
-
-For channel and category questions, the expected evidence order is:
-1. resolve the target scope
-2. inspect structure if category expansion is needed
-3. read scoped history
-4. supplement with scoped semantic matches only when needed
-
-When evidence is weak, the runtime should continue the conversation with the best grounded interpretation it can produce, then ask a targeted follow-up or continue retrieval instead of stopping cold.
-
-Safety override:
-- if confidence is `insufficient` and there is no strong message evidence, synthesis must avoid speculative factual/entity claims.
+The normal model loop can use task_search and task_control to interpret mentions and replies as steering, stopping or continuation, while unrelated questions remain new turns. Task controls operate on owner-scoped work and never authorize external writes. The selection turn finishes before a prior workspace reopens; its sources and unresolved actions are rechecked.

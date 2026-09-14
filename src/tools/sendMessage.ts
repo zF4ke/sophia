@@ -25,23 +25,24 @@ const parameters = {
 
 export const sendMessageTool: ToolDefinition = {
     name: T.send_message,
+    publicationTarget: (_context, args) => String(args.channel_id),
 
     catalog: {
         effect: "write",
         description:
-            "Send a message to a specific channel or thread. Write — requires admin approval.",
+            "Send a message to a specific channel or thread. Write — follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Send a message to a specific channel or thread. Write action — requires admin approval. Use this when the user explicitly asks to send or post a message somewhere.",
+            "Send a message to a specific channel or thread. Write action — follows the requester action tier and approval mode. Use this when the user explicitly asks to send or post a message somewhere.",
         parameters,
     },
 
     capability: {
         description:
-            "Send a message to a specific channel or thread. Write action — requires admin approval.",
+            "Send a message to a specific channel or thread. Write action — follows the requester action tier and approval mode.",
         inputSchema: z.object({
             channel_id: z
                 .string()
@@ -54,7 +55,7 @@ export const sendMessageTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist"],

@@ -26,23 +26,24 @@ const parameters = {
 
 export const editMessageTool: ToolDefinition = {
     name: T.edit_message,
+    publicationTarget: (_context, args) => String(args.channel_id),
 
     catalog: {
         effect: "write",
         description:
-            "Edit an existing message sent by the bot. Write — requires admin approval.",
+            "Edit an existing message sent by the bot. Write — follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Edit an existing message that was sent by the bot. This is a WRITE action that requires admin approval. Use only when explicitly asked to edit a message. The bot can only edit its own messages. IMPORTANT: You must obtain the real message ID first — use search_messages (e.g. with author_type 'bot' in the target channel, or content keywords) to find the message, then pass its ID here. Never guess or fabricate a message ID.",
+            "Edit an existing message that was sent by the bot. This is a WRITE action that follows the requester action tier and approval mode. Use only when explicitly asked to edit a message. The bot can only edit its own messages. IMPORTANT: You must obtain the real message ID first — use search_messages (e.g. with author_type 'bot' in the target channel, or content keywords) to find the message, then pass its ID here. Never guess or fabricate a message ID.",
         parameters,
     },
 
     capability: {
         description:
-            "Edit an existing message sent by the bot. Write — requires admin approval.",
+            "Edit an existing message sent by the bot. Write — follows the requester action tier and approval mode.",
         inputSchema: z.object({
             channel_id: z.string().describe("Channel ID where the message is."),
             message_id: z.string().describe("ID of the message to edit."),
@@ -50,7 +51,7 @@ export const editMessageTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: [

@@ -25,7 +25,7 @@ describe("workflow tools", () => {
 
     it("loads steps without executing nested mutations outside the runtime", async () => {
         const context = {
-            guild: { id: "guild" } as any,
+            guild: { id: "guild" } as any, actorId: "owner", currentChannelId: crypto.randomUUID(),
             question: "create and run a workflow",
         };
         await CapabilityRegistry.get("workflow_create").run(context, {
@@ -38,7 +38,7 @@ describe("workflow tools", () => {
             name: "setup",
         });
 
-        expect(result.data).toEqual({
+        expect(result.data).toMatchObject({
             name: "setup",
             executionRequired: true,
             steps: [{
@@ -52,7 +52,7 @@ describe("workflow tools", () => {
 
     it("deletes a saved workflow and reports missing names", async () => {
         const context = {
-            guild: { id: "guild" } as any,
+            guild: { id: "guild" } as any, actorId: "owner", currentChannelId: crypto.randomUUID(),
             question: "delete a workflow",
         };
         await CapabilityRegistry.get("workflow_create").run(context, {
@@ -64,7 +64,7 @@ describe("workflow tools", () => {
         const deleted = await CapabilityRegistry.get("workflow_delete").run(context, {
             name: "demo-resumo",
         });
-        expect(deleted.data).toEqual({ name: "demo-resumo", removed: true });
+        expect(deleted.data).toMatchObject({ name: "demo-resumo", removed: true });
 
         const listed = await CapabilityRegistry.get("workflow_list").run(context, {});
         expect(listed.data).toEqual({ workflows: [] });

@@ -348,7 +348,7 @@ describe("runtime start_long_task interception", () => {
         expect(generateSpy).toHaveBeenCalledTimes(4);
     });
 
-    it("omitting estimates raises the budget to the hard cap", async () => {
+    it("prepares long-task context without introducing a call cap", async () => {
         const recordSpy = vi.spyOn(DiscordMemoryService, "recordRuntimeRun")
             .mockResolvedValue(undefined);
         vi.spyOn(ModelGateway, "generateWithTools")
@@ -360,7 +360,8 @@ describe("runtime start_long_task interception", () => {
         expect(result.answer).toBe("Done.");
         const persistedArgs = recordSpy.mock.calls.at(-1)?.[0] as { traceEvents: Array<{ label: string; detail: string }> };
         const longTaskTrace = persistedArgs.traceEvents.find((t) => t.label === "long_task");
-        expect(longTaskTrace?.detail).toMatch(/calls=200/);
+        expect(longTaskTrace?.detail).toContain("Long-task context prepared");
+        expect(longTaskTrace?.detail).not.toContain("calls=");
     });
 
     it("second start_long_task call in same turn is idempotent", async () => {

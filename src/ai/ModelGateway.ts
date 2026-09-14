@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { ModelUsage } from "./ModelUsage";
 import { EmptyModelOutputError } from "@/ai/EmptyModelOutputError";
 import { ModelTraceLogger } from "@/ai/ModelTraceLogger";
 import { getAppConfig } from "@/app/AppConfig";
@@ -14,6 +15,8 @@ import type {
 type ChatMessage = {
     role: "system" | "user" | "assistant";
     content: string;
+    images?: Array<{ url: string; detail?: "auto" | "low" | "high" }>;
+    audio?: Array<{ data: string; format: "wav" | "mp3" }>;
 };
 
 export type ToolCallMessage = {
@@ -38,6 +41,17 @@ export type ToolCall = {
 };
 
 export type ToolChatMessage = ChatMessage | ToolCallMessage | ToolResultMessage;
+
+export function providerMessages(messages: ToolChatMessage[]): unknown[] {
+    return messages.map(message => {
+        if (message.role !== "user") return message;
+        const { images, audio, ...textMessage } = message;
+        if (!images?.length && !audio?.length) return textMessage;
+        return { ...textMessage, content: [{ type: "text", text: message.content },
+            ...(images ?? []).map(image => ({ type: "image_url", image_url: { url: image.url, detail: image.detail ?? "auto" } })),
+            ...(audio ?? []).map(clip => ({ type: "input_audio", input_audio: clip }))] };
+    });
+}
 
 type NativeToolDef = {
     type: "function";
@@ -102,7 +116,7 @@ export class ModelGateway {
                 maxRetries: 0,
                 defaultHeaders: {
                     "HTTP-Referer": "https://sophia.local",
-                    "X-OpenRouter-Title": "Sophia3",
+                    "X-OpenRouter-Title": "Sophia",
                 },
             });
         }
@@ -119,18 +133,18 @@ export class ModelGateway {
         if (!profile.baseUrl || profile.baseUrl === config.openRouterBaseUrl) {
             return this.getClient();
         }
-        const cached = this.profileClients.get(profile.baseUrl);
+        const apiKey = profile.apiKeyEnv ? process.env[profile.apiKeyEnv] : "not-needed";
+        if (!apiKey) throw new Error(`Missing ${profile.apiKeyEnv} for model profile ${profile.label ?? profile.chatModel}.`);
+        const clientKey = JSON.stringify([profile.baseUrl, apiKey]);
+        const cached = this.profileClients.get(clientKey);
         if (cached) return cached;
-        const apiKey = profile.apiKeyEnv
-            ? (process.env[profile.apiKeyEnv] || "not-needed")
-            : "not-needed";
         const client = new OpenAI({
             apiKey,
             baseURL: profile.baseUrl,
             timeout: this.REQUEST_TIMEOUT_MS,
             maxRetries: 0,
         });
-        this.profileClients.set(profile.baseUrl, client);
+        this.profileClients.set(clientKey, client);
         return client;
     }
 
@@ -256,11 +270,11 @@ export class ModelGateway {
             const maxOutputTokens = options.maxOutputTokens ?? profile.maxOutputTokens;
             let outcome;
             try {
-                outcome = await callResponsesApi(client, profile, messages, {
+                outcome = await ModelUsage.measure(profile, traceLabel, () => callResponsesApi(client, profile, messages, {
                     tools: options.tools,
                     maxOutputTokens,
                     temperature: options.temperature ?? profile.temperature,
-                });
+                }));
             } catch (error) {
                 const durationMs = Math.max(0, Date.now() - startedAt2);
                 ModelTraceLogger.log({
@@ -330,7 +344,7 @@ export class ModelGateway {
             model: profile.chatModel,
             temperature: options.temperature ?? profile.temperature,
             max_tokens: options.maxOutputTokens ?? profile.maxOutputTokens,
-            messages,
+            messages: providerMessages(messages),
             tools: options.tools,
             parallel_tool_calls: profile.parallelToolCalls ?? false,
         };
@@ -342,7 +356,7 @@ export class ModelGateway {
         let modelUsed = profile.chatModel;
         const completion = await this.createChatCompletionWithValidation(
             async () => {
-                const outcome = await this.createWithModelFallback(client, request, profile);
+                const outcome = await this.createWithModelFallback(client, request, profile, traceLabel);
                 modelUsed = outcome.modelUsed;
                 return outcome.completion;
             },
@@ -411,10 +425,10 @@ export class ModelGateway {
         // profile points at a local server: local embedding models are not
         // part of the retrieval contract.
         const client = this.getClient();
-        const response = await client.embeddings.create({
+        const response = await ModelUsage.measure({ chatModel: config.modelProfile.embeddingModel }, "embeddings", () => client.embeddings.create({
             model: config.modelProfile.embeddingModel,
             input: texts,
-        });
+        }));
 
         return response.data.map((item) => item.embedding as number[]);
     }
@@ -448,11 +462,11 @@ export class ModelGateway {
         // Responses-API profiles (OpenCode Zen muse free models): plain text
         // generation must also go through /responses or it 500s.
         if (!this.usesOpenRouter(profile) && profileUsesResponsesApi(profile)) {
-            const outcome = await callResponsesApi(client, profile, messages, {
+            const outcome = await ModelUsage.measure(profile, options.traceContext?.traceLabel ?? "text", () => callResponsesApi(client, profile, messages, {
                 tools: [],
                 maxOutputTokens: options.maxOutputTokens ?? profile.maxOutputTokens,
                 temperature: options.temperature ?? profile.temperature,
-            });
+            }));
             return {
                 model: profile.chatModel,
                 rawOutput: outcome.content || "",
@@ -466,7 +480,7 @@ export class ModelGateway {
             model: profile.chatModel,
             temperature: options.temperature ?? profile.temperature,
             max_tokens: options.maxOutputTokens ?? profile.maxOutputTokens,
-            messages,
+            messages: providerMessages(messages),
         };
         if (this.usesOpenRouter(profile)) {
             request.provider = { sort: "throughput" };
@@ -488,7 +502,7 @@ export class ModelGateway {
         let modelUsed = profile.chatModel;
         const completion = await this.createChatCompletionWithValidation(
             async () => {
-                const outcome = await this.createWithModelFallback(client, request, profile);
+                const outcome = await this.createWithModelFallback(client, request, profile, options.traceContext?.traceLabel ?? "text");
                 modelUsed = outcome.modelUsed;
                 return outcome.completion;
             },
@@ -532,11 +546,13 @@ export class ModelGateway {
     private static async requestWithProviderRetries(
         client: OpenAI,
         request: Record<string, unknown>,
+        profile: ModelProfile,
+        purpose: string,
     ) {
         let lastError: unknown = null;
         for (let attempt = 0; attempt <= this.RATE_LIMIT_RETRIES; attempt += 1) {
             try {
-                return await client.chat.completions.create(request as never);
+                return await ModelUsage.measure(profile, purpose, () => client.chat.completions.create(request as never, { signal: ModelUsage.signal() }));
             } catch (error) {
                 lastError = error;
                 if (!this.isRetryableProviderError(error) || attempt === this.RATE_LIMIT_RETRIES) {
@@ -559,20 +575,21 @@ export class ModelGateway {
         client: OpenAI,
         request: Record<string, unknown>,
         profile: ModelProfile,
+        purpose: string,
     ): Promise<{ completion: unknown; modelUsed: string }> {
         try {
-            const completion = await this.requestWithProviderRetries(client, request);
+            const completion = await this.requestWithProviderRetries(client, request, profile, purpose);
             return { completion, modelUsed: profile.chatModel };
         } catch (error) {
             if (!this.usesOpenRouter(profile)) throw error;
             if (!this.isRetryableProviderError(error)) throw error;
             const profiles = readModelProfiles();
             const fallback = profiles.profiles[profiles.defaultProfile];
-            if (!fallback || fallback.chatModel === profile.chatModel) throw error;
+            if (!fallback || !this.usesOpenRouter(fallback) || profileUsesResponsesApi(fallback) || fallback.chatModel === profile.chatModel) throw error;
             const completion = await this.requestWithProviderRetries(client, {
                 ...request,
                 model: fallback.chatModel,
-            });
+            }, fallback, purpose);
             return { completion, modelUsed: fallback.chatModel };
         }
     }

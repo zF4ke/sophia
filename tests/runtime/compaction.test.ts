@@ -156,10 +156,28 @@ describe("compactMessages", () => {
         expect(msgs[1].role).toBe("user");
         expect(msgs[1].content).toBe("User question");
         // Summary inserted at index 2.
-        expect(msgs[2].role).toBe("system");
+        expect(msgs[2].role).toBe("assistant");
         expect(msgs[2].content).toContain("<compaction_summary>");
         // Total messages should be much less.
         expect(msgs.length).toBeLessThan(originalLength);
+    });
+
+    it("preserves the primary request and complete parallel tool results at the tail boundary", async () => {
+        vi.mocked(ModelGateway.generateText).mockResolvedValue("Earlier findings");
+        const messages: ToolChatMessage[] = [
+            { role: "system", content: "Instructions" }, { role: "assistant", content: "Source context" },
+            { role: "user", content: "Original request" },
+            ...Array.from({ length: 10 }, (_, i) => ({ role: "assistant" as const, content: `Earlier ${i}` })),
+            { role: "assistant", content: null, tool_calls: ["a", "b"].map(id => ({ id, type: "function" as const, function: { name: "note_add", arguments: JSON.stringify({ text: "UNTRUSTED_NOTE" }) } })) },
+            { role: "tool", tool_call_id: "a", content: "first result" }, { role: "tool", tool_call_id: "b", content: "second result" },
+            ...Array.from({ length: 6 }, (_, i) => ({ role: "assistant" as const, content: `Tail ${i}` })),
+        ];
+        await compactMessages({ messages, promptTokens: 9000, contextWindow: 10000 });
+        expect(messages.slice(0, 3).map(message => message.content)).toEqual(["Instructions", "Source context", "Original request"]);
+        const callIndex = messages.findIndex(message => "tool_calls" in message);
+        expect(callIndex).toBeGreaterThan(2);
+        expect(messages.slice(callIndex + 1, callIndex + 3)).toMatchObject([{ role: "tool", tool_call_id: "a" }, { role: "tool", tool_call_id: "b" }]);
+        expect(vi.mocked(ModelGateway.generateText).mock.calls[0][0][0].content).not.toContain("UNTRUSTED_NOTE");
     });
 
     it("handles ModelGateway failure gracefully", async () => {

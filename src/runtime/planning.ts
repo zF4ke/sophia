@@ -59,9 +59,14 @@ export function answerConfidenceForInsufficient(
     return "insufficient";
 }
 
+export function formatEvidenceTime(timestamp: number | null | undefined): string {
+    return typeof timestamp === "number" && Number.isFinite(timestamp) && Math.abs(timestamp) <= 8.64e15
+        ? new Date(timestamp).toISOString() : "timestamp unavailable";
+}
+
 export function formatChannelContext(context: ChannelContextMessage[]): string {
     if (!context.length) {
         return "No recent channel messages available.";
     }
-    return context.map((msg) => `${msg.authorName}: ${msg.content}`).join("\n");
+    return context.map((msg) => `[${formatEvidenceTime(msg.createdTimestamp)}] ${msg.authorName}: ${msg.content}`).join("\n");
 }

@@ -29,7 +29,6 @@ describe("RuntimeStorageService", () => {
             runtime: {
                 ...SettingsService.load().runtime,
                 operationalDbPath,
-                checkpointDbPath,
             },
         });
     });
@@ -50,6 +49,6 @@ describe("RuntimeStorageService", () => {
         const status = RuntimeStorageService.getStatus();
 
         expect(status.operationalDbSizeBytes).toBe(1536);
-        expect(status.checkpointDbSizeBytes).toBe(256);
+        expect(status.durableStores.map(store => store.name)).toEqual(["tasks.sqlite", "knowledge.sqlite", "products.sqlite"]);
     });
 });

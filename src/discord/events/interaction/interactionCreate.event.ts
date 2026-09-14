@@ -1,19 +1,37 @@
+import { handleCostsInteraction } from "@/discord/commands/system/costsPanel";
+import { AccessPolicy } from "@/security/AccessPolicy";
 import type { BotClient } from "@/shared/appTypes";
 import { Interaction, MessageFlags } from "discord.js";
 import { handleAccessPanelInteraction } from "@/discord/commands/system/access/panelInteractions";
+import { isAccessInteraction } from "@/discord/commands/system/access/panelIds";
 import { handleApprovalInteraction } from "@/discord/approval/approvalInteractions";
 import { handleArtifactInteraction } from "@/discord/artifacts/ArtifactInteractions";
 import { handleDebugLogsInteraction } from "@/discord/commands/system/debugLogsInteractions";
 import { handleDebugPanelInteraction } from "@/discord/debug/debugPanelInteractions";
 import { handleSettingsPanelInteraction } from "@/discord/commands/system/settings/settingsInteractions";
-import { handleUiTestSettingsInteraction } from "@/discord/commands/system/uitest/settings";
 import { SecurityService } from "@/security/SecurityService";
 import { isGuildAllowed } from "@/security/guildAllowlist";
+import { handleTaskInteraction } from "@/discord/responding/taskInteractions";
 
 export = {
     name: "interactionCreate",
     async execute(interaction: Interaction, client: BotClient) {
-        if (!isGuildAllowed(interaction.guildId)) return;
+        // Operators can configure availability without enabling ordinary work.
+        const configuration = (interaction.isChatInputCommand() && interaction.commandName === "access") ||
+            ((interaction.isMessageComponent() || interaction.isModalSubmit()) && isAccessInteraction(interaction.customId));
+        if (configuration) {
+            await SecurityService.initialize();
+            if (!SecurityService.isAdmin(interaction.user.id)) {
+                if (interaction.isRepliable()) await interaction.reply({ content: "Não tens acesso à configuração da Sophia.", flags: MessageFlags.Ephemeral });
+                return;
+            }
+        } else if (!isGuildAllowed(interaction.guildId) || await AccessPolicy.decide(interaction.user.id, interaction.guild, "none") === "deny") {
+            if (interaction.isAutocomplete()) await interaction.respond([]);
+            else if (interaction.isRepliable()) await interaction.reply({ content: "Não tens acesso à Sophia neste local.", flags: MessageFlags.Ephemeral }).catch(() => undefined);
+            return;
+        }
+
+        if (interaction.isButton() && await handleCostsInteraction(interaction)) return;
 
         if (interaction.isAutocomplete()) {
             const command = client.commands.get(interaction.commandName);
@@ -26,12 +44,12 @@ export = {
         if (
             interaction.isButton() ||
             interaction.isStringSelectMenu() ||
-            interaction.isUserSelectMenu() ||
+            interaction.isAnySelectMenu() ||
             interaction.isModalSubmit()
         ) {
             // Artifact card controls are prefix-matched and DB-backed; check
             // them first so they resolve even after a restart.
-            if (interaction.isButton() || interaction.isStringSelectMenu()) {
+            if (interaction.isButton() || interaction.isAnySelectMenu()) {
                 if (await handleArtifactInteraction(interaction)) {
                     return;
                 }
@@ -44,6 +62,7 @@ export = {
             }
 
             if (interaction.isButton()) {
+                if (await handleTaskInteraction(interaction)) return;
                 if (await handleDebugPanelInteraction(interaction)) {
                     return;
                 }
@@ -67,16 +86,7 @@ export = {
                 }
             }
 
-            if (
-                interaction.isButton() ||
-                interaction.isStringSelectMenu()
-            ) {
-                if (await handleUiTestSettingsInteraction(interaction)) {
-                    return;
-                }
-            }
-
-            if (await handleAccessPanelInteraction(interaction, client)) {
+            if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isModalSubmit()) && await handleAccessPanelInteraction(interaction, client)) {
                 return;
             }
 
@@ -99,7 +109,8 @@ export = {
             
             await SecurityService.initialize();
             
-            if (interaction.commandName !== 'access') {
+            // Stop only targets the authenticated actor's own executions.
+            if (!['access', 'stop', 'steer', 'tasks', 'schedules', 'talk', 'nth', 'ping', 'costs', 'skills', 'memories'].includes(interaction.commandName)) {
                 const isPublic = await SecurityService.isCommandPublic(interaction.commandName);
                 if (!isPublic && !SecurityService.isAdmin(interaction.user.id)) {
                     return interaction.reply({

@@ -114,12 +114,12 @@ describe("runtime planning", () => {
     });
 
     describe("formatChannelContext", () => {
-        it("formats messages as author: content lines", () => {
+        it("formats messages with timestamps, authors and content", () => {
             const ctx: ChannelContextMessage[] = [
                 { authorName: "Alice", content: "hello", createdTimestamp: 1 },
                 { authorName: "Bob", content: "hi", createdTimestamp: 2 },
             ];
-            expect(formatChannelContext(ctx)).toBe("Alice: hello\nBob: hi");
+            expect(formatChannelContext(ctx)).toBe("[1970-01-01T00:00:00.001Z] Alice: hello\n[1970-01-01T00:00:00.002Z] Bob: hi");
         });
 
         it("returns placeholder for empty context", () => {

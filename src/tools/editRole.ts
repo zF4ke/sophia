@@ -44,19 +44,19 @@ export const editRoleTool: ToolDefinition = {
     catalog: {
         effect: "destructive",
         description:
-            "Edit an existing role in the guild. Destructive — requires admin approval.",
+            "Edit an existing role in the guild. Destructive — follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Edit an existing role's name, color, hoist, or mentionable status. This is a DESTRUCTIVE action that requires admin approval. Use only when explicitly asked to edit a role. At least one of `name`, `color`, `hoist`, or `mentionable` must be provided.",
+            "Edit an existing role's name, color, hoist, or mentionable status. This is a DESTRUCTIVE action that follows the requester action tier and approval mode. Use only when explicitly asked to edit a role. At least one of `name`, `color`, `hoist`, or `mentionable` must be provided.",
         parameters,
     },
 
     capability: {
         description:
-            "Edit an existing role in the guild. Destructive — requires admin approval.",
+            "Edit an existing role in the guild. Destructive — follows the requester action tier and approval mode.",
         inputSchema: z.object({
             role_id: z.string().describe("Role ID to edit."),
             name: z.string().optional().describe("New role name."),
@@ -67,7 +67,7 @@ export const editRoleTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "destructive",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist", "role must exist"],

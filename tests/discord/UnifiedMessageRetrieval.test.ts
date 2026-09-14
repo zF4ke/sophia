@@ -50,7 +50,6 @@ describe("UnifiedMessageRetrieval", () => {
             runtime: {
                 ...SettingsService.load().runtime,
                 operationalDbPath,
-                checkpointDbPath,
             },
         });
         await DiscordMemoryService.resetForTests();
@@ -86,9 +85,6 @@ describe("UnifiedMessageRetrieval", () => {
                         },
                     ],
                 }) as any
-        );
-        vi.spyOn(DiscordChannelCrawlService, "waitForBackgroundIngest").mockResolvedValue(
-            undefined
         );
 
         const result = await UnifiedMessageRetrieval.retrieve({
@@ -377,9 +373,6 @@ describe("UnifiedMessageRetrieval", () => {
                 },
             ],
         } as any);
-        vi.spyOn(DiscordChannelCrawlService, "waitForBackgroundIngest").mockResolvedValue(
-            undefined
-        );
 
         const result = await UnifiedMessageRetrieval.retrieve({
             guild: { id: "g1" } as any,
@@ -475,7 +468,6 @@ describe("UnifiedMessageRetrieval", () => {
             previewMessages: [],
         });
 
-        vi.spyOn(DiscordChannelCrawlService, "waitForBackgroundIngest").mockResolvedValue();
 
         vi
             .spyOn(DiscordMemoryService, "getChannelHistoryPageAsync")

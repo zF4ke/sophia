@@ -58,8 +58,10 @@ export async function handleAccessButton(
     const parts = interaction.customId.split(":");
 
     if (parts[1] === "view") {
+        const view = ["overview", "admins", "moderators", "commands", "grants"].includes(parts[2]) ? parts[2] : "overview";
         await refreshPanel(interaction, context, {
-            view: parts[2] as "overview" | "admins" | "moderators" | "commands",
+            view: view as import("../panelTypes").AccessPanelView,
+            page: Number(parts[3]) || 0,
         });
         return true;
     }

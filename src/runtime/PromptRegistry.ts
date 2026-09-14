@@ -21,13 +21,7 @@ export class PromptRegistry {
     }
 
     public static render(promptId: string, params: PromptParams = {}): string {
-        let template = this.load(promptId);
-
-        for (const [key, value] of Object.entries(params)) {
-            const replacement = value == null ? "" : String(value);
-            template = template.split(`{{${key}}}`).join(replacement);
-        }
-
-        return template;
+        return this.load(promptId).replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, key: string) =>
+            Object.prototype.hasOwnProperty.call(params, key) ? String(params[key] ?? "") : match);
     }
 }

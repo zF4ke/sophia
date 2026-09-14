@@ -124,6 +124,16 @@ dist
 
 storage/*
 !storage/.gitkeep
+website/.astro/
+website/src/content/docs/build/
+website/src/content/docs/reference/v5-plan.md
+website/src/content/docs/reference/live-acceptance.md
+website/src/content/docs/reference/feature-user-stories.md
+website/src/content/docs/reference/tools/
+website/src/content/docs/reference/features.md
+website/src/content/docs/reference/commands.md
+website/src/content/docs/reference/command-options/
+website/src/content/docs/reference/configuration.md
 
 # research folders
 research/cline
@@ -133,3 +143,4 @@ research/openclaw
 
 # raw live-test capture (contains third-party member data — local only)
 research/live_tests_raw.md
+/website/public/icon.svg

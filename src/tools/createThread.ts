@@ -34,19 +34,19 @@ export const createThreadTool: ToolDefinition = {
     catalog: {
         effect: "write",
         description:
-            "Create a new thread in a channel. Write — requires admin approval.",
+            "Create a new thread in a channel. Write — follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Create a new thread in a channel. This is a WRITE action that requires admin approval. Use only when explicitly asked to create a thread.",
+            "Create a new thread in a channel. This is a WRITE action that follows the requester action tier and approval mode. Use only when explicitly asked to create a thread.",
         parameters,
     },
 
     capability: {
         description:
-            "Create a new thread in a channel. Write — requires admin approval.",
+            "Create a new thread in a channel. Write — follows the requester action tier and approval mode.",
         inputSchema: z.object({
             channel_id: z.string().describe("Parent channel ID."),
             name: z.string().describe("Thread name."),
@@ -61,7 +61,7 @@ export const createThreadTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: [

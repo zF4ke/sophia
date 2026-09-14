@@ -1,3 +1,4 @@
+import { buildCostsPanel } from "../costsPanel";
 import { ButtonInteraction, MessageFlags, StringSelectMenuInteraction } from "discord.js";
 import { SettingsService, type BotSettings } from "@/app/SettingsService";
 import {
@@ -25,10 +26,27 @@ export async function handleSettingsPanelInteraction(
         return true;
     }
 
+    if (customId === "settings:tab:costs") {
+        await interaction.deferUpdate();
+        await interaction.editReply(await buildCostsPanel(interaction.user.id, "all"));
+        return true;
+    }
     const parsed = handleSettingsInteraction(customId);
 
     try {
         switch (parsed.type) {
+            case "tab_features": {
+                await interaction.update(buildSettingsPanel(SettingsService.load(), "features"));
+                break;
+            }
+            case "sandbox_toggle":
+            case "scheduling_toggle": {
+                const current = SettingsService.load();
+                const key = parsed.type === "sandbox_toggle" ? "sandbox" : "scheduling";
+                const updated = SettingsService.update({ [key]: { ...current[key], enabled: !current[key].enabled } });
+                await interaction.update(buildSettingsPanel(updated, "features"));
+                break;
+            }
             case "tab_model": {
                 const settings = SettingsService.load();
                 await interaction.update(buildSettingsPanel(settings, "model"));
@@ -49,20 +67,20 @@ export async function handleSettingsPanelInteraction(
                 await interaction.update(buildSettingsPanel(settings, "longTask"));
                 break;
             }
-            case "tab_personality": {
+            case "tab_voice": {
                 const settings = SettingsService.load();
-                await interaction.update(buildSettingsPanel(settings, "personality"));
+                await interaction.update(buildSettingsPanel(settings, "voice"));
                 break;
             }
-            case "personality_select": {
+            case "voice_select": {
                 if (!interaction.isStringSelectMenu()) break;
                 const raw = interaction.values[0];
-                const allowed: BotSettings["personality"][] = ["default", "mixed", "classic"];
+                const allowed: BotSettings["voice"][] = ["balanced", "casual", "formal"];
                 const next = (allowed as string[]).includes(raw)
-                    ? (raw as BotSettings["personality"])
-                    : "default";
-                const updated = SettingsService.update({ personality: next });
-                await interaction.update(buildSettingsPanel(updated, "personality"));
+                    ? (raw as BotSettings["voice"])
+                    : "balanced";
+                const updated = SettingsService.update({ voice: next });
+                await interaction.update(buildSettingsPanel(updated, "voice"));
                 break;
             }
             case "model_select": {
@@ -103,20 +121,15 @@ export async function handleSettingsPanelInteraction(
                 await interaction.update(buildSettingsPanel(updated, backTab));
                 break;
             }
-            case "auto_approve_writes_toggle": {
+            case "dreaming_toggle": {
                 const current = SettingsService.load();
-                const updated = SettingsService.update({
-                    runtime: {
-                        ...current.runtime,
-                        autoApproveWrites: !current.runtime.autoApproveWrites,
-                    },
-                });
-                await interaction.update(buildSettingsPanel(updated, "runtime"));
+                const updated = SettingsService.update({ memory: { ...current.memory, dreamingEnabled: !current.memory.dreamingEnabled } });
+                await interaction.update(buildSettingsPanel(updated, "features"));
                 break;
             }
             case "reset": {
                 const settings = SettingsService.reset();
-                await interaction.update(buildSettingsPanel(settings, "model"));
+                await interaction.update(buildSettingsPanel(settings, "runtime"));
                 break;
             }
             default:

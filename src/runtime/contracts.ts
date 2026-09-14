@@ -1,3 +1,5 @@
+import type { AuthorizeAction } from "@/security/AccessPolicy";
+import type { ExecutionControl } from "./ExecutionControl";
 import type { Guild, Message, User } from "discord.js";
 import type { z } from "zod";
 import type {
@@ -10,12 +12,11 @@ import type {
 } from "@/shared/appTypes";
 import type { DiscordToolEvidenceRole, DiscordToolName } from "@/shared/discordTools";
 
-export type TurnTrigger = "talk" | "mention" | "reply" | "auto_continue";
+export type TurnTrigger = "talk" | "mention" | "reply" | "auto_continue" | "scheduled";
 export type RuntimeMode = "conversation" | "research" | "refusal";
 export type StopReason =
     | "direct_answer"
     | "evidence_sufficient"
-    | "budget_exhausted"
     | "confidence_plateau"
     | "execution_stopped_by_admin"
     | "no_useful_next_step"
@@ -49,6 +50,7 @@ export interface ConversationContext {
     nativeThreadId?: string | null;
 }
 
+/** Historical source context; preserve createdTimestamp when formatting model input. */
 export interface ChannelContextMessage {
     authorName: string;
     content: string;
@@ -58,6 +60,7 @@ export interface ChannelContextMessage {
 export interface ConversationTurnSummary {
     requestId: string;
     requesterDisplayName: string | null;
+    /** Requester text, kept separate from the runtime-owned personality prompt. */
     question: string;
     answer: string;
     classificationMode: string;
@@ -68,6 +71,28 @@ export interface ConversationTurnSummary {
 }
 
 export interface TurnInput {
+    onTaskBound?: (taskId: string) => Promise<void> | void;
+    continuationContext?: { goals: Array<{ id: number; status: string; body: string }>; previousAnswer: string };
+    notificationPolicy?: "always" | "conditional";
+    priorScheduledResult?: { answer: string; capturedAt: number } | null;
+    responseVisibility?: "private" | "channel";
+    sourceMessageUrl?: string;
+    sourceMessageId?: string;
+    attachments?: Array<{ id: string; name: string; url: string; contentType: string | null; size: number }>;
+    /** Owner-scoped continuation, supplied by adapter or validated conversational control. */
+    resumeTaskId?: string;
+    taskSelectionUsed?: boolean;
+    requestTaskResume?: (taskId: string) => Promise<void>;
+    /** Explicit private handoff requested through the authenticated adapter. */
+    handoffTask?: boolean;
+    approvalMode?: "ask" | "inherit";
+    /** Adapter-owned: only turns whose response audience is known can feed idle consolidation. */
+    allowDreaming?: boolean;
+    /** Durable workspace and tool-evidence binding, set by Runtime and verified for continuation. */
+    taskId?: string;
+    authorize?: AuthorizeAction;
+    /** Runtime-owned scope, shared only with continuation turns. */
+    execution?: ExecutionControl;
     question: string;
     user: User;
     requesterDisplayName: string;
@@ -80,8 +105,8 @@ export interface TurnInput {
     replyContext?: ReplyContext | null;
     referencedMessage?: Message | null;
     conversation: ConversationContext;
-    approvalGate?: (request: ApprovalRequest) => Promise<ApprovalResult>;
-    batchApprovalGate?: (request: BatchApprovalRequest) => Promise<BatchApprovalResult>;
+    approvalGate?: (request: ApprovalRequest, signal?: AbortSignal) => Promise<ApprovalResult>;
+    batchApprovalGate?: (request: BatchApprovalRequest, signal?: AbortSignal) => Promise<BatchApprovalResult>;
     protectedBlockNotifier?: (request: ApprovalRequest) => Promise<void>;
     activityIndicator?: {
         startThinking(): Promise<void>;
@@ -200,6 +225,7 @@ export interface RetrievalSummary {
 }
 
 export interface ToolInvocationRecord {
+    sourceUnavailable?: boolean;
     tool: DiscordToolName;
     arguments: ToolArguments;
     summary: string;
@@ -252,6 +278,9 @@ export interface RuntimeTraceEvent {
 }
 
 export interface RuntimeAnswer {
+    notify?: boolean;
+    taskId?: string;
+    outcome?: "completed" | "paused" | "cancelled" | "failed";
     requestId: string;
     answer: string;
     threadId: string;

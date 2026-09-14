@@ -4,11 +4,6 @@ import { getAppConfig } from "@/app/AppConfig";
 import { UnifiedMessageRetrieval } from "@/discord/retrieval/UnifiedMessageRetrieval";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { DiscordBackfillCrawler } from "@/discord/live/DiscordBackfillCrawler";
-import {
-    fetchAndIngestBatch,
-    resumeBeforeId,
-} from "@/discord/live/DiscordBackfillService";
-import { ChannelType } from "discord.js";
 import type {
     ActiveRetrievalSession,
     EvidenceItem,
@@ -384,6 +379,7 @@ export const retrieveMessagesTool: ToolDefinition = {
             historyMessages: z.array(chunkResultSchema),
             semanticMatches: z.array(chunkResultSchema),
             combinedResults: z.array(chunkResultSchema),
+            cursor: z.object({ history: z.record(z.string(), z.string().nullable()), semantic: semanticCursorSchema.optional() }).optional(),
             continuation: z.object({
                 history: z.object({
                     perChannelOldestMessageId: z.record(
@@ -605,8 +601,6 @@ export const retrieveMessagesTool: ToolDefinition = {
                 ? result.targetChannelIds
                 : [];
 
-            const longTaskCfg = getAppConfig().runtime.longTask;
-            const inlineBatchBudget = Math.max(0, longTaskCfg.retrievalInlineCrawlBatches ?? 0);
 
             for (const channelId of targetChannelIdsForPartial) {
                 const states = await DiscordMemoryService.getChannelCrawlStateAsync(channelId);
@@ -644,46 +638,18 @@ export const retrieveMessagesTool: ToolDefinition = {
                 if (!shouldEscalate) continue;
 
                 // Enqueue background crawl so follow-up calls see more history.
-                await DiscordBackfillCrawler.enqueue(channelId, {
+                const queued = await DiscordBackfillCrawler.enqueue(channelId, {
                     reason: "retrieve_messages partial-index escalation",
                     priority: 2,
                     guildId: context.guild?.id ?? null,
-                }).catch(() => {});
-
-                // Inline crawl a few batches synchronously so this same call can
-                // return older messages.
-                if (inlineBatchBudget > 0 && context.guild) {
-                    try {
-                        const live = context.guild.channels.cache.get(channelId);
-                        if (
-                            live &&
-                            (live.type === ChannelType.GuildText ||
-                                live.type === ChannelType.PublicThread ||
-                                live.type === ChannelType.PrivateThread ||
-                                live.type === ChannelType.GuildAnnouncement)
-                        ) {
-                            let before = await resumeBeforeId(channelId);
-                            for (let i = 0; i < inlineBatchBudget; i += 1) {
-                                const batch = await fetchAndIngestBatch(
-                                    live as Parameters<typeof fetchAndIngestBatch>[0],
-                                    before,
-                                    100
-                                );
-                                before = batch.nextBeforeId;
-                                if (batch.reachedEnd && batch.ingested === 0) break;
-                            }
-                        }
-                    } catch {
-                        /* swallow — background crawl is already queued */
-                    }
-                }
+                }).then(() => true, () => false);
 
                 partialIndex[channelId] = {
                     reason: "older-history-not-yet-indexed",
                     exhausted: false,
                     oldestIndexedTimestamp,
                     oldestIndexedMessageId,
-                    backgroundCrawl: { queued: true },
+                    backgroundCrawl: { queued },
                 };
 
                 const channelName =
@@ -691,7 +657,9 @@ export const retrieveMessagesTool: ToolDefinition = {
                     context.guild?.channels?.cache?.get(channelId)?.name ??
                     channelId;
                 partialHints.push(
-                    `Older messages in #${channelName} are still being indexed; call retrieve_messages again (optionally with a slightly newer fromDate or without the oldest anchor) to continue — the background crawl is extending history.`
+                    queued
+                        ? `Older history in #${channelName} is incomplete. A backfill was queued; use the returned cursor to continue and check coverage again.`
+                        : `Older history in #${channelName} is incomplete and the backfill could not be queued. Use index_channel to retry indexing; do not treat these results as full history.`
                 );
             }
             } catch {
@@ -731,6 +699,10 @@ export const retrieveMessagesTool: ToolDefinition = {
 
             const outputData = {
                 ...result,
+                cursor: {
+                    history: result.continuation?.history?.perChannelOldestMessageId ?? result.continuation?.perChannelOldestMessageId ?? {},
+                    ...(result.continuation?.semantic?.cursor ? { semantic: result.continuation.semantic.cursor } : {}),
+                },
                 channelTopics,
                 ...(Object.keys(partialIndex).length
                     ? { partialIndex, partialIndexHints: partialHints }

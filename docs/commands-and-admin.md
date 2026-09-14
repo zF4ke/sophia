@@ -1,124 +1,60 @@
-# Commands And Admin
+# Commands and administration
 
-## Main Conversation Surface
+All conversation entrypoints use the same runtime and authenticated admission checks. Command visibility never substitutes for an access grant.
 
-Use these to talk to Sophia:
-- `/talk`
-- mention Sophia in a message
-- reply to a Sophia message
+## Conversation and work
 
-These all route to the same conversation runtime.
+| Entry | Use |
+| --- | --- |
+| `/talk` | Converse, attach a file without text, or explicitly resume with `task_id`. `handoff:true ephemeral:true` moves eligible inactive owned work privately. |
+| Mention, reply, enabled DM | Start the same conversation runtime. Location availability and account grants still apply. |
+| `/steer` | Correct active work. Supply `task_id` when selection would be ambiguous. |
+| `/stop` | Cooperatively stop your execution. It does not undo an action already dispatched. |
+| `/tasks` | Inspect your recent outcomes. `task_id` selects one, `file_path` downloads an owned file, and `forget:true` removes eligible retained work. |
+| `/schedules` | Inspect and manage your follow-ups. |
+| `/costs` | Show your own usage report across locations; use `ephemeral:true` to keep it private. |
+| `/nth` | Read a position in eligible channel history. |
+| `/ping` | Inspect bot latency and connection information. |
 
-## Specialized Workflow
+Public-task owners can add a named collaborator with `/tasks task_id:... collaborator:@person`, or remove one with `remove_collaborator:true`. The collaborator needs their own grant, can steer only the named public task, and gains no ownership of approvals or private files. Later changes require owner approval.
 
-  Runs the specialized Discord retrieval workflow directly. It is separate from the conversation loop, but it uses the same retrieval, member-resolution, and guild-discovery primitives underneath.
-  Supports:
-  - `topic`
-  - optional explicit `channel`
-  - optional `target` for channel/category id or name
-  - optional `author` for member/bot id, mention, or name
+## Operator controls
 
-## Saved Workflows, Long Tasks, Artifacts
+| Command | Responsibility |
+| --- | --- |
+| `/access` | Enable locations, manage authenticated user/role grants, approval modes, expiry, capability/tier rules and operator access. Works for operators in disabled locations. |
+| `/settings` | Select a model and shared voice; configure context/retrieval; independently switch dreaming, workspace and scheduling; inspect installation costs. |
+| `/index` | Inspect, refresh, deep-backfill or reset retrieval state. Index resets preserve durable tasks, memories and settings. |
+| `/superchannels` | Manage protected channels for destructive-action blocking. |
+| `/memories` | Review quarantined legacy memory before private adoption. |
+| `/skills` | Inspect versioned skills, assessments and quarantined procedures. |
+| `/debug` | Toggle diagnostics or inspect logs. Logs can contain conversation content. |
 
-Three separate concepts, do not conflate them:
+Operator bootstrap IDs come from `BOOTSTRAP_ADMIN_IDS`, not source code. Availability and grants are governed by [access policy](access-policy.md). Legacy command-visibility administration cannot bypass admission. The obsolete `/uitest` mock panels were removed; tests exercise production builders and handlers.
 
-- **Saved workflows** (`workflow_create`, `workflow_list`, `workflow_run`, `workflow_delete`): named tool chains stored per guild and rerun on demand. Use `workflow_delete` to remove one (fixes the undeletable `demo-resumo` case).
-- **Long tasks**: ordinary multi-step work that needs many tool calls. The model declares it with `start_long_task`, or the runtime auto-raises budgets on large explicit corpora. When unsure, the model asks the user in one sentence.
-- **Artifacts** (`artifact_send`, `artifact_edit` tools, `src/discord/artifacts/`): rendered Components V2 cards from retrieved evidence, validated before send. Tabs via dropdown, pagination buttons, https link buttons, TTL auto-deletion (`ttl_days`, 0 keeps forever, default), and in-place edits by message id from the persisted spec.
+## Settings tabs
 
-## Operator Commands
+The model tab reads configured profiles from `resources/models/model-profiles.json`. Muse Spark 1.3 Free uses Zen Responses; OpenRouter and local profiles remain available. Model selection does not change the runtime's ownership or approval rules.
 
-- `/nth` — read indexed historical messages by position
-- `/index` — manage backfill and repair; subcommands: `status`, `clear`, `repair`, `backfill_channel`, `backfill_category`
-- `/debug toggle` — enable or disable the debug panel for the current guild
-- `/debug logs` — browse recent model-output logs in an interactive panel
-- `/superchannels` — manage protected channels used by destructive-action blocking
-- `/access` — manage admin and moderator access
-- `/settings` — configure runtime parameters through an interactive panel
-- `/ping` — health check with round-trip latency, gateway ping, and shard info
+The runtime tab configures context retention, retrieval page sizes, repeated-call protection, approval timeout and an optional whole-execution tool-call limit. Zero disables that limit. No setting adds a default total spending or duration budget.
 
-`/index status` is the single status surface for local retrieval state. It exposes:
-- local message/index status
-- current-guild completeness data such as readable live channels/categories and cached-only remembered channels
-- runtime storage status, including operational/checkpoint DB size on disk
+Memory and tools controls dreaming, sandbox and scheduling independently. Disabling a service preserves its saved data. Voice selects balanced, casual or formal presentation for the single shared identity. Reset affects the selected category and preserves access rules, protected resources and storage paths.
 
-## Settings Panel
+The Custos tab is operator-only and aggregates retained provider attempts across the installation. `/costs` uses the authenticated actor's records only. Periods are rolling 24 hours, 7 days, 30 days or all retained history. Missing usage or prices remain explicit; retries and background calls are counted. Forgetting tasks removes associated cost records. See [cost accounting](cost-accounting.md).
 
-`/settings` opens an interactive panel with:
-- **Model tab** lists the supported runtime profiles from `resources/models/model-profiles.json`, currently GLM 5.3 Flash, GPT-OSS 120B, Ling 3.0 Flash, and Local LM Studio, with context window and pricing.
-- **Runtime tab** — 10 tuning knobs for context retention, retrieval, loop guardrails, and approval (no wall-clock cap on turns)
-- **Auto-Approve Writes toggle** — skip approval for non-destructive write actions
-- **Reset to Defaults** — restore all settings to factory defaults
+## Approval interaction
 
-### Runtime Parameters
+Reads within a grant run freely. Ask decisions show the concrete operation to the requester. Only that requester can approve, deny, correct or stop the request through its controls. Being an operator does not let someone decide another person's approval.
 
-| Setting | Description | Presets |
-|---------|-------------|---------|
-| Recent Turns | Q/A pairs replayed into prompt | 3, 5, 8, 10 |
-| Recent Channel Messages | Ambient context per turn | 10, 15, 25, 40 |
-| Prior Tool Runs | Past tool runs scanned for evidence | 6, 12, 18, 24 |
-| Prior Evidence Slice | Evidence items carried to next turn | 16, 32, 48, 64 |
-| Default Retrieval Page | Rows per `retrieve_messages` call | 25, 50, 75, 100, 150 |
-| Around-Message Window | Neighbors loaded around a hit | 8, 15, 25, 40 |
-| Max Tool Calls | Hard cap per turn | 2–30 |
-| Repeated Call Guard | Same args retry limit | 1, 2, 3 |
-| Escalation Fetch Limit | Live refresh cap for retries | 50, 100, 150, 250, 400, 600, 800, 1000 |
-| Approval Timeout | Admin approval wait time | 30s–5m |
+The runtime rechecks access and rule decisions before dispatch. A changed operation needs its own approval; an expired prompt is not a denial. Destructive tiers and protected targets apply even in Auto mode. A model-supplied approval argument grants nothing.
 
-## Approval System
+## References
 
-When Sophia's model decides to call a write or destructive tool, the action goes through an approval gate before execution.
+The handbook generates exact command option names from the command builders and capability schemas from the registry. `npm run docs:build` refreshes them. See [task lifecycle](task-lifecycle.md), [UI](ui.md), [access policy](access-policy.md) and [testing](testing.md) for implementation contracts.
 
-### Write Actions
+Task discovery and steering are available through ordinary chat using `task_search` and `task_control`; `/steer`, `/stop`, and task IDs remain optional precise controls. See task-lifecycle.md for ownership and continuation checks.
 
-Tools: `create_channel`, `create_category`, `create_thread`, `move_channel`, `manage_member_roles`, `send_message`
 
-- An approval card is shown to the admin with:
-  - Tool name and description
-  - Yellow "write" badge
-  - **Aceitar** (approve), **Recusar** (deny), **Recusar e corrigir** (deny with feedback), **Parar execução** (stop)
-- If `autoApproveWrites` is enabled, write actions execute immediately without a card.
+## Response visibility
 
-### Destructive Actions
-
-Tools: `clear_messages`, `delete_messages`, `delete_channel`
-
-- An approval card is shown with a red "destructive" badge
-- After clicking **Aceitar**, a confirmation dialog appears: "Esta ação é destrutiva. Tens a certeza?"
-- The admin must click **Confirmar** to execute
-- Destructive actions can never be auto-approved
-
-### Batch Destructive
-
-When the model emits multiple destructive tool calls in a single response:
-
-- All pending destructive actions are grouped into one batch approval card
-- Actions are organized by their target Discord category
-- The admin can:
-  - **Aprovar tudo** — approve all actions
-  - **Recusar tudo** — deny all actions
-  - **Category select** — approve only actions in a specific Discord category (shown when 2+ categories)
-  - **Recusar e corrigir** — open a modal to explain what should be done differently
-  - **Parar execução** — stop the entire runtime
-
-## Access Control
-
-- **Admins** have full permissions (`["*"]`). Can add/remove other admins and moderators.
-- **Moderators** have scoped permissions (`["moderate"]`). Cannot escalate themselves.
-- System admin IDs are hardcoded and always loaded.
-- Rate limiting applies per user per command/trigger for moderators and guests. Admins bypass rate limits entirely.
-- `/access` also manages message triggers such as `@mentions` and replies to Sophia. These triggers are blocked by default for non-admins until an admin enables them. Admins can always use them.
-
-### Command Permissions
-
-Slash-command visibility is configurable in `/access`. Unless an admin has explicitly marked a command public, it remains private to non-admins by default. Admins can always use all commands.
-
-| Command | Access |
-|---------|--------|
-| `/talk` | Admin |
-| `/index` | Admin |
-| `/debug` | Admin |
-| `/access` | Admin |
-| `/settings` | Admin |
-| `/nth` | Public |
-| `/ping` | Public |
+Ordinary conversation, settings, own costs, task summaries, steering and stop confirmations appear in the channel by default. The commands support ephemeral:true for an explicitly private reply. Public task summaries omit private work and check source audience. Task details and exports, memory and skill reviews, schedules and access reviews also default to the channel and support `ephemeral:true`. The installation-wide cost tab updates the settings message. Public controls do not relax operator or owner checks.

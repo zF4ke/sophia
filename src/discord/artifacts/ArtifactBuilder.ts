@@ -56,7 +56,7 @@ export interface ArtifactSpec {
     gameState?: Record<string, unknown>;
     /**
      * Sandboxed JS handlers keyed by customId (e.g. "action:roll", "game:cell0").
-     * Executed on click inside a node:vm sandbox with state/reply/send helpers.
+     * Executed on click in the isolated container backend with state/reply/send helpers.
      */
     handlers?: Record<string, string>;
     ephemeral?: boolean;

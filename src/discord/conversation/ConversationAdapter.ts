@@ -1,3 +1,9 @@
+import { sourceReference } from "@/shared/sourceReference";
+import { AccessPolicy } from "@/security/AccessPolicy";
+import { knowledgeStore } from "@/memory/KnowledgeStore";
+import { taskStore } from "@/runtime/tasks/TaskStore";
+import { SettingsService } from "@/app/SettingsService";
+import { interactionApprovalTransport } from "@/discord/approval/InteractionApprovalTransport";
 import {
     ChatInputCommandInteraction,
     Message,
@@ -35,9 +41,14 @@ export class ConversationAdapter {
         progressNotifier?: ((summary: string) => Promise<void>) | null;
     }): Promise<TurnInput> {
         const { interaction, question, debugSession } = options;
+        const approvalTransport = interactionApprovalTransport(interaction);
         return {
             question,
+            responseVisibility: interaction.ephemeral === false ? "channel" : "private",
+            allowDreaming: true,
+            attachments: (() => { const file = interaction.options?.getAttachment?.("attachment"); return file ? [{ id: file.id, name: file.name, url: file.url, contentType: file.contentType, size: file.size }] : []; })(),
             user: interaction.user,
+            authorize: AccessPolicy.forActor(interaction.user.id, interaction.guild),
             requesterDisplayName: getInteractionDisplayName(interaction),
             guild: interaction.guild,
             currentChannelId: interaction.channelId,
@@ -47,14 +58,14 @@ export class ConversationAdapter {
             trigger: "talk",
             replyContext: null,
             referencedMessage: null,
-            approvalGate: interaction.channel && "send" in interaction.channel
-                ? createApprovalGate(interaction.channel as import("discord.js").SendableChannels)
+            approvalGate: approvalTransport
+                ? createApprovalGate(approvalTransport)
                 : undefined,
-            batchApprovalGate: interaction.channel && "send" in interaction.channel
-                ? createBatchApprovalGate(interaction.channel as import("discord.js").SendableChannels)
+            batchApprovalGate: approvalTransport
+                ? createBatchApprovalGate(approvalTransport)
                 : undefined,
-            protectedBlockNotifier: interaction.channel && "send" in interaction.channel
-                ? createProtectedBlockNotifier(interaction.channel as import("discord.js").SendableChannels)
+            protectedBlockNotifier: approvalTransport
+                ? createProtectedBlockNotifier(approvalTransport)
                 : undefined,
             progressNotifier: options.progressNotifier ?? null,
             conversation: await buildConversationContext({
@@ -79,11 +90,16 @@ export class ConversationAdapter {
         progressNotifier?: ((summary: string) => Promise<void>) | null;
     }): Promise<TurnInput> {
         const { message, trigger, question, debugSession, activityIndicator } = options;
-        const replyContext = trigger === "reply" ? await buildReplyContext(message) : null;
-        const referencedMessage = trigger === "reply" ? await message.fetchReference().catch(() => null) : null;
+        const replyContext = message.reference?.messageId ? await buildReplyContext(message) : null;
+        const referencedMessage = message.reference?.messageId ? await message.fetchReference().catch(() => null) : null;
         return {
             question,
+            allowDreaming: true,
+            sourceMessageUrl: message.url,
+            attachments: [...(message.attachments?.values() ?? [])].map(file => ({ id: file.id, name: file.name, url: file.url, contentType: file.contentType, size: file.size })),
             user: message.author,
+            sourceMessageId: message.id,
+            authorize: AccessPolicy.forActor(message.author.id, message.guild),
             requesterDisplayName: getMessageDisplayName(message),
             guild: message.guild,
             currentChannelId: message.channelId,
@@ -130,5 +146,17 @@ export class ConversationAdapter {
             channelId: options.input.currentChannelId || null,
             messageIds: options.sentMessages.map((message) => message.id),
         });
+        if (options.input.allowDreaming && options.result.outcome === "completed" && SettingsService.load().memory.dreamingEnabled) {
+            const references = await taskStore.requestSources(options.result.requestId);
+            if (references === null) return;
+            await knowledgeStore.enqueueDream(options.result.requestId, {
+                audience: { actorId: options.input.user.id, guildId: options.input.guild?.id ?? null, channelId: options.input.currentChannelId ?? null, privateResponse: options.input.responseVisibility === "private" || !options.input.guild },
+                question: options.input.question.slice(0, 8000), answer: options.result.answer.slice(0, 12000),
+                taskId: options.result.taskId,
+                toolEvidence: options.result.toolRuns.slice(-20).map(run => ({ tool: run.tool, summary: run.summary.slice(0, 1500), succeeded: !run.errorMessage })),
+                sources: [...new Set([...options.input.sourceMessageUrl ? [options.input.sourceMessageUrl] : [], ...options.sentMessages.map(message => message.url),
+                    ...references.map(source => sourceReference(source))])],
+            }).catch(error => console.error("[Dreaming] Could not enqueue delivered conversation", error));
+        }
     }
 }

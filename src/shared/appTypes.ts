@@ -17,6 +17,9 @@ export type SupportedInteraction =
     | ModalSubmitInteraction;
 
 export interface ModelProfile {
+    api?: "chat-completions" | "responses";
+    reasoningEffort?: "minimal" | "low" | "medium" | "high";
+    inputModalities?: Array<"text" | "image" | "video" | "audio">;
     label?: string;
     chatModel: string;
     embeddingModel: string;
@@ -67,8 +70,7 @@ export interface AppConfig {
     modelProfile: ModelProfile;
     runtime: {
         operationalDbPath: string;
-        checkpointDbPath: string;
-        maxToolCalls: number;
+        toolCallLimit: number;
         maxRepeatedCallSignature: number;
         maxPriorTurns: number;
         maxChannelMessages: number;
@@ -78,9 +80,7 @@ export interface AppConfig {
         retrievalHistoryLimit: number;
         retrievalContextWindow: number;
         longTask: {
-            maxToolCalls: number;
             evidenceSliceFloor: number;
-            retrievalInlineCrawlBatches: number;
         };
     };
 }
@@ -318,6 +318,8 @@ export interface ChannelCrawlResult {
 }
 
 export interface DiscordToolResult {
+    /** Visual inputs are passed to the next model turn; durable records keep their source labels. */
+    images?: Array<{ url: string; label: string }>;
     tool: DiscordToolName | "finish";
     summary: string;
     data: unknown;

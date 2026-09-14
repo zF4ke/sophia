@@ -1,6 +1,7 @@
 import { MessageType, type Message } from "discord.js";
 import type { StoredMessage } from "@/memory/types";
 import { extractComponentsText } from "@/memory/ingest/ComponentTextExtractor";
+import { revisedMessageSource } from "@/shared/sourceReference";
 
 /** Map system message types to human-readable descriptions. */
 function describeSystemMessage(message: Message): string | null {
@@ -61,7 +62,8 @@ export class MessageNormalizer {
         if (embedContent) contentParts.push(embedContent);
         if (componentsContent) contentParts.push(componentsContent);
 
-        return {
+        const stored: StoredMessage = {
+            editedTimestamp: message.editedTimestamp,
             id: message.id,
             guildId: message.guildId || null,
             channelId: message.channelId,
@@ -85,5 +87,7 @@ export class MessageNormalizer {
             jumpLink: message.url,
             isBot: message.author.bot ? 1 : 0,
         };
+        if (message.editedTimestamp) stored.jumpLink = revisedMessageSource(stored);
+        return stored;
     }
 }

@@ -24,7 +24,6 @@ describe("randomChannelMessage tool", () => {
             runtime: {
                 ...SettingsService.load().runtime,
                 operationalDbPath,
-                checkpointDbPath,
             },
         });
         await DiscordMemoryService.resetForTests();

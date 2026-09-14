@@ -21,6 +21,7 @@ const params = {
 
 export const createPollTool: ToolDefinition = {
     name: T.create_poll,
+    publicationTarget: (context, args) => String(args.channel_id || context.currentChannelId || ""),
     catalog: {
         effect: "write",
         description: "Create a native Discord poll in a channel (2-10 answers, with duration).",

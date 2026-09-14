@@ -1,4 +1,5 @@
-import { OperationalStore } from "@/runtime/storage/OperationalStore";
+import { ProductStore } from "@/runtime/storage/ProductStore";
+import { KeyedLock } from "@/shared/KeyedLock";
 
 export interface ArtifactRow {
     messageId: string;
@@ -9,39 +10,46 @@ export interface ArtifactRow {
     viewSection: number;
     gameStateJson: string | null;
     createdTimestamp: number;
+    revision: number;
 }
 
 /**
  * Storage for artifact cards: the persisted spec (so cards can be edited and
  * their controls keep working across restarts), the current view state, and
- * TTL bookkeeping. Rows are best-effort deletion hints, not a source of
- * truth: a missed sweep only means an expired card lingers until the next boot.
+ * TTL bookkeeping. This is the authoritative card state. Expiry failures retain
+ * their records so a later sweep can retry deletion.
  */
 export class ArtifactStore {
+    public static async sources(messageId: string): Promise<string[]> {
+        await this.ensureTable();
+        return (await ProductStore.getClient().execute({ sql: "SELECT source FROM artifact_sources WHERE message_id=? ORDER BY source", args: [messageId] })).rows.map(row => String(row.source));
+    }
+    public static async addSources(messageId: string, sources: string[]): Promise<void> {
+        await this.ensureTable();
+        if (sources.length) await ProductStore.getClient().batch(sources.map(source => ({ sql: "INSERT OR IGNORE INTO artifact_sources VALUES(?,?)", args: [messageId, source] })), "write");
+    }
+    private static snapshot(messageId: string) {
+        return { sql: `INSERT INTO artifact_revisions(message_id,revision,spec_json,game_state,created_at)
+            SELECT message_id,COALESCE((SELECT MAX(revision) FROM artifact_revisions r WHERE r.message_id=artifacts.message_id),0)+1,spec_json,game_state,?
+            FROM artifacts WHERE message_id=?`, args: [Date.now(), messageId] };
+    }
+    public static async revision(messageId: string, revision: number) {
+        await this.ensureTable();
+        const row = (await ProductStore.getClient().execute({ sql: "SELECT spec_json,game_state,created_at FROM artifact_revisions WHERE message_id=? AND revision=?", args: [messageId, revision] })).rows[0];
+        return row ? { revision, spec: JSON.parse(String(row.spec_json)), gameState: row.game_state ? JSON.parse(String(row.game_state)) : null, createdAt: Number(row.created_at) } : null;
+    }
+    public static async owner(messageId: string): Promise<string | null> {
+        await this.ensureTable();
+        const row = (await ProductStore.getClient().execute({ sql: "SELECT owner_id FROM artifact_owners WHERE message_id=?", args: [messageId] })).rows[0];
+        return row ? String(row.owner_id) : null;
+    }
+    public static readonly locks = new KeyedLock();
+    public static async saveInteraction(messageId: string, specJson: string, gameState: Record<string, unknown>, section: number): Promise<void> {
+        await this.ensureTable();
+        await ProductStore.getClient().batch([{ sql: "UPDATE artifacts SET spec_json=?,game_state=?,view_section=? WHERE message_id=?", args: [specJson, JSON.stringify(gameState), section, messageId] }, this.snapshot(messageId)], "write");
+    }
     public static async ensureTable(): Promise<void> {
-        await OperationalStore.initialize();
-        const client = OperationalStore.getClient();
-        await client.executeMultiple(`
-            CREATE TABLE IF NOT EXISTS artifacts (
-                message_id TEXT PRIMARY KEY,
-                channel_id TEXT NOT NULL,
-                guild_id TEXT,
-                expires_at INTEGER,
-                spec_json TEXT,
-                view_section INTEGER NOT NULL DEFAULT 0,
-                game_state TEXT,
-                created_timestamp INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_artifacts_expiry ON artifacts(expires_at);
-        `);
-        // Migrations for tables created before these columns existed.
-        for (const column of ["spec_json TEXT", "view_section INTEGER NOT NULL DEFAULT 0", "game_state TEXT"]) {
-            try {
-                await client.execute(`ALTER TABLE artifacts ADD COLUMN ${column}`);
-            } catch {
-                // Column already exists; nothing to migrate.
-            }
-        }
+        await ProductStore.initialize();
     }
 
     public static async record(entry: {
@@ -50,9 +58,11 @@ export class ArtifactStore {
         guildId: string | null;
         expiresAt: number | null;
         specJson: string;
+        ownerId?: string | null;
+        sources?: string[];
     }): Promise<void> {
         await this.ensureTable();
-        const client = OperationalStore.getClient();
+        const client = ProductStore.getClient();
         const initialGameState = (() => {
             try {
                 const parsed = JSON.parse(entry.specJson) as Record<string, unknown>;
@@ -62,7 +72,7 @@ export class ArtifactStore {
                 return null;
             }
         })();
-        await client.execute({
+        await client.batch([{
             sql: `INSERT OR REPLACE INTO artifacts (message_id, channel_id, guild_id, expires_at, spec_json, view_section, game_state, created_timestamp)
                   VALUES (:messageId, :channelId, :guildId, :expiresAt, :specJson, 0, :gameState, :ts)`,
             args: {
@@ -74,18 +84,20 @@ export class ArtifactStore {
                 gameState: initialGameState,
                 ts: Date.now(),
             },
-        });
+        }, ...(entry.ownerId ? [{ sql: "INSERT INTO artifact_owners(message_id,owner_id) VALUES(?,?) ON CONFLICT(message_id) DO NOTHING", args: [entry.messageId, entry.ownerId] }] : []),
+        ...(entry.sources ?? []).map(source => ({ sql: "INSERT OR IGNORE INTO artifact_sources VALUES(?,?)", args: [entry.messageId, source] })), this.snapshot(entry.messageId)], "write");
     }
 
     public static async get(messageId: string): Promise<ArtifactRow | null> {
         await this.ensureTable();
-        const client = OperationalStore.getClient();
+        const client = ProductStore.getClient();
         const row = (
-            await client.execute({ sql: `SELECT message_id, channel_id, guild_id, expires_at, spec_json, view_section, game_state, created_timestamp FROM artifacts WHERE message_id = :messageId`, args: { messageId } })
+            await client.execute({ sql: `SELECT message_id, channel_id, guild_id, expires_at, spec_json, view_section, game_state, created_timestamp,(SELECT COALESCE(MAX(revision),0) FROM artifact_revisions r WHERE r.message_id=artifacts.message_id) AS revision FROM artifacts WHERE message_id = :messageId`, args: { messageId } })
         ).rows[0] as Record<string, unknown> | undefined;
         if (!row) return null;
         return {
             messageId: String(row.message_id),
+            revision: Number(row.revision),
             channelId: String(row.channel_id),
             guildId: row.guild_id == null ? null : String(row.guild_id),
             expiresAt: row.expires_at == null ? null : Number(row.expires_at),
@@ -98,7 +110,7 @@ export class ArtifactStore {
 
     public static async updateViewState(messageId: string, section: number): Promise<void> {
         await this.ensureTable();
-        const client = OperationalStore.getClient();
+        const client = ProductStore.getClient();
         await client.execute({
             sql: `UPDATE artifacts SET view_section = :section WHERE message_id = :messageId`,
             args: { section: Math.max(0, Math.floor(section)), messageId },
@@ -107,20 +119,21 @@ export class ArtifactStore {
 
     public static async updateGameState(messageId: string, gameState: Record<string, unknown> | null): Promise<void> {
         await this.ensureTable();
-        const client = OperationalStore.getClient();
+        const client = ProductStore.getClient();
         await client.execute({
             sql: `UPDATE artifacts SET game_state = :gameState WHERE message_id = :messageId`,
             args: { gameState: gameState ? JSON.stringify(gameState) : null, messageId },
         });
     }
 
-    public static async updateSpec(messageId: string, specJson: string, expiresAt: number | null): Promise<void> {
+    public static async updateSpec(messageId: string, specJson: string, expiresAt: number | null, gameState?: Record<string, unknown>): Promise<void> {
         await this.ensureTable();
-        const client = OperationalStore.getClient();
-        await client.execute({
-            sql: `UPDATE artifacts SET spec_json = :specJson, expires_at = :expiresAt, view_section = 0 WHERE message_id = :messageId`,
-            args: { specJson, expiresAt, messageId },
-        });
+        const client = ProductStore.getClient();
+        await client.batch([{
+            sql: `UPDATE artifacts SET spec_json = :specJson, expires_at = :expiresAt, view_section = 0,
+                game_state = CASE WHEN :replaceGame THEN :gameState ELSE game_state END WHERE message_id = :messageId`,
+            args: { specJson, expiresAt, messageId, replaceGame: gameState === undefined ? 0 : 1, gameState: gameState === undefined ? null : JSON.stringify(gameState) },
+        }, this.snapshot(messageId)], "write");
     }
 
     /**
@@ -131,7 +144,7 @@ export class ArtifactStore {
         channels: { fetch(channelId: string): Promise<unknown> };
     }): Promise<{ removed: number; failed: number }> {
         await this.ensureTable();
-        const store = OperationalStore.getClient();
+        const store = ProductStore.getClient();
         const now = Date.now();
         const rows = (
             await store.execute({ sql: `SELECT message_id, channel_id FROM artifacts WHERE expires_at IS NOT NULL AND expires_at <= :now`, args: { now } })
@@ -142,17 +155,24 @@ export class ArtifactStore {
         for (const row of rows) {
             const messageId = String(row.message_id);
             const channelId = String(row.channel_id);
+            let deleted = false;
             try {
                 const channel = (await client.channels.fetch(channelId)) as { messages?: { delete(id: string): Promise<unknown> } } | null;
                 if (channel?.messages) {
                     await channel.messages.delete(messageId);
                     removed += 1;
+                    deleted = true;
+                } else {
+                    failed += 1;
                 }
-            } catch {
-                failed += 1;
+            } catch (error) {
+                // Discord's Unknown Message is an already-completed deletion.
+                if ((error as { code?: number }).code === 10008) deleted = true;
+                else failed += 1;
             }
+            if (!deleted) continue;
             try {
-                await store.execute({ sql: `DELETE FROM artifacts WHERE message_id = :messageId`, args: { messageId } });
+                await store.batch(["artifacts", "artifact_sources", "artifact_owners", "artifact_revisions"].map(table => ({ sql: `DELETE FROM ${table} WHERE message_id=?`, args: [messageId] })), "write");
             } catch {
                 // Row lingers until the next sweep; harmless.
             }

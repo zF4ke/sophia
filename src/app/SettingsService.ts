@@ -1,15 +1,24 @@
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "node:crypto";
 import { AppPaths } from "@/app/AppPaths";
 import { readModelProfiles, resolveModelProfileName } from "@/app/modelProfiles";
 import { FileSystemService } from "@/shared/storage/FileSystemService";
+import { accessConfigSchema, type AccessConfig } from "@/security/accessConfig";
+import { z } from "zod";
+import { MigrationBackup } from "@/shared/storage/MigrationBackup";
 
 export interface BotSettings {
+    schemaVersion: 5;
+    sandbox: { enabled: boolean; image: string };
+    scheduling: { enabled: boolean; pollIntervalMs: number };
+    memory: { dreamingEnabled: boolean; dreamIntervalMs: number };
+    access: AccessConfig;
     modelProfile: string;
     runtime: {
         operationalDbPath: string;
-        checkpointDbPath: string;
-        maxToolCalls: number;
+        toolCallLimit: number;
+        modelConcurrency: number;
         maxRepeatedCallSignature: number;
         maxPriorTurns: number;
         maxChannelMessages: number;
@@ -19,15 +28,11 @@ export interface BotSettings {
         retrievalHistoryLimit: number;
         retrievalContextWindow: number;
         approvalTimeoutMs: number;
-        autoApproveWrites: boolean;
-        maxNotesPerRequest: number;
         startupSweep: boolean;
         startupSweepMaxMessages: number;
         edgePrefetch: boolean;
         longTask: {
-            maxToolCalls: number;
             evidenceSliceFloor: number;
-            retrievalInlineCrawlBatches: number;
         };
     };
     compaction: {
@@ -35,9 +40,9 @@ export interface BotSettings {
         triggerFraction: number;
         inputTriggerFraction: number;
     };
-    personality: "default" | "mixed" | "classic";
+    voice: "balanced" | "casual" | "formal";
     protectedChannelIds: string[];
-    /** Guild IDs the bot serves. Empty = all guilds allowed. Messages, interactions, and crawls from other guilds are ignored. */
+    /** Explicit enabled guilds. Empty enables no guilds. DMs are configured separately. */
     guildAllowlist: string[];
     debug: boolean;
 }
@@ -51,11 +56,16 @@ const DEFAULT_MODEL_PROFILE = readModelProfiles().defaultProfile;
 const DEFAULT_PROTECTED_CHANNEL_IDS: string[] = [];
 
 const DEFAULT_SETTINGS: BotSettings = {
+    schemaVersion: 5,
+    sandbox: { enabled: true, image: "sophia-sandbox:5" },
+    scheduling: { enabled: true, pollIntervalMs: 15_000 },
+    memory: { dreamingEnabled: true, dreamIntervalMs: 300_000 },
+    access: accessConfigSchema.parse({}),
     modelProfile: DEFAULT_MODEL_PROFILE,
     runtime: {
         operationalDbPath: path.join(DEFAULT_RUNTIME_DIR, "operational.sqlite"),
-        checkpointDbPath: path.join(DEFAULT_RUNTIME_DIR, "checkpoints.sqlite"),
-        maxToolCalls: 25,
+        toolCallLimit: 0,
+        modelConcurrency: 4,
         maxRepeatedCallSignature: 1,
         maxPriorTurns: 8,
         maxChannelMessages: 15,
@@ -65,15 +75,11 @@ const DEFAULT_SETTINGS: BotSettings = {
         retrievalHistoryLimit: 1000,
         retrievalContextWindow: 15,
         approvalTimeoutMs: 60_000,
-        autoApproveWrites: false,
-        maxNotesPerRequest: 200,
         startupSweep: true,
         startupSweepMaxMessages: 1000,
         edgePrefetch: true,
         longTask: {
-            maxToolCalls: 200,
             evidenceSliceFloor: 128,
-            retrievalInlineCrawlBatches: 3,
         },
     },
     compaction: {
@@ -81,7 +87,7 @@ const DEFAULT_SETTINGS: BotSettings = {
         triggerFraction: 0.88,
         inputTriggerFraction: 0.55,
     },
-    personality: "default",
+    voice: "balanced",
     protectedChannelIds: DEFAULT_PROTECTED_CHANNEL_IDS,
     guildAllowlist: [],
     debug: false,
@@ -91,15 +97,26 @@ let cached: BotSettings | null = null;
 
 function deepMerge(defaults: BotSettings, overrides: Partial<BotSettings>): BotSettings {
     const result = { ...defaults };
-    if (overrides.modelProfile !== undefined) result.modelProfile = overrides.modelProfile;
-    if (overrides.personality !== undefined) {
-        const allowed: BotSettings["personality"][] = ["default", "mixed", "classic"];
-        result.personality = allowed.includes(overrides.personality)
-            ? overrides.personality
-            : defaults.personality;
+    if (overrides.schemaVersion !== undefined && overrides.schemaVersion !== 5) throw new Error("Unsupported settings schema version.");
+    result.schemaVersion = 5;
+    result.sandbox = { ...defaults.sandbox, ...overrides.sandbox };
+    result.scheduling = { ...defaults.scheduling, ...overrides.scheduling };
+    if (typeof result.scheduling.enabled !== "boolean" || !Number.isSafeInteger(result.scheduling.pollIntervalMs) || result.scheduling.pollIntervalMs < 1000) throw new Error("Invalid scheduling settings.");
+    if (typeof result.sandbox.enabled !== "boolean" || typeof result.sandbox.image !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9./:@_-]+$/.test(result.sandbox.image)) throw new Error("Invalid sandbox settings.");
+    result.memory = { ...defaults.memory, ...overrides.memory };
+    if (typeof result.memory.dreamingEnabled !== "boolean" || !Number.isSafeInteger(result.memory.dreamIntervalMs) || result.memory.dreamIntervalMs < 60_000) {
+        throw new Error("Invalid memory settings; dreamIntervalMs must be at least 60000.");
     }
+    if (overrides.modelProfile !== undefined) result.modelProfile = overrides.modelProfile;
+    const legacyPersonality = (overrides as unknown as { personality?: string }).personality;
+    result.voice = overrides.voice ?? (legacyPersonality === "mixed" ? "casual" : legacyPersonality === "classic" ? "formal" : defaults.voice);
+    if (!["balanced", "casual", "formal"].includes(result.voice)) throw new Error("Invalid voice setting.");
     if (overrides.protectedChannelIds !== undefined) result.protectedChannelIds = overrides.protectedChannelIds;
     if (overrides.guildAllowlist !== undefined) result.guildAllowlist = overrides.guildAllowlist;
+    if (!Array.isArray(result.guildAllowlist) || result.guildAllowlist.some(id => typeof id !== "string" || !id.trim())) {
+        throw new Error("guildAllowlist must contain non-empty guild IDs");
+    }
+    result.access = accessConfigSchema.parse(overrides.access ?? defaults.access);
     if (overrides.debug !== undefined) result.debug = overrides.debug;
     if (overrides.runtime) {
         const mergedRuntime = { ...defaults.runtime, ...overrides.runtime };
@@ -107,11 +124,36 @@ function deepMerge(defaults: BotSettings, overrides: Partial<BotSettings>): BotS
             ...defaults.runtime.longTask,
             ...((overrides.runtime as Partial<BotSettings["runtime"]>).longTask ?? {}),
         };
+        // Retire v4 call budgets instead of silently making them v5 limits.
+        delete (mergedRuntime as unknown as Record<string, unknown>).maxToolCalls;
+        delete (mergedRuntime as unknown as Record<string, unknown>).checkpointDbPath;
+        delete (mergedRuntime as unknown as Record<string, unknown>).autoApproveWrites;
+        delete (mergedRuntime as unknown as Record<string, unknown>).maxNotesPerRequest;
+        delete (mergedRuntime.longTask as unknown as Record<string, unknown>).maxToolCalls;
+        delete (mergedRuntime.longTask as unknown as Record<string, unknown>).retrievalInlineCrawlBatches;
+        if (!Number.isSafeInteger(mergedRuntime.toolCallLimit) || mergedRuntime.toolCallLimit < 0) {
+            throw new Error("runtime.toolCallLimit must be a non-negative integer");
+        }
         result.runtime = mergedRuntime;
     }
     if (overrides.compaction) {
         result.compaction = { ...defaults.compaction, ...overrides.compaction };
     }
+    z.object({ triggerFraction: z.number().gt(0).lt(1), inputTriggerFraction: z.number().gt(0).lt(1), summarizerModel: z.string().min(1) }).parse(result.compaction);
+    z.boolean().parse(result.debug);
+    z.array(z.string().min(1)).parse(result.protectedChannelIds);
+    const rt = result.runtime;
+    z.number().int().min(1).max(32).parse(rt.modelConcurrency);
+    z.string().min(1).parse(rt.operationalDbPath);
+    for (const [key, value] of Object.entries(rt)) {
+        if (typeof value === "number") {
+            if (!Number.isSafeInteger(value) || value < 0) throw new Error(`runtime.${key} must be a non-negative integer.`);
+        } else if (!["operationalDbPath", "longTask", "startupSweep", "edgePrefetch"].includes(key)) {
+            throw new Error(`Invalid runtime setting: ${key}.`);
+        }
+    }
+    for (const key of ["startupSweep", "edgePrefetch"] as const) z.boolean().parse(rt[key]);
+    z.object({ evidenceSliceFloor: z.number().int().nonnegative() }).parse(rt.longTask);
     return result;
 }
 
@@ -138,7 +180,22 @@ export class SettingsService {
             }
             cached = merged;
 
+            const legacyRuntime = parsed.runtime as unknown as Record<string, unknown> | undefined;
             const needsSave =
+                legacyRuntime?.maxNotesPerRequest !== undefined ||
+                legacyRuntime?.autoApproveWrites !== undefined ||
+                parsed.schemaVersion !== 5 ||
+                legacyRuntime?.checkpointDbPath !== undefined ||
+                parsed.voice === undefined ||
+                "personality" in parsed ||
+                parsed.memory === undefined ||
+                parsed.sandbox === undefined ||
+                parsed.scheduling === undefined ||
+                parsed.access === undefined ||
+                legacyRuntime?.maxToolCalls !== undefined ||
+                (legacyRuntime?.longTask as Record<string, unknown> | undefined)?.retrievalInlineCrawlBatches !== undefined ||
+                (legacyRuntime?.longTask as Record<string, unknown> | undefined)?.maxToolCalls !== undefined ||
+                legacyRuntime?.toolCallLimit === undefined ||
                 parsed.modelProfile !== merged.modelProfile ||
                 (parsed.compaction as Partial<BotSettings["compaction"]> | undefined)?.summarizerModel !== merged.compaction.summarizerModel ||
                 // Backfill newly-added runtime knobs into the on-disk file so
@@ -147,19 +204,37 @@ export class SettingsService {
                 (parsed.runtime as Partial<BotSettings["runtime"]> | undefined)?.startupSweepMaxMessages === undefined ||
                 (parsed.runtime as Partial<BotSettings["runtime"]> | undefined)?.edgePrefetch === undefined;
             if (needsSave) {
+                MigrationBackup.file(SETTINGS_PATH);
                 this.save(merged);
             }
 
             return cached;
-        } catch {
-            cached = { ...DEFAULT_SETTINGS, runtime: { ...DEFAULT_SETTINGS.runtime, longTask: { ...DEFAULT_SETTINGS.runtime.longTask } }, compaction: { ...DEFAULT_SETTINGS.compaction } };
-            return cached;
+        } catch (error) {
+            cached = null;
+            throw Object.assign(new Error("Unable to load settings. Repair settings.json before starting Sophia."), { cause: error });
         }
     }
 
     public static save(settings: BotSettings): void {
         FileSystemService.ensureDirectoryExists(path.dirname(SETTINGS_PATH));
-        fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8");
+        const temporaryPath = `${SETTINGS_PATH}.${randomUUID()}.tmp`;
+        try {
+            fs.writeFileSync(temporaryPath, JSON.stringify(settings, null, 2), "utf8");
+            // Windows file scanners can briefly hold the destination open.
+            // Retry the atomic replacement; never delete the working settings.
+            for (let attempt = 0; ; attempt++) {
+                try {
+                    fs.renameSync(temporaryPath, SETTINGS_PATH);
+                    break;
+                } catch (error) {
+                    const code = (error as NodeJS.ErrnoException).code;
+                    if (process.platform !== "win32" || !["EPERM", "EBUSY", "EACCES"].includes(code ?? "") || attempt >= 5) throw error;
+                    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10 * 2 ** attempt);
+                }
+            }
+        } finally {
+            if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+        }
         cached = settings;
     }
 
@@ -179,13 +254,15 @@ export class SettingsService {
         return updated;
     }
 
-    public static reset(): BotSettings {
-        this.save(DEFAULT_SETTINGS);
-        return DEFAULT_SETTINGS;
+    public static reset(category: "runtime" | "model" | "voice" | "compaction" | "memory" | "sandbox" | "scheduling" = "runtime"): BotSettings {
+        const defaults = this.getDefaults();
+        if (category === "model") return this.update({ modelProfile: defaults.modelProfile });
+        if (category === "runtime") return this.update({ runtime: { ...defaults.runtime, operationalDbPath: this.load().runtime.operationalDbPath } });
+        return this.update({ [category]: defaults[category] });
     }
 
     public static getDefaults(): BotSettings {
-        return { ...DEFAULT_SETTINGS, runtime: { ...DEFAULT_SETTINGS.runtime, longTask: { ...DEFAULT_SETTINGS.runtime.longTask } }, compaction: { ...DEFAULT_SETTINGS.compaction } };
+        return structuredClone(DEFAULT_SETTINGS);
     }
 
     public static invalidateCache(): void {

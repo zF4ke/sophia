@@ -1,0 +1,51 @@
+import { expect, it } from "vitest";
+import { SkillStore, type SkillBody } from "@/memory/SkillStore";
+import { ProductStore } from "@/runtime/storage/ProductStore";
+import { knowledgeStore } from "@/memory/KnowledgeStore";
+const audience = { actorId: "owner", guildId: "g", channelId: "c" };
+const body: SkillBody = { name: "audit", description: "Inspect a channel", instructions: "Read relevant messages and cite their sources.", capabilities: ["retrieve_messages"], examples: ["Find the original decision."], status: "draft" };
+it("keeps learned drafts idempotent, suppresses retired names and invalidates deleted provenance", async () => {
+    const learned = { ...body, name: "learned audit" };
+    const provenance = { dreamId: "dream-id", taskId: "task-id", sources: ["https://discord.com/channels/g/c/learned-source"] };
+    await SkillStore.draftFromDream(audience, learned, provenance);
+    await SkillStore.draftFromDream(audience, learned, provenance);
+    const [draft] = await SkillStore.search(audience, learned.name);
+    expect(draft).toMatchObject({ id: "dream:dream-id", revision: 1, status: "draft", scope: "channel" });
+    expect(await SkillStore.search({ ...audience, actorId: "other" }, learned.name)).toEqual([]);
+    await expect(SkillStore.save(audience, { ...learned, status: "ready" }, { id: draft.id, revision: 1 })).rejects.toThrow("skill_evaluate");
+    await SkillStore.recordEvaluation(audience, draft, { taskId: provenance.taskId, model: "test", passed: true, findings: ["Demonstrated method."] });
+    const revised = await SkillStore.save(audience, { ...learned, status: "ready" }, { id: draft.id, revision: 1 });
+    expect(revised.provenance).toEqual(provenance);
+    await expect(SkillStore.save(audience, { ...learned, instructions: "A different method that has not been evaluated.", status: "ready" }, { id: draft.id, revision: 2 })).rejects.toThrow("skill_evaluate");
+    await knowledgeStore.invalidateSource(provenance.sources[0]);
+    expect(await SkillStore.load(audience, draft.id)).toBeNull();
+    expect(await SkillStore.search(audience, learned.name)).toEqual([]);
+    const retired = await SkillStore.save(audience, { ...body, name: "retired learned name" });
+    await SkillStore.remove(audience, retired.id, 1);
+    await SkillStore.draftFromDream(audience, { ...body, name: retired.name }, { ...provenance, dreamId: "new-dream", sources: [] });
+    expect(await SkillStore.search(audience, retired.name)).toEqual([]);
+});
+it("keeps drafts private to the owner and location and shares only ready guild skills", async () => {
+    const saved = await SkillStore.save(audience, body, { scope: "guild" });
+    expect(await SkillStore.load({ ...audience, actorId: "another" }, saved.id)).toBeNull();
+    expect(await SkillStore.load({ ...audience, channelId: "elsewhere" }, saved.id)).toBeNull();
+    const ready = await SkillStore.save(audience, { ...body, status: "ready" }, { id: saved.id, revision: 1 });
+    expect((await SkillStore.load({ ...audience, actorId: "another", channelId: "elsewhere" }, saved.id))?.revision).toBe(2);
+    expect(await SkillStore.load({ ...audience, guildId: "another-guild" }, saved.id)).toBeNull();
+    await expect(SkillStore.save({ ...audience, actorId: "another" }, body, { id: saved.id, revision: ready.revision })).rejects.toThrow("owned by someone else");
+});
+it("rejects stale concurrent revisions and retains prior versions", async () => {
+    const saved = await SkillStore.save(audience, { ...body, name: "revise" });
+    const attempts = await Promise.allSettled([1, 2].map(index => SkillStore.save(audience, { ...body, instructions: `Read source version ${index}.` }, { id: saved.id, revision: 1 })));
+    expect(attempts.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.filter(result => result.status === "rejected")).toHaveLength(1);
+    expect((await ProductStore.getClient().execute({ sql: "SELECT revision FROM skill_revisions WHERE skill_id=? ORDER BY revision", args: [saved.id] })).rows.map(row => Number(row.revision))).toEqual([1, 2]);
+});
+it("retirement prevents loading and stale edits without removing version history", async () => {
+    const saved = await SkillStore.save(audience, { ...body, name: "retire" });
+    await SkillStore.remove(audience, saved.id, 1);
+    expect(await SkillStore.load(audience, saved.id)).toBeNull();
+    await expect(SkillStore.save(audience, body, { id: saved.id, revision: 1 })).rejects.toThrow("unavailable");
+    expect((await ProductStore.getClient().execute({ sql: "SELECT revision FROM skill_revisions WHERE skill_id=?", args: [saved.id] })).rows).toHaveLength(1);
+    await expect(SkillStore.save(audience, { ...body, capabilities: ["invented_tool"] })).rejects.toThrow("unknown capability");
+});

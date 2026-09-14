@@ -1,17 +1,16 @@
 import { SettingsService } from "@/app/SettingsService";
 
 /**
- * Guild allowlist gate. When `guildAllowlist` is non-empty in settings,
- * only messages, interactions, and crawls from listed guilds are processed.
- * Empty list = all guilds allowed (default, backward compatible).
+ * Admission for bot work. An empty list enables nothing; errors fail closed.
  */
 export function isGuildAllowed(guildId: string | null | undefined): boolean {
-    if (!guildId) return true;
     try {
-        const allowlist = SettingsService.load().guildAllowlist;
-        if (!Array.isArray(allowlist) || allowlist.length === 0) return true;
+        const settings = SettingsService.load();
+        if (!guildId) return settings.access.directMessages;
+        const allowlist = settings.guildAllowlist;
+        if (!Array.isArray(allowlist)) return false;
         return allowlist.includes(guildId);
     } catch {
-        return true;
+        return false;
     }
 }

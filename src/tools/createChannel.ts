@@ -39,13 +39,13 @@ export const createChannelTool: ToolDefinition = {
 
     schema: {
         description:
-            "Create a new channel in the guild. This is a WRITE action that requires admin approval before execution. Use only when explicitly asked to create a channel. Important: `topic` is channel metadata, not the content to post. If the user asks to post text in the new channel, create the channel first, then call `send_message` with that text.",
+            "Create a new channel in the guild. This is a WRITE action that follows the requester action tier and approval mode before execution. Use only when explicitly asked to create a channel. Important: `topic` is channel metadata, not the content to post. If the user asks to post text in the new channel, create the channel first, then call `send_message` with that text.",
         parameters,
     },
 
     capability: {
         description:
-            "Create a new channel in the guild. Write action — requires admin approval. `topic` is metadata only; use `send_message` to post actual content.",
+            "Create a new channel in the guild. Write action — follows the requester action tier and approval mode. `topic` is metadata only; use `send_message` to post actual content.",
         inputSchema: z.object({
             name: z.string().describe("Name for the new channel."),
             type: z
@@ -57,7 +57,7 @@ export const createChannelTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist"],

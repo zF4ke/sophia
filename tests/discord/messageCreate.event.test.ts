@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PermissionFlagsBits, TextChannel } from "discord.js";
+import { PermissionFlagsBits, TextChannel, ThreadChannel } from "discord.js";
 
 vi.mock("@/discord/debug/DebugService", () => ({
     DebugService: {
@@ -55,6 +55,8 @@ vi.mock("@/runtime/Runtime", () => ({
 import event from "@/discord/events/message/messageCreate.event";
 import { SecurityService } from "@/security/SecurityService";
 import { Runtime } from "@/runtime/Runtime";
+import { SettingsService } from "@/app/SettingsService";
+import { ConversationAdapter } from "@/discord/conversation/ConversationAdapter";
 
 function createTextChannel() {
     return Object.assign(Object.create(TextChannel.prototype), {
@@ -74,6 +76,8 @@ function createTextChannel() {
 function createReplyMessage() {
     const channel = createTextChannel();
     return {
+        guildId: "g1",
+        guild: { id: "g1" },
         author: { id: "user-1", bot: false },
         client: { user: { id: "bot-1" } },
         channel,
@@ -85,9 +89,47 @@ function createReplyMessage() {
 }
 
 describe("messageCreate reply gating", () => {
+    it("uses thread send permission independently of the parent send permission", async () => {
+        vi.spyOn(SecurityService, "isTriggerEnabled").mockResolvedValue(true);
+        const message = createReplyMessage();
+        message.channel = Object.assign(Object.create(ThreadChannel.prototype), {
+            isTextBased: () => true,
+            permissionsFor: () => ({ has: (permission: bigint) => permission !== PermissionFlagsBits.SendMessages }),
+        });
+        await event.execute(message);
+        expect(Runtime.answer).toHaveBeenCalledOnce();
+    });
+
+    it("handles a mention while replying to someone else's message", async () => {
+        vi.spyOn(SecurityService, "isTriggerEnabled").mockResolvedValue(true);
+        const message = createReplyMessage();
+        message.fetchReference.mockResolvedValue({ author: { id: "another-user" } });
+        message.mentions.has.mockReturnValue(true);
+        message.content = "<@bot-1> stop the analysis about this";
+        await event.execute(message);
+        expect(ConversationAdapter.fromMessage).toHaveBeenCalledWith(expect.objectContaining({ question: "stop the analysis about this", trigger: "mention" }));
+        expect(Runtime.answer).toHaveBeenCalledTimes(1);
+    });
+    it("removes only Sophia's invocation mention and preserves the named target", async () => {
+        vi.spyOn(SecurityService, "isTriggerEnabled").mockResolvedValue(true);
+        const message = createReplyMessage();
+        message.reference = null;
+        message.content = "<@bot-1> encontra mensagens de <@123456789012345678>";
+        message.mentions.has.mockReturnValue(true);
+        await event.execute(message);
+        expect(ConversationAdapter.fromMessage).toHaveBeenCalledWith(expect.objectContaining({ question: "encontra mensagens de <@123456789012345678>" }));
+    });
+    it("does not resolve replies or start model work for an ungranted author", async () => {
+        SettingsService.update({ access: { directMessages: false, roles: [], users: [] } });
+        const message = createReplyMessage();
+        await event.execute(message);
+        expect(message.fetchReference).not.toHaveBeenCalled();
+        expect(Runtime.answer).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         vi.restoreAllMocks();
         vi.spyOn(SecurityService, "initialize").mockResolvedValue();
+        SettingsService.update({ guildAllowlist: ["g1"], access: { directMessages: false, roles: [], users: [{ userId: "user-1", guildId: "g1", level: "read", mode: "ask" }] } });
         vi.spyOn(SecurityService, "checkTriggerRateLimit").mockResolvedValue(true);
     });
 

@@ -2,9 +2,8 @@ import { ContainerBuilder, TextDisplayBuilder } from "discord.js";
 
 interface RuntimeStorageStatus {
     operationalDbPath: string;
-    checkpointDbPath: string;
     operationalDbSizeBytes: number;
-    checkpointDbSizeBytes: number;
+    durableStores: Array<{ name: string; sizeBytes: number }>;
     operationalSchemaVersion: string;
     runtimeDir: string;
     logsDir: string;
@@ -28,7 +27,7 @@ function formatBytes(bytes: number): string {
 
 export function buildRuntimeStorageContainer(status: RuntimeStorageStatus): ContainerBuilder {
     const totalSizeBytes =
-        status.operationalDbSizeBytes + status.checkpointDbSizeBytes;
+        status.operationalDbSizeBytes + status.durableStores.reduce((sum, store) => sum + store.sizeBytes, 0);
     return new ContainerBuilder()
         .setAccentColor(0x57f287)
         .addTextDisplayComponents(
@@ -36,7 +35,7 @@ export function buildRuntimeStorageContainer(status: RuntimeStorageStatus): Cont
             new TextDisplayBuilder().setContent(
                 [
                     `**Operational DB:** ${status.operationalDbPath} (${formatBytes(status.operationalDbSizeBytes)})`,
-                    `**Checkpoint DB:** ${status.checkpointDbPath} (${formatBytes(status.checkpointDbSizeBytes)})`,
+                    ...status.durableStores.map(store => `**${store.name}:** ${formatBytes(store.sizeBytes)} (preservado nos resets)`),
                     `**Total DB size:** ${formatBytes(totalSizeBytes)}`,
                     `**Operational schema:** ${status.operationalSchemaVersion}`,
                     `**Runtime dir:** ${status.runtimeDir}`,

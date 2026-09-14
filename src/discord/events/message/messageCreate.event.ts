@@ -1,6 +1,7 @@
+import { AccessPolicy } from "@/security/AccessPolicy";
 import { DebugService } from "@/discord/debug/DebugService";
-import { ProgressStatusService } from "@/discord/responding/ProgressStatus";
-import { ResponseActivityService } from "@/discord/responding/ResponseActivityIndicator";
+import { ProgressStatusService, type ProgressStatus } from "@/discord/responding/ProgressStatus";
+import { ResponseActivityService, type ResponseActivityIndicator } from "@/discord/responding/ResponseActivityIndicator";
 import { UIService } from "@/discord/ui/UIService";
 import { ConversationAdapter } from "@/discord/conversation/ConversationAdapter";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
@@ -17,7 +18,7 @@ export = {
         try {
             const channel = message.channel;
             if (!channel.isTextBased()) return;
-            if (!(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
+            if (message.guild && !(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
             if (message.author.id === message.client.user!.id) return;
             if (!isGuildAllowed(message.guildId)) return;
 
@@ -26,6 +27,8 @@ export = {
             DiscordMemoryService.ingestMessage(message).catch((err) => {
                 console.warn("[messageCreate] ingestion failed (non-fatal):", (err as Error).message ?? err);
             });
+
+            if (message.author.bot || message.webhookId || await AccessPolicy.decide(message.author.id, message.guild, "none") === "deny") return;
 
             if (message.reference?.messageId) {
                 const referencedMessage = await message.fetchReference().catch(() => null);
@@ -46,12 +49,12 @@ export = {
                     ) {
                         await respondToMessage(message, "reply");
                     }
+                    return;
                 }
-                return;
             }
 
             if (
-                message.mentions.has(message.client.user!) &&
+                (!message.guild || message.mentions.has(message.client.user!)) &&
                 await SecurityService.isTriggerEnabled(
                     ACCESS_POLICY_TARGETS.mention,
                     message.author.id,
@@ -72,24 +75,23 @@ export = {
 async function respondToMessage(message: Message, trigger: "mention" | "reply") {
     const releaseRequest = ActiveRequestTracker.begin();
     let debugSession = null;
-    let activityIndicator = null;
-    let progressStatus = null;
+    let activityIndicator: ResponseActivityIndicator | null = null;
+    let progressStatus: ProgressStatus | null = null;
 
     try {
         if (message.author.bot) return;
         const channel = message.channel;
         if (!channel.isTextBased()) return;
-        if (!(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
+        if (message.guild && !(channel instanceof TextChannel) && !(channel instanceof ThreadChannel)) return;
 
-        const permissions = channel.permissionsFor(message.client.user!);
-        if (!permissions) return;
-        if (!permissions.has(PermissionFlagsBits.ViewChannel)) return;
-        if (!permissions.has(PermissionFlagsBits.ReadMessageHistory)) return;
-        if (!permissions.has(PermissionFlagsBits.SendMessages)) return;
+        if (channel instanceof TextChannel || channel instanceof ThreadChannel) {
+            const permissions = channel.permissionsFor(message.client.user!);
+            if (!permissions?.has(PermissionFlagsBits.ViewChannel) || !permissions.has(PermissionFlagsBits.ReadMessageHistory) || !permissions.has(channel instanceof ThreadChannel ? PermissionFlagsBits.SendMessagesInThreads : PermissionFlagsBits.SendMessages)) return;
+        }
 
         const prompt =
             trigger === "mention"
-                ? message.content.replace(/<@!?[0-9]+>/g, "").trim()
+                ? message.content.split(`<@${message.client.user!.id}>`).join("").split(`<@!${message.client.user!.id}>`).join("").trim()
                 : message.content.trim();
 
         debugSession = await DebugService.startForMessage(message, prompt);
@@ -103,8 +105,9 @@ async function respondToMessage(message: Message, trigger: "mention" | "reply") 
             question: prompt,
             debugSession,
             activityIndicator,
-            progressNotifier: (summary: string) => progressStatus!.notify(summary),
+            progressNotifier: async (summary: string) => { await activityIndicator?.stop(); await progressStatus!.notify(summary); },
         });
+        input.onTaskBound = taskId => progressStatus?.bindTask?.(taskId);
         const result = await Runtime.answer(input);
         await activityIndicator.startTyping();
         const formatted = UIService.formatAnswer(result.answer, result.citations);

@@ -2,6 +2,7 @@ import { ChannelType, Collection, type Guild, type Message } from "discord.js";
 import { getAppConfig } from "@/app/AppConfig";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import type { ChannelCrawlResult } from "@/shared/appTypes";
+import { DiscordHistoryReader } from "./DiscordHistoryReader";
 
 type CrawlableChannel = {
     id: string;
@@ -23,7 +24,6 @@ type CrawlableChannel = {
 
 const PREVIEW_MESSAGE_LIMIT = 12;
 
-let backgroundIngestQueue: Promise<void> = Promise.resolve();
 
 function normalizeLookupValue(value: string): string {
     return value
@@ -57,63 +57,6 @@ function resolveMessageAuthorIdentity(message: any): {
         authorUsername,
         authorNickname: guildMember?.nickname || null,
     };
-}
-
-async function enrichMessagesWithGuildMembers(guild: Guild | null, messages: Array<any>): Promise<void> {
-    if (!guild?.members?.fetch) {
-        return;
-    }
-
-    const memberPromises = new Map<string, Promise<any>>();
-
-    for (const message of messages) {
-        const authorId = typeof message?.author?.id === "string" ? message.author.id : null;
-        if (!authorId || message.member) {
-            continue;
-        }
-
-        if (!memberPromises.has(authorId)) {
-            memberPromises.set(
-                authorId,
-                Promise.resolve(guild.members.cache?.get?.(authorId) ?? null).then(async (cached) => {
-                    if (cached) {
-                        return cached;
-                    }
-
-                    try {
-                        return await guild.members.fetch(authorId);
-                    } catch {
-                        return null;
-                    }
-                })
-            );
-        }
-    }
-
-    if (!memberPromises.size) {
-        return;
-    }
-
-    for (const message of messages) {
-        const authorId = typeof message?.author?.id === "string" ? message.author.id : null;
-        if (!authorId || message.member || !memberPromises.has(authorId)) {
-            continue;
-        }
-
-        const resolved = await memberPromises.get(authorId);
-        try {
-            message.member = resolved;
-        } catch {
-            // Discord.js Message objects expose `member` as a getter-only
-            // property on cached instances.  Fall back to a non-enumerable
-            // shadow property so downstream code can still read it.
-            Object.defineProperty(message, "member", {
-                value: resolved,
-                writable: true,
-                configurable: true,
-            });
-        }
-    }
 }
 
 function isThreadLike(channel: { type?: ChannelType | number | string } | null | undefined): boolean {
@@ -172,22 +115,6 @@ function getParentCategoryMeta(channel: CrawlableChannel): {
 }
 
 export class DiscordChannelCrawlService {
-    private static enqueueBackgroundIngest(messages: Array<any>): void {
-        if (!messages.length) {
-            return;
-        }
-
-        backgroundIngestQueue = backgroundIngestQueue
-            .then(async () => {
-                for (const message of messages) {
-                    await DiscordMemoryService.ingestMessage(message);
-                }
-            })
-            .catch((error) => {
-                console.error("Background crawl ingest failed:", error);
-            });
-    }
-
     public static listReadableChannels(guild: Guild | null): CrawlableChannel[] {
         if (!guild || !guild.channels?.cache) {
             return [];
@@ -373,10 +300,12 @@ export class DiscordChannelCrawlService {
         const fetchedMessages: Array<any> = [];
 
         while (fetched < limit) {
-            const batch = await channel.messages.fetch({
+            const page = await DiscordHistoryReader.page(channel, {
                 limit: Math.min(100, limit - fetched),
                 before,
+                mode: "backfill", guild,
             });
+            const batch = page.messages;
 
             if (!batch.size) {
                 exhausted = true;
@@ -397,10 +326,7 @@ export class DiscordChannelCrawlService {
             );
         }
 
-        await DiscordMemoryService.updateChannelCrawlState(channel.id, before || null, exhausted);
-        await enrichMessagesWithGuildMembers(guild, fetchedMessages);
         const previewMessages = buildPreviewMessages(fetchedMessages, queryHint);
-        this.enqueueBackgroundIngest(fetchedMessages);
 
         return {
             channelId: channel.id,
@@ -410,14 +336,11 @@ export class DiscordChannelCrawlService {
             exhausted,
             oldestFetchedMessageId: before || null,
             queryHint: queryHint || null,
-            backgroundIngestQueued: stored > 0,
+            backgroundIngestQueued: false,
             previewMessages,
         };
     }
 
-    public static async waitForBackgroundIngest(): Promise<void> {
-        await backgroundIngestQueue;
-    }
 
     /**
      * One-shot crawl targeting a specific time range using a Discord snowflake
@@ -470,10 +393,12 @@ export class DiscordChannelCrawlService {
         const fetchedMessages: Array<Message> = [];
 
         while (fetched < limit) {
-            const batch: Collection<string, Message> = await channel.messages.fetch({
+            const page = await DiscordHistoryReader.page(channel, {
                 limit: Math.min(100, limit - fetched),
                 before,
+                mode: "target", guild,
             });
+            const batch = page.messages;
 
             if (!batch.size) {
                 exhausted = true;
@@ -493,9 +418,7 @@ export class DiscordChannelCrawlService {
             );
         }
 
-        await enrichMessagesWithGuildMembers(guild, fetchedMessages);
         const previewMessages = buildPreviewMessages(fetchedMessages, queryHint);
-        this.enqueueBackgroundIngest(fetchedMessages);
 
         return {
             channelId: channel.id,
@@ -505,7 +428,7 @@ export class DiscordChannelCrawlService {
             exhausted,
             oldestFetchedMessageId: before || null,
             queryHint: queryHint || null,
-            backgroundIngestQueued: fetchedMessages.length > 0,
+            backgroundIngestQueued: false,
             previewMessages,
         };
     }

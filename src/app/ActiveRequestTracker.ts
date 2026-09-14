@@ -1,4 +1,5 @@
 export class ActiveRequestTracker {
+    public static isIdle(): boolean { return this.activeCount === 0; }
     private static activeCount = 0;
     private static readonly idleWaiters = new Set<() => void>();
 

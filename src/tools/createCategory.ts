@@ -30,13 +30,13 @@ export const createCategoryTool: ToolDefinition = {
 
     schema: {
         description:
-            "Create a new category in the guild. This is a WRITE action that requires admin approval before execution. Use only when explicitly asked to create a category.",
+            "Create a new category in the guild. This is a WRITE action that follows the requester action tier and approval mode before execution. Use only when explicitly asked to create a category.",
         parameters,
     },
 
     capability: {
         description:
-            "Create a new category in the guild. Write action - requires admin approval.",
+            "Create a new category in the guild. Write action - follows the requester action tier and approval mode.",
         inputSchema: z.object({
             name: z.string().describe("Name for the new category."),
             position: z
@@ -46,7 +46,7 @@ export const createCategoryTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist"],

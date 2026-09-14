@@ -48,7 +48,7 @@ describe("note_add", () => {
         (DiscordMemoryService.addRequestNote as ReturnType<typeof vi.fn>).mockResolvedValue({ seq: 1 });
 
         const result = await run(ctx(), { body: "Found something" });
-        expect(result.data).toEqual({ seq: 1, label: null, count: 1, cap: 5 });
+        expect(result.data).toEqual({ seq: 1, label: null, count: 1, cap: null });
         expect(DiscordMemoryService.addRequestNote).toHaveBeenCalledWith(
             expect.objectContaining({ requestId: "req-1", kind: "note", body: "Found something" }),
         );
@@ -59,11 +59,12 @@ describe("note_add", () => {
         expect(result.errorMessage).toBe("empty_body");
     });
 
-    it("rejects when note limit reached", async () => {
-        (DiscordMemoryService.countRequestNotes as ReturnType<typeof vi.fn>).mockResolvedValue(5);
-
-        const result = await run(ctx(), { body: "Over limit" });
-        expect(result.errorMessage).toBe("note_limit");
+    it("continues saving progress beyond the retired note quota", async () => {
+        vi.mocked(DiscordMemoryService.countRequestNotes).mockResolvedValue(500);
+        vi.mocked(DiscordMemoryService.addRequestNote).mockResolvedValue({ seq: 501 });
+        const result = await run(ctx(), { body: "Next finding" });
+        expect(result.errorMessage).toBeUndefined();
+        expect(result.data).toMatchObject({ count: 501, cap: null });
     });
 
     it("errors when requestId is missing", async () => {

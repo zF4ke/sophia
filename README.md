@@ -2,233 +2,100 @@
 
 <img src="assets/logo.svg" alt="Sophia" width="76" />
 
-# Sophia
+# Sophia 5
 
-*A conversational AI agent for Discord that searches your server history and acts on it, with admin approval on every change.*
+*A conversational AI assistant for Discord that researches your server, works with files, remembers useful things, and acts with your permission.*
 
-![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-8b6dff)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-8b6dff)](LICENSE)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![discord.js](https://img.shields.io/badge/discord.js-v14-5865F2?logo=discord&logoColor=white)
-![Node](https://img.shields.io/badge/node-20%2B-339933?logo=node.js&logoColor=white)
+![Node](https://img.shields.io/badge/node-22.19%2B-339933?logo=node.js&logoColor=white)
+[![Documentation](https://img.shields.io/badge/docs-Sophia%205-8b6dff)](https://zf4ke.github.io/sophia/)
 
-**[Live site](https://zf4ke.github.io/sophia/)** · **[How it works](docs/how-sophia-works.md)** · **[Architecture](docs/architecture.md)** · **[Testing](docs/testing.md)**
+**[Website and handbook](https://zf4ke.github.io/sophia/)** &nbsp; **[How it works](docs/how-sophia-works.md)** &nbsp; **[Architecture](docs/architecture.md)** &nbsp; **[Testing](docs/testing.md)**
 
 </div>
 
 ---
 
-Sophia turns your Discord server into something you can talk to. Ask her what happened in any channel, who said what and when, or have her create channels, manage roles, and clean up messages, all in plain language, with a built-in approval system that keeps admins in control.
+Sophia is a Discord assistant with one identity, durable tasks, automatic memory and a model-led tool loop. It can research a question, work with files, accept corrections while working, and carry authorized tasks through to completion. See [the implementation plan](docs/v5-plan.md) and [validation record](docs/live-acceptance.md) for the current release checks.
 
-## 📸 Preview
+The [Sophia handbook](https://zf4ke.github.io/sophia/) is the website and documentation destination. This branch replaces the old landing page with a Starlight site; publishing happens through the Pages workflow after merge. Preview the new site locally with `npm run docs:build` and `npm run docs:preview` after installing its dependencies in `website/`.
 
-<div align="center">
+Sophia can research Discord history and the web, work with files in an isolated container, inspect images and video frames, transcribe audio with a compatible configured model, maintain memories and procedural skills, and run scheduled follow-ups. Ordinary conversation uses the same runtime as longer work.
 
-<a href="https://zf4ke.github.io/sophia/"><img src="docs/preview.png" alt="Sophia landing page" width="860" /></a>
+## Run locally
 
-<br/><sub>A conversational agent you talk to in plain language, with admin approval on every change. <a href="https://zf4ke.github.io/sophia/"><b>View the live site →</b></a></sub>
+Use Node.js 22.19 or newer for the bot and docs together; the bot alone supports 20.12 or newer. Install dependencies with `npm ci`, copy `.env.example` to `.env`, and configure the Discord token, OpenRouter key and `OPENCODE_API_KEY`. Set `BOOTSTRAP_ADMIN_IDS` to the operator's verified Discord user ID for initial administration. Secrets belong in `.env`; runtime settings belong in `storage/settings.json`.
 
-</div>
+Muse Spark 1.3 Free through OpenCode Zen is the fresh-install default. Sophia uses its own runtime with the Responses API and task session metadata. OpenRouter profiles and local compatible servers remain selectable in `/settings`. Existing installations retain their saved selection. Embeddings still use OpenRouter. See the [model guide](website/src/content/docs/setup/models.md) for provider availability and data-use terms.
 
-## ✨ Features
+Run `npm start`, or `npm run dev` for development. The process registers its commands through the normal startup flow. Only one process may own a storage directory.
 
-**Conversational AI** — Talk to Sophia naturally through `/talk`, mentions, or replies. She maintains conversation continuity across reply chains and threads.
+New installations enable no guilds and disable DMs. An operator enables a guild with `/access enable_here:true` and grants a user access with `/access user:@person level:write mode:ask`. Global grants still require enabled locations. `/access enable_dms:true` enables DMs for authorized users. Reads run without approval; changes follow the granted tier and Ask or Auto mode.
 
-**Deep Server Search** — Search through your entire Discord history with intelligent retrieval. Sophia indexes messages locally for fast lookups and automatically fetches live history when needed.
+The workspace requires a functioning Docker engine and the local image built with `npm run sandbox:build`. It has no host-execution fallback. Configure model profiles in `resources/models/model-profiles.json` and select one in `/settings`. Declared model input modalities control image and audio support. A profile can use an explicit compatible endpoint; otherwise model requests use OpenRouter.
 
-**49 Built-in Tools** — From retrieving messages and resolving members to creating channels, managing roles, editing messages, and planning multi-step tasks. The model decides which tools to use based on your request.
+## Use Sophia
 
-**Admin Approval System** — Write actions (create channel, send message, manage roles) require admin approval. Destructive actions (delete channel, clear messages) require approval *plus* confirmation. Multiple destructive actions are batched into a single approval card grouped by Discord category.
+Use `npm run state -- backup <new-directory>` with Sophia stopped to archive durable state. Restore into empty storage with `npm run state -- restore <archive-directory> <empty-storage-directory>`. Credentials and reconstructible indexes are excluded. See [cleanup and migration](docs/cleanup-migration.md).
 
-**Auto-Approve Mode** — Optionally skip approval for non-destructive write actions when you trust the model.
+- `/talk`, a mention, a reply, or an enabled DM starts a conversation. Attachments can be supplied without text.
+- Mention Sophia or reply to steer or stop work in plain language. Describe the task; she can find it without you copying an ID. `/steer` and `/stop` remain optional controls.
+- Ask to continue or revise earlier work by description. Sophia can reopen its saved notes, files and previous answer. `/tasks` remains available to inspect plans, evidence, usage and files.
+- `/schedules` manages your scheduled work. Conditional checks can stay quiet when nothing needs attention.
+- `/settings` controls the selected model, voice and runtime configuration. `/access` manages availability and authority.
+- `/costs` reports your usage in the channel by default; `ephemeral:true` keeps it private. Operators have a private installation-wide Custos view in `/settings`. Missing prices and tokens remain explicit.
+- Research uses locally indexed messages first and fetches missing history when needed. `/index` remains an operator inspection and repair command.
 
-**Animated Activity Indicators** — Sophia reacts with a cycling emoji sequence while thinking, so you always know she's working.
+Tasks have no default total call, duration or cost cap. Cancellation, repeated-call protection, context capacity and bounded individual operations remain. An optional explicit tool-call limit applies to the whole task, including continuation legs. Usage estimates describe configured prices, not provider billing receipts.
 
-**Configurable Runtime** — Tune tool-call limits, retrieval depth, approval timeouts, and more through an interactive `/settings` panel. Switch between model profiles on the fly.
+## Storage and recovery
 
-**Role-Based Access** — Admin and moderator tiers with rate limiting. Admins get full control; moderators get scoped permissions.
+`tasks.sqlite` stores work, receipts, approvals, collections and files. `knowledge.sqlite` stores identity, memories and dreaming jobs. `products.sqlite` stores cards and skills. The operational retrieval database is rebuildable; the durable stores and settings are not disposable.
 
-## Quick Start
+After a restart, interrupted work pauses. External actions are not replayed automatically. Unknown action outcomes must be checked before a task resumes. Settings resets preserve access rules; index resets preserve durable work.
 
-### Prerequisites
+## Engineering
 
-- Node.js 20.12+ (for `process.loadEnvFile()`)
-- A Discord bot token
-- An [OpenRouter](https://openrouter.ai/) API key
+Run `npm run doctor` to check local prerequisites without calling a model or sending a message. For a second PC, follow the [installation guide](website/src/content/docs/setup/installation.md) and [transfer guide](website/src/content/docs/setup/another-pc.md). Build the Docker image on that PC and recreate `.env` separately. Never sync a live SQLite directory between running installations.
 
-### Install
+Run `npm run check` for type checking and deterministic tests. `npm run test:live` runs opt-in integration tests; consult [testing](docs/testing.md) for prerequisites. Real Discord behavior, provider behavior and container isolation need integration verification in addition to mocks.
 
-```bash
-git clone https://github.com/zF4ke/sophia.git
-cd sophia
-npm install
+Start with [architecture](docs/architecture.md), [the agent loop](docs/agent-loop.md), [access policy](docs/access-policy.md), [task lifecycle](docs/task-lifecycle.md), [workspace and media](docs/workspace-and-media.md), [memory](docs/memory-indexing.md), [skills](docs/skills.md), and [scheduling](docs/scheduling.md). Tool contracts and engineering rules live in [AGENTS.md](AGENTS.md).
+
+## Launch the bot and website
+
+From the repository root, install dependencies once on each PC:
+
+```sh
+npm ci
+npm --prefix website ci
 ```
 
-### Get an OpenRouter key
+With `.env` configured and Docker running, build the sandbox once, then start Sophia:
 
-Sophia uses [OpenRouter](https://openrouter.ai/) to reach the language models. Bring your own key — Sophia never ships one, and you pay OpenRouter directly for the tokens you use.
-
-1. Sign up at [openrouter.ai](https://openrouter.ai/).
-2. Create a key at [openrouter.ai/keys](https://openrouter.ai/keys).
-3. Add credit (or start with free-tier model profiles).
-
-You also need a Discord bot token from the [Discord Developer Portal](https://discord.com/developers/applications) (create an application, add a Bot, copy its token).
-
-### Configure
-
-Copy the example file and fill in your values:
-
-```bash
-cp .env.example .env
-```
-
-```env
-DISCORD_TOKEN=your-discord-bot-token
-OPENROUTER_API_KEY=your-openrouter-api-key
-```
-
-A `.env` file is **required** before the first run — `npm start` reads it on startup and will exit if it is missing. See [`.env.example`](.env.example) for every supported variable (including the optional `BOOTSTRAP_ADMIN_IDS` and `SOPHIA_STORAGE_ROOT`).
-
-### Run
-
-```bash
+```sh
+npm run sandbox:build
+npm run doctor
 npm start
 ```
 
-For development with auto-reload:
+In a separate terminal, start the documentation website:
 
-```bash
-npm run dev
+```sh
+npm run docs:dev
 ```
 
-## Commands
+Open the localhost address printed by Astro, normally `http://127.0.0.1:4321/`. To test the static site with its generated search index, stop the docs dev server and run:
 
-### Conversation
+```sh
+npm run docs:build
+npm run docs:preview
+```
 
-| Command | Description |
-|---------|-------------|
-| `/talk` | Start a conversation with Sophia |
-| `@Sophia` | Mention Sophia in any message |
-| *Reply* | Reply to any Sophia message to continue the conversation |
-
-### Search
-
-| Command | Description |
-|---------|-------------|
-| `/nth` | Read the N-th historical message from an indexed channel |
-
-### Admin
-
-| Command | Description |
-|---------|-------------|
-| `/settings` | Tabbed panel to select model and tune runtime |
-| `/index` | Manage message indexing — backfill channels/categories, check status, repair |
-| `/debug` | Control debug mode and open the logs panel |
-| `/superchannels` | Manage protected channels that block destructive actions |
-| `/access` | Manage admin and moderator access |
-| `/ping` | Health check with latency info |
-
-## Tools
-
-Sophia has **33 tools** organized by capability:
-
-| Category | Tools |
-|----------|-------|
-| **Retrieval** | `retrieve_messages`, `search_messages` |
-| **Discovery** | `list_guild_structure`, `get_guild_context`, `resolve_channel_targets` |
-| **Members** | `resolve_member_identity`, `get_member_profile`, `list_members` |
-| **Roles** | `get_role_info`, `list_roles`, `create_role`, `edit_role`, `manage_member_roles` |
-| **Threads** | `list_threads`, `read_thread_messages` |
-| **Utilities** | `measure_text_length`, `evaluate_math` |
-| **Write** | `create_channel`, `create_category`, `create_thread`, `move_channel`, `move_category`, `send_message`, `edit_message` |
-| **Destructive** | `clear_messages`, `delete_messages`, `delete_channel`, `edit_channel` |
-| **Control** | `start_long_task` |
-| **Scratchpad** | `plan_update`, `note_add`, `note_list`, `note_clear` |
-
-Write tools require admin approval. Destructive tools require approval + confirmation dialog. Scratchpad tools persist data across context compaction for multi-step tasks.
-
-## Model Profiles
-
-Model profiles are defined in `resources/models/model-profiles.json` and selected in `/settings` under **Model**. The supported profiles are GLM 5.3 Flash, GPT-OSS 120B, Ling 3.0 Flash, and Local LM Studio. The default is `glm53flash`.
-
-The Local LM Studio profile routes chat through any OpenAI-compatible local server (default `http://127.0.0.1:1234/v1`): set `chatModel` to the exact model id loaded in LM Studio and adjust `contextWindow` to match. Embeddings still run through OpenRouter, so that key is required either way.
-
-Pricing shown in `/settings` comes from the `pricing` metadata in `resources/models/model-profiles.json` (values synced from OpenRouter). Add new profiles by editing the JSON file — no code changes needed.
-
-## How It Works
-
-Sophia uses a **while-loop with native function calling**. One unified system prompt gives the model the question, conversation context, and available tools. The model calls tools iteratively and calls `finish` when it has an answer.
-
-There is no separate planner or step selector. The model handles all decisions inside the tool-calling loop. The runtime enforces budgets, guardrails, and approval gates.
-
-**Retrieval pipeline:**
-1. Search local indexed Discord messages
-2. If evidence is weak, refresh from live Discord history
-3. Ingest new messages into the local cache
-4. Retry retrieval on the enriched cache
-
-**Conversation continuity** follows reply chains across threads and channels, so `/talk`, mentions, and replies all feel like one continuous conversation.
-
-## Configuration
-
-All runtime tuning is done through `/settings` or `storage/settings.json`:
-
-- **Context retention** — recent turns, channel messages, prior evidence slice
-- **Retrieval** — history page size, context window, crawl limits
-- **Loop guardrails** — max tool calls (2–30), repeated call guard, no wall-clock cap on turns
-- **Approval** — timeout duration (30s–5m), auto-approve writes toggle
-- **Model profile** — switch model in `/settings` model tab
-
-## Hardcoded Knobs
-
-These values are intentionally hardcoded and where to change them:
-
-- Default protected channel IDs: `src/app/SettingsService.ts` (`DEFAULT_PROTECTED_CHANNEL_IDS`, empty by default — populate per server with `/superchannels`)
-- Runtime default values (tool limits, budgets, retrieval defaults, approval timeout): `src/app/SettingsService.ts` (`DEFAULT_SETTINGS.runtime`)
-- Context prune threshold ratio (`0.80`): `src/runtime/Runtime.ts` (`CONTEXT_HEADROOM_RATIO`)
-- OpenRouter base URL: `src/app/AppConfig.ts` (`openRouterBaseUrl`)
-- Model catalog, labels, context and pricing metadata: `resources/models/model-profiles.json`
-
-## Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `npm start` | Run the bot |
-| `npm run dev` | Development mode with auto-reload |
-| `npm run check` | Typecheck + run all deterministic tests |
-| `npm run typecheck` | TypeScript type check only |
-| `npm run test` | Fast deterministic test suite |
-| `npm run test:live` | Real-model tests (requires API key) |
-| `npm run test:all` | Deterministic + live tests combined |
-| `npm run clean` | Reset all storage to defaults |
-
-## Documentation
-
-| Doc | Topic |
-|-----|-------|
-| [Architecture](docs/architecture.md) | System blocks, runtime flow, storage |
-| [Agent Loop](docs/agent-loop.md) | While-loop mechanics, tool model, guardrails |
-| [How Sophia Works](docs/how-sophia-works.md) | End-to-end flow, retrieval deep dive, capability composition |
-| [Commands & Admin](docs/commands-and-admin.md) | All commands, approval system, access control |
-| [Memory & Indexing](docs/memory-indexing.md) | Local cache, retrieval strategy, `/index` commands |
-| [Prompt Catalog](docs/prompt-catalog.md) | Active prompts and stable capability names |
-| [Feature Stories](docs/feature-user-stories.md) | Concrete acceptance stories for all tools and compositions |
-| [Testing](docs/testing.md) | Test strategy, deterministic + live suites, manual tests |
-| [UI Guidelines](docs/ui.md) | Response formatting, approval cards, activity indicators |
-| [Cleanup & Migration](docs/cleanup-migration.md) | What was removed and why |
-
-## Tech Stack
-
-- **Runtime:** Node.js + TypeScript
-- **Discord:** discord.js v14
-- **AI:** OpenRouter (OpenAI SDK compatible)
-- **Storage:** libSQL (local SQLite)
-- **Validation:** Zod
-- **Testing:** Vitest
-
-## Project Status
-
-Sophia is functional and actively developed, but honest about its edges: there is no long-term memory or persistent personality yet, retrieval is cache-first with live refresh (not a full memory system), and large-server backfills can take several turns to complete. Self-hosting assumes you are comfortable with Node.js and a `.env` file. If that fits you, it runs today.
+The public website target is **https://zf4ke.github.io/sophia/**. The Pages workflow builds the `/sophia/` base path and publishes `website/dist` when these changes reach `master`, or when that workflow is run manually. Repository Pages should use **GitHub Actions** as its source. The website contains static documentation; the bot runs separately on your PC. See the [website guide](website/src/content/docs/setup/website.md).
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, hobby, research, education, and nonprofit use. **Commercial use is not permitted** under this license. See the [LICENSE](LICENSE) file for the full terms.
+Sophia is distributed under the [PolyForm Noncommercial License 1.0.0](LICENSE).

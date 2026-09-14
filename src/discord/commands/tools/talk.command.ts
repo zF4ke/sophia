@@ -1,10 +1,11 @@
+import { AccessPolicy } from "@/security/AccessPolicy";
 import {
     ChatInputCommandInteraction,
     MessageFlags,
     SlashCommandBuilder,
 } from "discord.js";
 import { DebugService } from "@/discord/debug/DebugService";
-import { ProgressStatusService } from "@/discord/responding/ProgressStatus";
+import { ProgressStatusService, type ProgressStatus } from "@/discord/responding/ProgressStatus";
 import { ResponseActivityService } from "@/discord/responding/ResponseActivityIndicator";
 import { UIService } from "@/discord/ui/UIService";
 import { EMOJIS } from "@/discord/constants";
@@ -24,8 +25,13 @@ export = {
             option
                 .setName("message")
                 .setDescription("Mensagem para Sophia")
-                .setRequired(true)
+                .setRequired(false)
         )
+        .addStringOption(option => option.setName("task_id").setDescription("Retoma um dos teus pedidos pausados neste canal"))
+        .addBooleanOption(option => option.setName("handoff").setDescription("Transfere um pedido pausado de outro local; exige ephemeral:true"))
+        .addStringOption(option => option.setName("approval_mode").setDescription("Política de aprovação para este pedido").addChoices(
+            { name: "Pedir aprovação para alterações", value: "ask" }, { name: "Usar a minha autorização configurada", value: "inherit" }))
+        .addAttachmentOption(option => option.setName("attachment").setDescription("Imagem ou ficheiro para Sophia analisar"))
         .addBooleanOption((option) =>
             option
                 .setName("ephemeral")
@@ -36,18 +42,18 @@ export = {
         const releaseRequest = ActiveRequestTracker.begin();
         let debugSession = null;
         let activityIndicator = null;
-        let progressStatus = null;
+        let progressStatus: ProgressStatus | null = null;
 
         try {
-            if (!SecurityService.isAdmin(interaction.user.id)) {
+            if (await AccessPolicy.decide(interaction.user.id, interaction.guild, "none") === "deny") {
                 await interaction.reply({
-                    content: `${EMOJIS.error} Este comando está disponível apenas para administradores.`,
+                    content: `${EMOJIS.error} Não tens acesso à Sophia neste local.`,
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
             }
 
-            const message = interaction.options.getString("message", true);
+            const message = interaction.options.getString("message") || (interaction.options.getAttachment("attachment") ? "Analisa o anexo." : "Olá.");
             const ephemeral = interaction.options.getBoolean("ephemeral") ?? false;
             await interaction.deferReply({
                 flags: ephemeral ? MessageFlags.Ephemeral : undefined,
@@ -55,9 +61,8 @@ export = {
             activityIndicator = await ResponseActivityService.startForInteraction(interaction);
             await activityIndicator.startThinking();
             debugSession = await DebugService.startForInteraction(interaction, message);
-            progressStatus = interaction.channel
-                ? ProgressStatusService.startForChannel(interaction.channel)
-                : null;
+            progressStatus = ephemeral ? ProgressStatusService.startForInteraction(interaction)
+                : interaction.channel ? ProgressStatusService.startForChannel(interaction.channel) : null;
 
             const input = await ConversationAdapter.fromInteraction({
                 interaction,
@@ -67,6 +72,10 @@ export = {
                     ? (summary: string) => progressStatus!.notify(summary)
                     : null,
             });
+            input.resumeTaskId = interaction.options.getString("task_id") ?? undefined;
+            input.handoffTask = interaction.options.getBoolean("handoff") ?? false;
+            input.approvalMode = (interaction.options.getString("approval_mode") ?? undefined) as "ask" | "inherit" | undefined;
+            input.onTaskBound = taskId => progressStatus?.bindTask?.(taskId);
             const result = await Runtime.answer(input);
             await activityIndicator.startTyping();
             const formatted = UIService.formatAnswer(result.answer, result.citations);
@@ -87,7 +96,7 @@ export = {
             await interaction.editReply(
                 UIService.formatStatusMessage(
                     EMOJIS.error,
-                    "Ocorreu um erro ao conversar.",
+                    error instanceof Error && error.message.startsWith("Não foi possível retomar") ? error.message : "Ocorreu um erro ao conversar.",
                     false
                 )
             );

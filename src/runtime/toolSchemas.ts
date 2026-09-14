@@ -5,6 +5,7 @@ export type { NativeToolDef };
 const finishParams = {
     type: "object",
     properties: {
+        notify: { type: "boolean", description: "For conditional scheduled checks only: false when the checked condition has no reportable change. Keep the findings in answer. Errors, uncertainty and required user action must be reported. Ignored in ordinary conversation." },
         answer: {
             type: "string",
             description: "Your final answer to the user. This will be sent as Sophia's response in Discord.",

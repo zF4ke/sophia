@@ -1,0 +1,51 @@
+---
+title: The Sophia handbook
+description: Learn Sophia through practical conversations, then explore the system behind them.
+template: splash
+hero:
+  title: Start with a question. See it through.
+  tagline: Research your Discord, work with files, and pick up where you left off. Learn Sophia one conversation at a time.
+  actions:
+    - text: Your first conversation
+      link: ./use/conversation/
+      icon: right-arrow
+    - text: Explore every feature
+      link: ./use/feature-map/
+      variant: secondary
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Less guessing. Follow the evidence.
+
+An answer can lead to research, a file, or a change to your server. You can redirect the work as it happens.
+
+> **You**: Why did attendance drop at our last event? Check the discussion, not just the announcements.
+>
+> **Sophia**: I'll read the event threads and compare the reasons people gave. [Stop] [Details]
+>
+> **You**: Sophia, focus on scheduling conflicts in the event review. Leave prizes out of this.
+>
+> **Sophia**: I'll focus on the date and time, and separate confirmed reasons from guesses.
+
+<p class="example-caption">A simulated exchange. <a href="./use/worked-example/">Follow the full task from question to published result →</a></p>
+
+## Pick your starting point
+
+<CardGrid>
+  <LinkCard title="Use Sophia" description="Ask, correct, approve, and continue. Short chapters with conversations you can try yourself." href="./use/feature-map/" />
+  <LinkCard title="Run your own" description="Connect Discord, choose a model, set access, and get the sandbox running on your PC." href="./setup/installation/" />
+  <LinkCard title="Understand the internals" description="Trace a turn through the runtime, then explore retrieval, durable tasks, memory, and permissions." href="./build/architecture/" />
+  <LinkCard title="Look up a contract" description="Find the exact tool parameters, command options, and settings behind a feature." href="./reference/features/" />
+</CardGrid>
+
+## Learn by doing
+
+<div class="lesson-list">
+  <a href="./use/research/"><span class="lesson-number">01</span><span><strong>Find the original decision</strong><small>Search history, read the surrounding discussion, check coverage.</small></span><span aria-hidden="true">↗</span></a>
+  <a href="./use/workspace/"><span class="lesson-number">02</span><span><strong>Turn a file into an answer</strong><small>Analyze a CSV, inspect a clip, revise the output.</small></span><span aria-hidden="true">↗</span></a>
+  <a href="./use/tasks/"><span class="lesson-number">03</span><span><strong>Keep hold of a longer task</strong><small>Steer, stop, resume, and bring in a collaborator.</small></span><span aria-hidden="true">↗</span></a>
+  <a href="./use/memory/"><span class="lesson-number">04</span><span><strong>Make the next conversation better</strong><small>Correct a memory, save a method, understand dreaming.</small></span><span aria-hidden="true">↗</span></a>
+</div>
+
+Examples throughout this handbook are simulated. The [validation record](./reference/live-acceptance/) documents what has been checked with real services.

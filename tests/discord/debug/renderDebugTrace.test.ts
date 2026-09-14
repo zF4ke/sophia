@@ -84,15 +84,15 @@ describe("renderDebugTrace", () => {
 
     it("shows stop detail in overview", () => {
         const containers = renderDebugTrace(makeState({
-            stopReason: "budget_exhausted",
-            stopDetail: "Reached the latency budget.",
+            stopReason: "execution_stopped_by_admin",
+            stopDetail: "The requester stopped this task.",
         }));
         const rendered = JSON.stringify(
             containers.map((c) => c.toJSON())
         );
 
-        expect(rendered).toContain("budget_exhausted");
-        expect(rendered).toContain("Reached the latency budget.");
+        expect(rendered).toContain("execution_stopped_by_admin");
+        expect(rendered).toContain("The requester stopped this task.");
     });
 
     it("handles long timelines by limiting visible entries", () => {

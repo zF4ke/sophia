@@ -289,7 +289,6 @@ export class UnifiedMessageRetrieval {
                         options.onProgress
                     );
                     if (crawl.messagesFetched > 0) {
-                        await DiscordChannelCrawlService.waitForBackgroundIngest();
                         contextMessages = await DiscordMemoryService.getMessageThreadAsync(
                             options.aroundMessageId,
                             contextWindow
@@ -496,7 +495,6 @@ export class UnifiedMessageRetrieval {
             }
 
             if (cacheEnriched) {
-                await DiscordChannelCrawlService.waitForBackgroundIngest();
                 historyMessages =
                     mode === "semantic"
                         ? []
@@ -566,7 +564,6 @@ export class UnifiedMessageRetrieval {
                 }
 
                 if (cacheEnriched) {
-                    await DiscordChannelCrawlService.waitForBackgroundIngest();
                     historyMessages = await fetchHistoryMessages({
                         guildId: options.guild?.id || null,
                         channelIds: searchedChannelIds,
@@ -627,8 +624,6 @@ export class UnifiedMessageRetrieval {
                     }
 
                     if (!passEnriched) break;
-
-                    await DiscordChannelCrawlService.waitForBackgroundIngest();
                     historyMessages = await fetchHistoryMessages({
                         guildId: options.guild?.id || null,
                         channelIds: searchedChannelIds,

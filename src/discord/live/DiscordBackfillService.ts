@@ -7,6 +7,7 @@ import type {
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { UIService } from "@/discord/ui/UIService";
 import { EMOJIS } from "@/discord/constants";
+import { DiscordHistoryReader } from "./DiscordHistoryReader";
 
 export type IndexableChannel = TextChannel | ThreadChannel;
 
@@ -32,27 +33,17 @@ export interface FetchAndIngestBatchResult {
 export async function fetchAndIngestBatch(
     channel: IndexableChannel,
     beforeId: string | null | undefined,
-    batchSize = 100
+    batchSize = 100,
+    mode: "backfill" | "refresh" = "backfill"
 ): Promise<FetchAndIngestBatchResult> {
-    const fetchOptions: { limit: number; before?: string } = {
-        limit: Math.max(1, Math.min(100, batchSize)),
-    };
-    if (beforeId) {
-        fetchOptions.before = beforeId;
-    }
-
-    const batch = await channel.messages.fetch(fetchOptions);
+    const page = await DiscordHistoryReader.page(channel, { before: beforeId, limit: batchSize, mode });
+    const batch = page.messages;
 
     if (!batch.size) {
         // Exhausted — nothing older exists.
-        await DiscordMemoryService.updateChannelCrawlState(
-            channel.id,
-            beforeId ?? null,
-            true
-        );
         return {
             ingested: 0,
-            nextBeforeId: beforeId ?? null,
+            nextBeforeId: page.before,
             reachedEnd: true,
             oldestTimestampInBatch: null,
         };
@@ -62,24 +53,13 @@ export async function fetchAndIngestBatch(
         (a, b) => a.createdTimestamp - b.createdTimestamp
     );
 
-    for (const message of messages) {
-        await DiscordMemoryService.ingestMessage(message);
-    }
-
     const oldestInBatch = messages[0];
     const nextBeforeId = oldestInBatch?.id ?? null;
-
-    // Per-batch checkpoint so a crash mid-crawl can resume.
-    await DiscordMemoryService.updateChannelCrawlState(
-        channel.id,
-        nextBeforeId,
-        false
-    );
 
     return {
         ingested: messages.length,
         nextBeforeId,
-        reachedEnd: batch.size < fetchOptions.limit,
+        reachedEnd: page.exhausted,
         oldestTimestampInBatch: oldestInBatch?.createdTimestamp ?? null,
     };
 }

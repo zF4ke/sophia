@@ -1,0 +1,37 @@
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { createClient } from "@libsql/client";
+import { expect, it } from "vitest";
+import { AppPaths } from "@/app/AppPaths";
+import { StateArchive } from "@/shared/storage/StateArchive";
+import { acquireInstanceGuard } from "@/app/InstanceGuard";
+
+it("transfers durable identity and grants into empty storage without credentials or replay", async () => {
+    const root = path.join(AppPaths.storageRoot, "original");
+    const archive = path.join(AppPaths.storageRoot, "archive");
+    const restored = path.join(AppPaths.storageRoot, "restored");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "settings.json"), JSON.stringify({ schemaVersion: 5, access: { users: [{ userId: "owner" }] }, runtime: { operationalDbPath: "old-index.sqlite" } }));
+    fs.writeFileSync(path.join(root, ".env"), "SECRET=not-for-export");
+    const original = createClient({ url: pathToFileURL(path.join(root, "knowledge.sqlite")).toString() });
+    await original.executeMultiple("CREATE TABLE identity(id TEXT); INSERT INTO identity VALUES('same-sophia')");
+    original.close();
+    const unlock = await acquireInstanceGuard(root);
+    await expect(StateArchive.create(root, archive)).rejects.toThrow("exclusive ownership");
+    await unlock();
+    await StateArchive.create(root, archive);
+    expect(fs.existsSync(path.join(archive, ".env"))).toBe(false);
+    await StateArchive.restore(archive, restored);
+    const settings = JSON.parse(fs.readFileSync(path.join(restored, "settings.json"), "utf8"));
+    expect(settings.access.users[0].userId).toBe("owner");
+    expect(settings.runtime.operationalDbPath).toBe(path.join(restored, "runtime", "operational.sqlite"));
+    const reopened = createClient({ url: pathToFileURL(path.join(restored, "knowledge.sqlite")).toString() });
+    expect((await reopened.execute("SELECT id FROM identity")).rows[0].id).toBe("same-sophia");
+    reopened.close();
+    await expect(StateArchive.restore(archive, restored)).rejects.toThrow("empty directory");
+    fs.appendFileSync(path.join(archive, "settings.json"), " ");
+    const invalidTarget = path.join(AppPaths.storageRoot, "invalid");
+    await expect(StateArchive.restore(archive, invalidTarget)).rejects.toThrow("checksum");
+    expect(fs.existsSync(invalidTarget)).toBe(false);
+});

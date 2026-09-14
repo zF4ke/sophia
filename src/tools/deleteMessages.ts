@@ -27,19 +27,19 @@ export const deleteMessagesTool: ToolDefinition = {
     catalog: {
         effect: "destructive",
         description:
-            "Delete one or more specific messages by ID from a Discord channel. Destructive — requires admin approval with confirmation modal.",
+            "Delete one or more specific messages by ID from a Discord channel. Destructive — follows the requester action tier and approval mode with confirmation modal.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Delete one or more specific messages from a channel by their IDs. This is a DESTRUCTIVE action that requires admin approval. Use only when the user explicitly asks to delete specific message(s). IMPORTANT: You must obtain the real message IDs first — use search_messages or retrieve_messages to locate the target messages, then pass their IDs here. Never guess or fabricate message IDs. For bulk deletion of the most recent history without specific targets, use clear_messages instead.",
+            "Delete one or more specific messages from a channel by their IDs. This is a DESTRUCTIVE action that follows the requester action tier and approval mode. Use only when the user explicitly asks to delete specific message(s). IMPORTANT: You must obtain the real message IDs first — use search_messages or retrieve_messages to locate the target messages, then pass their IDs here. Never guess or fabricate message IDs. For bulk deletion of the most recent history without specific targets, use clear_messages instead.",
         parameters,
     },
 
     capability: {
         description:
-            "Delete specific messages by ID from a Discord channel. Destructive — requires admin approval with confirmation modal.",
+            "Delete specific messages by ID from a Discord channel. Destructive — follows the requester action tier and approval mode with confirmation modal.",
         inputSchema: z.object({
             channel_id: z.string().describe("Channel ID where the messages are."),
             message_ids: z
@@ -50,7 +50,7 @@ export const deleteMessagesTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "destructive",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: [
@@ -106,6 +106,7 @@ export const deleteMessagesTool: ToolDefinition = {
             for (const id of messageIds) {
                 try {
                     const message = await channel.messages.fetch(id);
+                    context.execution?.expectSourceDeletion([id]);
                     await message.delete();
                     deletedIds.push(id);
                 } catch (err) {

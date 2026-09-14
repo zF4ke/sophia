@@ -30,19 +30,19 @@ export const editChannelTool: ToolDefinition = {
     catalog: {
         effect: "destructive",
         description:
-            "Edit a channel's name or topic. Destructive — requires admin approval.",
+            "Edit a channel's name or topic. Destructive — follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Edit a channel's name or topic. This is a DESTRUCTIVE action that requires admin approval. Use only when explicitly asked to rename a channel or change its topic. At least one of `name` or `topic` must be provided.",
+            "Edit a channel's name or topic. This is a DESTRUCTIVE action that follows the requester action tier and approval mode. Use only when explicitly asked to rename a channel or change its topic. At least one of `name` or `topic` must be provided.",
         parameters,
     },
 
     capability: {
         description:
-            "Edit a channel's name or topic. Destructive — requires admin approval.",
+            "Edit a channel's name or topic. Destructive — follows the requester action tier and approval mode.",
         inputSchema: z.object({
             channel_id: z.string().describe("Channel ID to edit."),
             name: z.string().optional().describe("New channel name."),
@@ -50,7 +50,7 @@ export const editChannelTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "destructive",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist", "channel must exist"],

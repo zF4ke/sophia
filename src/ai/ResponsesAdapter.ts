@@ -1,6 +1,8 @@
 import type OpenAI from "openai";
 import type { ToolCall, ToolChatMessage } from "@/ai/ModelGateway";
 import type { ModelProfile } from "@/shared/appTypes";
+import { ModelUsage } from "./ModelUsage";
+import { randomUUID } from "node:crypto";
 
 /**
  * OpenAI Responses API adapter for providers that only expose that surface
@@ -13,12 +15,12 @@ import type { ModelProfile } from "@/shared/appTypes";
  */
 
 type ResponsesInputItem =
-    | { role: "system" | "developer" | "user" | "assistant"; content: string }
+    | { role: "system" | "developer" | "user" | "assistant"; content: string | Array<{ type: "input_text"; text: string } | { type: "input_image"; image_url: string; detail: "auto" | "low" | "high" }> }
     | { type: "function_call"; call_id: string; name: string; arguments: string }
     | { type: "function_call_output"; call_id: string; output: string };
 
 export function profileUsesResponsesApi(profile: ModelProfile): boolean {
-    return Boolean(profile.apiKeyEnv === "OPENCODE_API_KEY" || profile.provider === "opencode");
+    return profile.api === "responses";
 }
 
 function toResponsesInput(messages: ToolChatMessage[]): ResponsesInputItem[] {
@@ -27,8 +29,11 @@ function toResponsesInput(messages: ToolChatMessage[]): ResponsesInputItem[] {
         if (msg.role === "system") {
             input.push({ role: "system", content: msg.content });
         } else if (msg.role === "user") {
-            input.push({ role: "user", content: msg.content });
+            if (msg.audio?.length) throw new Error("Audio input requires a chat-completions profile; this Responses adapter does not support it.");
+            input.push({ role: "user", content: msg.images?.length ? [{ type: "input_text", text: msg.content },
+                ...msg.images.map(image => ({ type: "input_image" as const, image_url: image.url, detail: image.detail ?? "auto" as const }))] : msg.content });
         } else if (msg.role === "assistant") {
+            if (msg.content) input.push({ role: "assistant", content: msg.content });
             // Tool calls become flat function_call items (the assistant-role
             // tool_calls shape is rejected by Zen's upstream).
             const toolCalls = "tool_calls" in msg ? msg.tool_calls : undefined;
@@ -41,8 +46,6 @@ function toResponsesInput(messages: ToolChatMessage[]): ResponsesInputItem[] {
                         arguments: tc.function.arguments,
                     });
                 }
-            } else if (msg.content) {
-                input.push({ role: "assistant", content: msg.content });
             }
         } else if (msg.role === "tool") {
             input.push({ type: "function_call_output", call_id: msg.tool_call_id, output: msg.content });
@@ -82,17 +85,15 @@ export async function callResponsesApi(
         model: profile.chatModel,
         input: toResponsesInput(messages),
         max_output_tokens: options.maxOutputTokens,
-        // Muse free models on Zen require the reasoning effort envelope;
-        // without it upstream 500s. Harmless for other providers.
-        reasoning: { effort: "minimal" as const, summary: "auto" as const },
-        text: { verbosity: "medium" as const },
     };
+    if (profile.reasoningEffort) body.reasoning = { effort: profile.reasoningEffort, summary: "auto" };
     if (options.tools.length) {
         body.tools = toResponsesTools(options.tools);
         body.parallel_tool_calls = profile.parallelToolCalls ?? false;
     }
 
-    const response = (await client.responses.create(body as never)) as unknown as {
+    const headers = profile.provider === "opencode" ? { "x-opencode-session": ModelUsage.sessionId() ?? `sophia-${randomUUID()}`, "x-opencode-client": "sophia", "User-Agent": "Sophia/5.0.0" } : undefined;
+    const response = (await client.responses.create(body as never, { headers, signal: ModelUsage.signal() })) as unknown as {
         status: string;
         incomplete_details?: { reason?: string } | null;
         output?: Array<Record<string, unknown>>;
@@ -134,11 +135,11 @@ export async function callResponsesApi(
         content,
         toolCalls,
         finishReason,
-        usage: response.usage
+        usage: response.usage && typeof response.usage.input_tokens === "number" && typeof response.usage.output_tokens === "number"
             ? {
-                promptTokens: response.usage.input_tokens ?? 0,
-                completionTokens: response.usage.output_tokens ?? 0,
-                totalTokens: response.usage.total_tokens ?? 0,
+                promptTokens: response.usage.input_tokens,
+                completionTokens: response.usage.output_tokens,
+                totalTokens: response.usage.total_tokens ?? response.usage.input_tokens + response.usage.output_tokens,
             }
             : null,
         raw: response,

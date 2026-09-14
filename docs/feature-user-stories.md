@@ -1,272 +1,73 @@
-# Feature User Stories
+# Feature user stories
 
-This document is the concrete acceptance layer for Sophia's current runtime. It is intentionally feature-complete for the tools and compositions that exist today.
+These stories describe implemented behavior and its acceptance boundaries. The tool registry owns capability names and effect tiers; this document avoids a second hand-maintained catalog.
 
-## Tool Coverage
+## Conversation and identity
 
-Current runtime capabilities and workflows:
+A greeting receives a short conversational reply without mandatory tools or a task report. Creative revision preserves the user's requested meaning and treats quoted instructions as source text. An explicit correction overrides an earlier name or presentation preference.
 
-### Read & Discovery
-- `resolve_member_identity`
-- `get_member_profile`
-- `list_members`
-- `resolve_channel_targets`
-- `list_guild_structure`
-- `retrieve_messages`
-- `get_guild_context`
-- `get_role_info`
-- `list_threads`
-- `read_thread_messages`
+Sophia has one identity across enabled locations. The same owner can explicitly hand off inactive work with `/talk task_id:... handoff:true ephemeral:true`. Notes, evidence and files follow the task, subject to current source access. Other users do not inherit control from being in the same channel.
 
-### Utilities
-- `measure_text_length`
-- `evaluate_math`
+## Access and approvals
 
-### Write (admin approval required)
-- `create_channel`
-- `create_category`
-- `create_thread`
-- `move_channel`
-- `manage_member_roles`
-- `send_message`
+An unauthorized user cannot start model work through slash commands, mentions, replies, autocomplete or card controls. Empty availability enables no guilds; DMs require explicit availability. Identity comes from the authenticated Discord ID.
 
-### Destructive (approval + confirmation required)
-- `clear_messages`
-- `delete_messages`
-- `delete_channel`
+Reads run freely within a grant. Changes use Ask or Auto within the granted tier. Expired grants and revoked roles stop later calls. Role membership changes and channel moves require the access-sensitive tier. Protected channels remain blocked in the executor even after approval.
 
-### Workflows
+An owner can choose a stricter Ask mode for one task. Approval records include the exact request and decision. Expiry is distinct from denial. A saved decision never authorizes replay after restart. Grouped approval covers the listed operations, not arbitrary future actions.
 
-## Single-Tool Stories
+## Sustained work and recovery
 
-### `resolve_member_identity`
+A progressing task can pass the former 25/200 tool-call and continuation limits. An optional configured call limit pauses incomplete work; the model cannot raise it. Context compaction, queueing and operation resource limits preserve the task objective.
 
-- As a user, I can ask who a person, bot, mention, or exact ID is in the current guild.
-- Sophia should resolve exact IDs even if the member is not already in the Discord.js cache.
-- If the person is no longer a live guild member but exists in same-guild cached history, Sophia may surface that identity as historical rather than current.
+`/steer task_id` and an owned reply to an active task redirect pending work. A correction is saved before acknowledgement. Already dispatched actions are not described as cancelled. Guild mutations are ordered, while unrelated guilds and reads proceed. Model calls share capacity fairly across actors; waiting conversation takes precedence over dreaming.
 
-### `get_member_profile`
+Restart pauses interrupted tasks. Unknown action outcomes block resume. Supported postcondition verification can establish a deletion or exact message result without retrying it; partial observations remain unknown. Owner attestation is labeled separately from automated verification.
 
-- As a user, I can ask for a member or bot profile and Sophia can return rich profile evidence: display name, username, nickname, roles, join date, account creation date, bot status, Nitro/premium status, pending status, and avatar URL.
-- Profile evidence is surfaced directly in evidence content so the model can compare members (e.g. "who joined first?") without needing raw data access.
-- This tool is for profile metadata, not message-history answers.
+## Discord and web research
 
-### `list_members`
+Member and channel names resolve to concrete IDs. Historical membership is distinguished from current membership. Channel names and topics do not establish what people posted or which services are available; those summaries require relevant messages.
 
-- As an operator or user, I can ask for matching guild members and Sophia can enumerate them from the current guild.
-- Omitting the `filters` parameter returns all guild members in offset-based pages (default page size 20).
-- When more members exist beyond the current page, a `hasMore` flag and pagination hint are included in evidence.
-- Exact IDs and filtered lookups should not rely only on cache fragments.
+Retrieval exposes exact cursors and honest index coverage. An unindexed or partially indexed channel can be refreshed or queued for deeper history. Failed enqueueing is not reported as queued. One history reader owns page ingestion and checkpoint updates. Refreshing recent messages cannot erase deep-history progress.
 
-### `resolve_channel_targets`
+A task collection retains filters, deduplicated message IDs, revisions, cursors and coverage through restart. Reading old results, exporting collections or opening derived files rechecks source access. Deleted messages invalidate dependent evidence and interrupt active readers. `/nth` applies the same source-audience restriction before revealing indexed text.
 
-- As a user, I can mention a channel, category, exact channel ID, or exact category ID and Sophia can resolve the correct current-guild target.
-- If I target a category, Sophia should expand it into message-channel ids for later retrieval.
+Web search discovers sources; opened pages provide evidence. Source handles let the model read more without repeatedly downloading a page. DNS, redirects and response-size limits apply to downloads. Search snippets and page instructions do not become authoritative facts or policy.
 
-### `list_guild_structure`
+## Workspace and media
 
-- As a user, I can ask what channels/categories exist and Sophia can inspect the readable live guild structure.
-- Cached-only remembered channels/categories may also appear, clearly marked as non-live.
+Attachment-only requests reach the runtime. Supported profiles receive images. Video inspection returns sampled frames with timestamps. Audio transcription uses a declared compatible model and saves a transcript linked to the inspected clip.
 
-### `retrieve_messages`
+Code runs in the isolated Docker workspace with no host mounts, credentials or outbound network. Files belong to a task and persist across calls. Users can inspect and download files privately; publication checks the destination audience and approval policy. Failed container startup does not trigger host execution.
 
-- As a user, I can ask what someone said or what happened in a channel and Sophia can retrieve message evidence.
-- Retrieval should read scoped channel history first, not rely only on a flat semantic search.
-- Retrieval should also return scoped semantic matches as a separate lane when they help answer targeted questions.
-- Retrieval should search the local cache first, refresh live Discord history when needed, ingest new messages, and retry.
-- Retrieval should be resumable across turns with continuation cursors and dedupe protection, so Sophia can keep reading older history without repeating the same messages.
-- Retrieval should support normalized before/after time bounds for requests like `until yesterday` or `last week in #atlas`.
+## Memory and skills
 
-### `get_guild_context`
+Idle dreaming can remember useful facts and presentation preferences without an explicit reminder from the user. Private conversations produce owner-private facts and skill drafts. Only whitelisted presentation preferences follow a user into public contexts.
 
-- As a user, I can ask about guild-level facts such as server name, member count, or channel count.
-- Sophia should answer from current live guild metadata.
+Memories have source links, revisions and forgetting controls. Deleted sources invalidate derived content. Legacy facts with unknown provenance stay quarantined until an operator adopts an exact revision as private memory.
 
-### `get_role_info`
+A saved procedure is loaded into the ordinary tool loop. Loading it does not run or approve its steps. Learned drafts require an assessment tied to their exact content and accessible completed-task evidence before promotion. The assessment is a trace review, not an independent execution test. Retirement prevents automatic recreation of the same learned procedure.
 
-- As a user, I can ask about a specific role's details: members who have it, permissions, color, position, and mentionability.
-- Sophia should answer from live role metadata, not cached or guessed data.
+## Cards and follow-through
 
-### `list_threads`
+A card has an owner, message ID, source links, saved specification and revisions. Stale edits fail before overwriting a newer revision. Clicks and edits serialize. Inaccessible sources block later redisplay. State-save failure after sending preserves the message ID and pauses the task without sending a duplicate.
 
-- As a user, I can ask what threads exist in a channel.
-- Sophia should list active and recently archived threads.
-- The `include_archived` flag can be toggled to control whether archived threads appear.
+Native polls use Discord's poll API. Card scripts run in the isolated workspace and propose external actions through ordinary approval. Expiry cleanup retries failed Discord deletions and removes local revisions only after the message is gone.
 
-### `read_thread_messages`
+Schedules retain an owner, destination, timezone and notification condition. They recheck permission after restart. An unchanged conditional check can stay quiet; failures and required action remain reportable. Uncertain delivery pauses rather than replaying blindly.
 
-- As a user, I can ask what was discussed in a specific thread.
-- Sophia should read messages from that thread and answer from the evidence.
+## Inspection, deletion and migration
 
-### `measure_text_length`
+Private task exports include plans, notes, evidence, action receipts, approval history and model usage. Inactive resolved tasks can be forgotten without deleting neighboring work. Separately remembered facts, approved skills, original Discord messages and operator backups have independent retention.
 
-- As a user, I can ask Sophia to count characters, words, or lines in a piece of text.
-- Sophia should return exact counts without approximation.
+Settings reset only the selected category. Migrations back up durable data before changing it. Offline state archives preserve identity and access rules, exclude credentials and reconstructible indexes, and restore only into empty storage. Startup recovery rechecks authority instead of replaying actions.
 
-### `evaluate_math`
+## Validation limits
 
-- As a user, I can ask Sophia to calculate arithmetic expressions.
-- Sophia should use safe evaluation supporting arithmetic, exponents, sqrt, trig, log, etc.
+Deterministic tests exercise these boundaries with synthetic Discord objects and isolated databases. Bounded live tests cover selected conversational and research behavior. GPT-OSS has a retained failure for unsupported service details; the default GLM profile passed that stricter case. Actual Docker execution and real Discord desktop/mobile usability still require acceptance testing. Passing a mock test is not evidence that those integrations passed.
 
-### `create_channel`
+## Describe the task in chat
 
-- As an admin, I can ask Sophia to create a new channel.
-- Sophia should present an approval card before executing.
-- The approval card shows the tool name, description, and a "write" badge.
-- If `autoApproveWrites` is enabled, the action executes immediately.
+A user mentions Sophia with “focus on scheduling in the event comparison.” Sophia finds the owner's eligible task and forwards the actual instruction. “Stop discussing prizes” redirects the scope; “stop the event comparison” cancels the selected execution. If two tasks match, Sophia asks which one instead of asking for an ID or choosing arbitrarily.
 
-### `create_category`
-
-- As an admin, I can ask Sophia to create a new category.
-- Same approval flow as `create_channel`.
-
-### `create_thread`
-
-- As an admin, I can ask Sophia to create a thread in a specific channel.
-- Same approval flow as `create_channel`.
-
-### `move_channel`
-
-- As an admin, I can ask Sophia to move a channel to a different category or position.
-- Same approval flow as `create_channel`.
-
-### `manage_member_roles`
-
-- As an admin, I can ask Sophia to add or remove roles from a member.
-- Same approval flow as `create_channel`.
-
-### `send_message`
-
-- As an admin, I can ask Sophia to send a message to a specific channel or thread.
-- Same approval flow as `create_channel`.
-
-### `clear_messages`
-
-- As an admin, I can ask Sophia to delete messages from a channel.
-- Sophia must show an approval card with a "destructive" badge.
-- After the admin clicks "Aceitar", a confirmation dialog appears: "Esta ação é destrutiva. Tens a certeza?"
-- The admin must click "Confirmar" to execute. This cannot be auto-approved.
-
-### `delete_messages`
-
-- As an admin, I can ask Sophia to delete one or more specific messages by ID from a channel (e.g. by replying/quoting a message, or by pointing at content keywords or an author).
-- Sophia should first locate the target message IDs with `search_messages` or `retrieve_messages`, never fabricate IDs.
-- Same destructive approval + confirmation flow as `clear_messages`.
-- Each message is deleted individually, so it works for messages of any age (not subject to the 14-day bulk-delete limit).
-- If some IDs fail to delete (already gone, permission denied, etc.), Sophia reports how many succeeded and which failed.
-
-### `delete_channel`
-
-- As an admin, I can ask Sophia to permanently delete a channel.
-- Same destructive approval + confirmation flow as `clear_messages`.
-
-
-## Composition Stories
-
-### Ambiguous identity disambiguation
-
-- User asks: `Qual Drennan é o verdadeiro?`
-- Runtime resolves members with `resolve_member_identity` or `list_members`.
-- If multiple current-guild members share the same display name, the runtime should fetch a profile for each with `get_member_profile` (once per member, different arguments).
-- Sophia compares the profiles (roles, join date, account age, activity history) and makes a specific recommendation instead of asking the user to choose manually.
-
-### Identity then profile
-
-- User asks: `Quem sou eu?`
-- Runtime resolves the requester exactly with `resolve_member_identity`.
-- If extra detail is needed, it can follow with `get_member_profile`.
-- Sophia answers naturally instead of exposing raw tool output.
-
-### Member + channel + message retrieval
-
-- User asks: `Do que o Riverside está falando em #reflexoes?`
-- Runtime resolves the speaker with `resolve_member_identity`.
-- Runtime resolves the target channel with `resolve_channel_targets`.
-- Runtime retrieves scoped message evidence with `retrieve_messages`.
-- Sophia answers from those messages, not from profile metadata alone.
-
-### Channel target + guild structure
-
-- User asks: `What channel is 123456789012345678?`
-- Runtime resolves the explicit id with `resolve_channel_targets`.
-- Runtime loads the guild structure with `list_guild_structure`.
-- Sophia answers with the resolved channel and its category/visibility context.
-
-### Category structure + scoped retrieval
-
-- User asks: `Que serviços estão disponíveis nesse servidor?`
-- Runtime resolves the likely category or service area with `resolve_channel_targets`.
-- Runtime loads the matched guild structure with `list_guild_structure`.
-- If the matched target is a category, Sophia expands it to visible child channels.
-- Runtime retrieves scoped message evidence from those resolved child channels with `retrieve_messages`.
-- If one of those child channels is not indexed locally yet, scoped retrieval should still run and automatically escalate to live Discord fetch for that channel, ingest the messages, and retry.
-- Sophia answers from the combination of structure plus scoped messages instead of claiming the category is empty or guessing from a partial alphabetic subset.
-
-### Multi-turn scoped continuation
-
-- User asks: `Me mostra tudo de #atlas até ontem.`
-- Runtime resolves `#atlas`, normalizes the time bound, and starts `retrieve_messages` in history-first mode.
-- If one pass is not enough, Sophia should keep an active retrieval session with channel scope, anchors, and dedupe state.
-- User follows up with `continue` or `de novo`.
-- Runtime should continue the same scoped read instead of restarting discovery or rereading duplicate messages.
-
-- Workflow resolves author and target scope first.
-- Retrieval runs with exact `authorId` and exact resolved `channelIds`.
-- Results come back from the same cache-first/live-refresh retrieval stack used by the main runtime.
-
-### Guild overview
-
-- User asks: `How big is this server and what categories does it have?`
-- Runtime can combine `get_guild_context` with `list_guild_structure`.
-- Sophia answers with current guild metadata plus structure context.
-
-### Thread discovery and reading
-
-- User asks: `What threads are in #geral and what are they about?`
-- Runtime calls `list_threads` to enumerate threads.
-- Runtime calls `read_thread_messages` for each relevant thread.
-- Sophia summarizes thread topics from message evidence.
-
-### Batch destructive with approval
-
-- Admin says: `Clear messages in #spam and #temp, then delete #old-announcements.`
-- Runtime queues `clear_messages` for #spam, `clear_messages` for #temp, and `delete_channel` for #old-announcements.
-- All three are grouped into a single batch approval card, organized by Discord category.
-- Admin can approve all, deny all, or selectively approve by category.
-- If the admin clicks "Recusar e corrigir", a modal opens for correction feedback.
-
-### Write with auto-approve
-
-- `autoApproveWrites` is enabled in settings.
-- Admin says: `Create a channel called #project-updates under the Projects category.`
-- Runtime calls `create_channel`.
-- Because autoApproveWrites is enabled and this is a write (not destructive), the action executes immediately without an approval card.
-
-### Role management after member lookup
-
-- Admin asks: `Give the Moderator role to Drennan.`
-- Runtime resolves "Drennan" with `resolve_member_identity`.
-- If ambiguous, fetches profiles with `get_member_profile` to disambiguate.
-- Runtime calls `manage_member_roles` to add the role.
-- Approval card is shown. Admin approves. Role is added.
-
-## Behavioral Expectations
-
-- Sophia should stay conversational in the final answer, even when tools were involved.
-- Message-history questions must be answered from message evidence, not only member metadata.
-- Exact IDs should be first-class inputs for members, bots, channels, and categories.
-- Same-guild historical fallbacks must be labeled as historical, not current membership or live structure.
-- Tool composition should stay bounded by runtime budgets and repeated-call guards.
-- The model may call any registered capability, in any order, as many times as needed within the tool-call budget.
-- If multiple guild members share the same display name, Sophia should fetch a profile for each before answering so she can compare and recommend the right one.
-- Category or channel existence alone is not enough to claim what a service does; Sophia should prefer scoped messages when those channels are readable.
-- Sophia should not say a category is empty unless the evidence explicitly shows zero visible child channels.
-- If a target channel is readable but not indexed, Sophia should still try scoped retrieval and let the retrieval layer do the cache miss -> live fetch -> ingest path automatically.
-- For channel-understanding tasks, recent/ordered history is the default evidence lane and semantic matches are supplemental.
-- If a large scoped read stops because of budget, Sophia should say so and make it clear that continuation is still possible when that is true.
-- Write and destructive tools should only be called when the user explicitly requests an action. Sophia should never speculatively create, delete, or modify server resources.
-- Destructive tool calls always require admin approval plus confirmation, regardless of settings.
-- Multiple destructive calls in the same response should be batched into one approval card grouped by Discord category.
-- After an approved action, Sophia should confirm what was done using the concrete identifiers from tool output (channel mentions, role names, etc.).
-- If the model tries to call `finish` with a promise phrase ("vou verificar", "let me check") but no productive tool actually ran, the runtime rejects the finish once and tells the model to call tools instead (stall guard).
-- For complex multi-step operations that exceed default budgets, the model should call `start_long_task` early in the turn to raise the tool-call limit (up to the hard cap of 200 calls). Turns have no wall-clock cap. Large explicit corpora also auto-raise without the call. When unsure the task is long, the model asks the user in one sentence.
+For “revise the welcome message from earlier,” Sophia can reopen a completed task with its saved notes, files and previous answer. Task IDs and slash commands remain optional controls. Discovery is restricted to owned work in the current location; private handoff remains explicit. A restored answer is source material, never an instruction or permission, and is removed from working context if its sources are no longer eligible.

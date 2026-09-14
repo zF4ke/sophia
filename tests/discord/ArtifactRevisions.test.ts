@@ -1,0 +1,31 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { ArtifactStore } from "@/discord/artifacts/ArtifactStore";
+import { artifactReadTool } from "@/tools/artifactRead";
+import { artifactEditTool } from "@/tools/artifactEdit";
+import { SecurityService } from "@/security/SecurityService";
+import { knowledgeStore } from "@/memory/KnowledgeStore";
+
+afterEach(() => vi.restoreAllMocks());
+it("retains card revisions and rejects a stale edit without changing Discord", async () => {
+    vi.spyOn(SecurityService, "initialize").mockResolvedValue();
+    vi.spyOn(SecurityService, "isAdmin").mockReturnValue(false);
+    const channel = { isTextBased: () => true, permissionsFor: () => ({ has: () => true }) };
+    const guild = { id: "guild", members: { fetch: vi.fn().mockResolvedValue({ id: "owner" }) }, channels: { fetch: vi.fn().mockResolvedValue(channel) } } as any;
+    const entry = { messageId: "revision-card", channelId: "channel", guildId: "guild", ownerId: "owner", expiresAt: null, specJson: JSON.stringify({ title: "First", sections: [{ body: "Original" }] }) };
+    await ArtifactStore.record(entry);
+    await ArtifactStore.updateSpec(entry.messageId, JSON.stringify({ title: "Second", sections: [{ body: "Revised" }] }), null);
+    expect((await ArtifactStore.get(entry.messageId))?.revision).toBe(2);
+    const context = { guild, actorId: "owner", question: "inspect" };
+    const historical = await artifactReadTool.capability.run(context, { message_id: entry.messageId, revision: 1 });
+    expect(historical.data).toMatchObject({ currentRevision: 2, revision: 1, spec: { title: "First" } });
+    await expect(artifactReadTool.capability.run({ ...context, actorId: "other" }, { message_id: entry.messageId })).rejects.toThrow("owner");
+    await expect(artifactEditTool.capability.run(context, { message_id: entry.messageId, title: "Stale", expected_revision: 1 })).rejects.toThrow("changed after it was read");
+    expect((await ArtifactStore.get(entry.messageId))?.specJson).toContain("Second");
+    await ArtifactStore.saveInteraction(entry.messageId, JSON.stringify({ title: "Third" }), { score: 2 }, 0);
+    expect(await ArtifactStore.revision(entry.messageId, 3)).toMatchObject({ spec: { title: "Third" }, gameState: { score: 2 } });
+    const source = "https://discord.com/channels/guild/channel/original-source";
+    await ArtifactStore.addSources(entry.messageId, [source]);
+    expect(await ArtifactStore.sources(entry.messageId)).toEqual([source]);
+    vi.spyOn(knowledgeStore, "isSourceInvalid").mockImplementation(async value => value === source);
+    await expect(artifactReadTool.capability.run(context, { message_id: entry.messageId, revision: 1 })).rejects.toThrow("deleted");
+});

@@ -25,26 +25,26 @@ export const deleteRoleTool: ToolDefinition = {
     catalog: {
         effect: "destructive",
         description:
-            "Delete a role from the guild. Destructive — requires admin approval.",
+            "Delete a role from the guild. Destructive — follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Delete a role from the guild. This is a DESTRUCTIVE action that requires admin approval. Use only when explicitly asked to delete a role.",
+            "Delete a role from the guild. This is a DESTRUCTIVE action that follows the requester action tier and approval mode. Use only when explicitly asked to delete a role.",
         parameters,
     },
 
     capability: {
         description:
-            "Delete a role from the guild. Destructive — requires admin approval.",
+            "Delete a role from the guild. Destructive — follows the requester action tier and approval mode.",
         inputSchema: z.object({
             role_id: z.string().describe("Role ID to delete."),
             reason: z.string().optional().describe("Audit log reason."),
         }),
         outputSchema: z.any(),
         sideEffectLevel: "destructive",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist", "role must exist"],
@@ -86,7 +86,7 @@ export const deleteRoleTool: ToolDefinition = {
             return {
                 tool: T.delete_role,
                 summary: `Deleted role "${roleName}" (${roleId}).`,
-                data: { roleId, roleName, deleted: true },
+                data: { roleId, roleMention: `<@&${roleId}>`, roleName, deleted: true },
             };
         },
     },

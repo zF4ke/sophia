@@ -25,7 +25,7 @@ describe("artifact_edit tool", () => {
     });
 
     it("rejects edits that change nothing", async () => {
-        const context = { guild: { id: "g1" } as never, question: "edit card" };
+        const context = { actorId: "owner", guild: { id: "g1" } as never, question: "edit card" };
         const result = await CapabilityRegistry.get("artifact_edit").run(context, {
             message_id: "m1",
         } as never);
@@ -34,7 +34,7 @@ describe("artifact_edit tool", () => {
     });
 
     it("reports unknown message ids", async () => {
-        const context = { guild: { id: "g1" } as never, question: "edit card" };
+        const context = { actorId: "owner", guild: { id: "g1" } as never, question: "edit card" };
         const result = await CapabilityRegistry.get("artifact_edit").run(context, {
             message_id: "ghost",
             title: "New title",
@@ -45,14 +45,14 @@ describe("artifact_edit tool", () => {
 
     it("blocks cards from other guilds", async () => {
         await ArtifactStore.record({
-            messageId: "m2",
+            messageId: "m2", ownerId: "owner",
             channelId: "c2",
             guildId: "other-guild",
             expiresAt: null,
             specJson: JSON.stringify({ title: "Alheio", sections: [{ body: "x" }] }),
         });
 
-        const context = { guild: { id: "g1" } as never, question: "edit card" };
+        const context = { actorId: "owner", guild: { id: "g1" } as never, question: "edit card" };
         const result = await CapabilityRegistry.get("artifact_edit").run(context, {
             message_id: "m2",
             title: "Roubo",
@@ -63,14 +63,14 @@ describe("artifact_edit tool", () => {
 
     it("validates the merged spec before touching Discord", async () => {
         await ArtifactStore.record({
-            messageId: "m3",
+            messageId: "m3", ownerId: "owner",
             channelId: "c3",
             guildId: "g1",
             expiresAt: null,
             specJson: JSON.stringify({ title: "Card", sections: [{ body: "x" }] }),
         });
 
-        const context = { guild: { id: "g1" } as never, question: "edit card" };
+        const context = { actorId: "owner", guild: { id: "g1" } as never, question: "edit card" };
         const result = await CapabilityRegistry.get("artifact_edit").run(context, {
             message_id: "m3",
             sections: [],

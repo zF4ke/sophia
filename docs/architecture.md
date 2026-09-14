@@ -1,120 +1,57 @@
 # Architecture
 
-Sophia runs on one conversational runtime and one unified Discord retrieval pipeline.
+Sophia has one conversational runtime, one Discord retrieval pipeline and one identity. Conversations select the current exchange; durable tasks own work. Availability and source audiences determine where the identity can act and what it can disclose.
 
-## Main Blocks
+## Runtime boundaries
 
-- `runtime`
-  While-loop agent with native function calling, context management, answer synthesis, debug state, and persistence.
-- `conversation`
-  Canonical conversation identity, reply-chain continuity, and turn normalization. One shared channel conversation by default; parallel questions in the same channel fork from the last committed state instead of sharing mutable in-flight state.
-- `retrieval`
-  Cache-first Discord message retrieval with automatic live refresh when the cache is weak.
-- `capabilities`
-  Registry-driven capability manifests and handlers. 49 tools across read, write, destructive, web, memory, and workflow tiers (GLM 5.3 Flash default, 1.3M context).
-- `tool execution`
-  One executor validates model arguments, invokes capabilities, normalizes failures, extracts evidence, and returns the durable tool-run shape.
-- `approval`
-  Gate layer for write and destructive tool calls. Single-item cards for individual actions; batch cards for grouped destructive actions organized by Discord category.
-- `memory`
-  Local runtime state, message cache, and trace storage.
-- `integrations/discord`
-  Thin Discord adapters that convert commands, mentions, and replies into generic runtime inputs.
-- `observability`
-  Debug rendering and trace capture.
-- `security`
-  Access, moderation, rate limiting, and command policy.
+| Owner | Responsibility |
+| --- | --- |
+| ConversationAdapter | Authenticated Discord event, requester, reply context, attachments, response visibility and delivery binding |
+| AccessPolicy | Explicit enabled locations, user/role grants, action tiers and current Ask/Auto decisions |
+| Runtime / ExecutionControl | Native tool loop, task binding, cancellation, steering, continuation and context capacity |
+| ToolExecutor | Capability validation, caller-owned approvals, serialized guild mutations, publication audiences and receipts |
+| TaskStore | Task ownership, handoff, outcomes, working state, approvals, evidence, files and retention |
+| ModelUsage | Provider-attempt accounting across task work, compaction, transcription and dreaming |
+| DiscordHistoryReader | Serialized page ingestion and checkpoint commits shared by refresh and backfill |
+| UnifiedMessageRetrieval | Chronological and relevance retrieval, cursors, local index and live escalation |
+| KnowledgeStore / DreamingService | One identity, audience-scoped memories, revisions, forgetting and idle consolidation |
+| SkillStore | Versioned procedures, private learned drafts, retirement and provenance |
+| TaskSandbox / ContainerSandbox | Owned file operations and isolated code/media processing |
+| ScheduleStore / Scheduler | Explicit future work, occurrence claims, current authorization and delivery outcomes |
+| ArtifactStore | Durable interactive card specification, state, serialization and retryable expiry cleanup |
 
-## Core Principles
+One startup listener owns each canonical storage root. A second process fails before login or interrupted-task recovery. There are no distributed workers or automatic task replays.
 
-- One conversation surface: `/talk`, mentions, and replies all route to the same runtime.
-- One retrieval surface: cached Discord evidence first, live Discord refresh second.
-- Conversation identity is reply-chain first, then native thread, then channel fallback.
-- Weak grounding should lead to best-effort continuation or a targeted follow-up, not a dead-end refusal.
-- The model decides what to do inside a while-loop with native function calling. The runtime enforces budgets and guardrails but does not pre-plan or redirect tool choices.
-- OpenRouter chat requests sort eligible providers by highest throughput while retaining provider fallbacks.
-- Model calls use a fixed 10-minute HTTP timeout and disable SDK retries. The gateway retries provider errors (429/5xx) with short backoff, and a non-default model that keeps failing falls back to the default profile's model for that call. OpenRouter still handles provider fallback.
-- Turns have no wall-clock cap: the loop is bounded by the tool-call budget, per-request timeouts, and the guardrails. Long tasks raise the tool-call cap, not the clock.
-- Model profiles with a `baseUrl` (e.g. a local LM Studio server) bypass OpenRouter for chat: no `provider` routing block, no default-model fallback. Embeddings always route through OpenRouter.
-- Capability execution is registry-driven, not hardcoded per tool in the core runtime.
-- Catalog effects and capability side-effect levels must match. Registry startup fails on duplicate tools or effect drift.
-- Write and destructive tool calls pass through an approval gate before execution. Destructive calls additionally require a confirmation dialog. Multiple destructive calls in the same response are batched into one approval card grouped by Discord category.
-- Graceful shutdown stops the crawler, gives active Discord replies up to 30 seconds to finish sending, then closes the client.
-- `retrieve_messages` is the main message-evidence capability. `resolve_member_identity` handles exact member and bot resolution with same-guild historical fallback. `list_guild_structure` and `resolve_channel_targets` provide current-guild discovery. `get_member_profile` returns rich profile data including roles, join date, account creation date, nickname, bot status, Nitro/premium status, and avatar. `list_members` supports offset-based pagination (default page size 20) with an optional name/username fragment filter — omitting the filter returns all members. `get_guild_context` provides live guild-level metadata. `get_role_info` provides role details. `list_threads` and `read_thread_messages` support thread discovery and reading.
+## Persistence
 
-## Active Runtime Flow
+| Store | Contents | Reset policy |
+| --- | --- | --- |
+| `storage/settings.json` | Versioned runtime preferences, availability, grants and protected channels | Atomic updates; category resets preserve unrelated configuration |
+| `storage/tasks.sqlite` | Durable task ledger, evidence, files, sources and usage | Preserved by index/runtime reset |
+| `storage/knowledge.sqlite` | Identity, memories, source tombstones and dream queue | Preserved by index/runtime reset |
+| `storage/products.sqlite` | Cards, schedules, skills and immutable skill revisions | Preserved by index/runtime reset |
+| Configured operational SQLite database | Indexed Discord messages and operational traces | Retrieval tables are reconstructible; reset migrates legacy durable records first |
 
-1. Turn normalization
-2. Conversation identity resolution
-3. Load memory (recent turns, channel context, prior evidence from persisted tool runs)
-4. Build unified system prompt (`runtime/agent_loop`)
-5. While-loop: model calls tools via native function calling, runtime executes them and feeds results back
-6. `start_long_task` intercepted if present (raises budget caps; never dispatched to capability layer)
-7. Write/destructive tool calls pass through the approval gate before execution
-8. On `finish`, stall guard checks for empty-promise answers and re-prompts once if detected
-9. Model calls `finish` with the final answer, or runtime produces a conversational fallback
-10. Persist runtime run, tool runs, and trace events
+Settings and provider profiles are validated before use. Secrets remain in environment-backed credentials. OpenRouter supplies remote model access; configured compatible endpoints can override a profile. No model IDs are embedded in fallback source code. Configured modalities describe which inputs a model accepts; configuration alone is not a health check.
 
-## Approval Layer
+## Instructions and evidence
 
-The approval layer sits between the model's tool call and the capability handler:
+External prompts define runtime policy. The system prompt receives authenticated identifiers and machine configuration. Names, quotations, remembered facts, page text, media and prior results enter separately as source data. Compaction preserves the original request and complete tool-call/result groups; a summary cannot become system authority.
 
-- **Write tools** (`create_channel`, `create_category`, `create_thread`, `move_channel`, `manage_member_roles`, `send_message`): require admin approval via an approval card with Aceitar/Recusar buttons. Can be auto-approved when `autoApproveWrites` is enabled.
-- **Destructive tools** (`clear_messages`, `delete_messages`, `delete_channel`): always require admin approval plus a confirmation dialog. Multiple destructive calls in the same response are grouped into a batch approval card organized by Discord category.
+Core tools are initially visible and other schemas are discovered through `tool_search`. `inspect_runtime` exposes relevant configuration, current permission decisions and owned file metadata without credentials. Every schema follows the strict provider contract in AGENTS.md.
 
-Approval cards show the tool name, description, side-effect level badge, and timeout countdown. Batch cards include a category select menu when actions span multiple Discord categories.
+## Actions and recovery
 
-## Conversation Identity
+Reads run within the current grant. Changes require Ask approval or an applicable Auto grant within the permitted action tier. Protected targets remain protected. The executor saves mutation intent before dispatch and concrete output after success. An uncertain outcome pauses work and blocks replay. Owners can record what they verified before explicitly resuming; this attestation remains distinct from automated verification.
 
-Conversation keys are built to avoid nested reply-chain drift.
+Cancellation and steering stop unstarted work at checkpoints. An external request already in flight can still complete. Approval and availability are rechecked before execution. Tasks have no default call, duration, continuation or note quota; an operator can set an explicit tool-call limit. Individual network/container operations remain bounded.
 
-The active order is:
-- native Discord thread
-- stored Sophia reply-chain anchor
-- first real anchor message for a new reply chain
-- shared channel fallback
+## Media, learning and follow-through
 
-Trigger type is metadata only. It does not define the conversation key.
+Code and decoders run inside the same unprivileged, network-disabled container boundary with no host mounts. Task files persist outside the disposable container. Image input, sampled video and source-labelled audio transcription remain distinct forms of evidence. Publication uses the normal action policy.
 
-## Retrieval Model
+Dreaming processes delivered eligible conversations while idle. It can save supported memories and draft a procedure from demonstrated tools. Drafts remain private; publishing or promoting a procedure uses ordinary write approval. Scheduled work has an explicit owner, destination and timezone. Conditional checks may record a quiet completed result; failures remain reportable.
 
-Sophia does not treat local storage as a separate memory-search product.
+## Release work
 
-The retrieval path is:
-1. search local indexed Discord messages
-2. if evidence is weak, refresh likely live Discord history behind the scenes
-3. ingest the refreshed messages locally
-4. retry retrieval on the enriched cache
-
-That keeps Discord search cheap, durable, and continuously improving.
-
-Deep retrieval does not mean deep prompt stuffing. Sophia may inspect thousands of stored messages over multiple tool calls, but only a bounded working set goes into the live model context: recent turns, recent channel context, capped prior evidence, and the latest loop messages. Older tool outputs are pruned when prompt usage approaches the selected model profile context window.
-
-Context management has three tiers (less aggressive since Sophia 4.5):
-- **Tier-0 (input compaction)**: bulky prior context (turns, channel context, prior evidence) is summarized once pre-loop if prompt exceeds 55% of the window (90% for 1M models).
-- **Tier-1 (pruning)**: oldest tool-result messages are dropped when prompt tokens exceed 85% of the window; preserves last 8 messages (aligns with Tier-2 tail).
-- **Tier-2 (compaction)**: when Tier-1 is not enough, the middle block is summarized by `compaction.summarizerModel` (default GLM 5.3 Flash) and replaced with `<compaction_summary>`. Load-bearing scratchpad calls (note_add, plan_update) are preserved verbatim. Requires at least 4 middle messages to avoid trivial summaries.
-
-For long tasks (`start_long_task`), the runtime also provides:
-- **Scratchpad tools** (`note_add`, `note_list`, `note_clear`, `plan_update`): per-request notes stored in libSQL. The plan is re-injected every iteration so it survives compaction.
-- **Doom-loop detection**: window=6, threshold=4 identical calls → nudge → force finish (less aggressive than before).
-- **Progress-required tracking**: threshold=8 non-progress calls (was 5) before nudging — advisory, not blocking.
-- **Web tools** (`web_search`, `fetch_url`): internet research with Brave → DuckDuckGo fallback.
-- **Long-term memory** (`memory_remember`, `memory_search`): cross-session guild/user memories persisted in `long_term_memories` with an FTS5 keyword index (prefix matching, diacritic-insensitive). A short per-turn memory digest (counts + recent keys) is injected into the system prompt so the model knows the store exists without bloat; `memory_search` returns the full ranked set. User-scoped memories are visible only to their owner.
-- **Workflows** (`workflow_create`, `workflow_list`, `workflow_run`, `workflow_delete`): reusable tool chains stored per guild. `workflow_run` loads steps, then the model submits each step through normal tool calls so approval and tracing cannot be bypassed.
-- **Artifacts** (`artifact_send`, `artifact_edit`, `src/discord/artifacts/`): interactive Components V2 cards covering the full component surface: text displays, sections with thumbnail or button accessories, media galleries, file cards (re-uploaded attachments), accent color, spoiler, navigation (tab dropdown or pagination), link buttons, custom action rows (buttons and every select type), TTL auto-deletion via a boot-time sweep (`ArtifactStore`), and sandboxed JS handlers (`node:vm`, 100ms, no host globals) that mutate persisted per-card state, reply, send, and re-render on click. Spec validation gates every send, including direct-image-link checks for media. Separate from saved workflows.
-
-## Storage
-
-Active runtime storage lives under `storage/runtime/` and is disposable local state.
-
-It stores:
-- runtime runs
-- tool runs
-- trace events
-- message cache and indexing state
-- conversation state
-
-Bot settings are stored in `storage/settings.json`.
-
-If runtime storage becomes incompatible, the code prefers reset-and-rebuild over leaking SQL errors into live replies.
+Source invalidation, shared crawl ownership, supported postcondition verification, provider accounting, private handoff, retention and migration review are implemented and tested. Remaining acceptance work and model-specific failures are tracked in [the v5 plan](v5-plan.md). Docker integration is blocked by the local engine startup failure; no host execution fallback exists. Real Discord desktop/mobile behavior still needs direct acceptance testing.

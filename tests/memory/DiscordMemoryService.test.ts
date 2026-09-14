@@ -26,7 +26,6 @@ describe("DiscordMemoryService", () => {
             runtime: {
                 ...SettingsService.load().runtime,
                 operationalDbPath,
-                checkpointDbPath,
             },
         });
         await DiscordMemoryService.resetForTests();

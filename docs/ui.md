@@ -1,113 +1,52 @@
-# UI Guidelines
+# Discord UI
 
-These rules keep Sophia’s Discord responses clear, human-facing, and easy to scan.
+Ordinary replies use ordinary text. Cards are for navigation, actions and content that benefits from persistent controls. Keep the user's language, use concrete wording, and avoid decorative dashboards or repeated status paragraphs.
 
-## Principles
+## Progress and delivery
 
-- Prefer short containers over noisy walls of text.
-- Keep conversational answers conversational.
-- Put labels and values on the same line for simple metrics.
-- Do not expose internal implementation jargon in user-facing copy.
-- Avoid filler sentences that explain the UI instead of the result.
-- Use multiple containers when that makes the result easier to follow.
-- Keep status commands compact and readable on desktop and mobile.
+Message requests use native typing. Longer work has one coalesced progress message with task-bound Stop and Details controls. Rotating reactions are removed. `/talk` uses Discord's deferred response and respects the selected private response mode.
 
-## Good Defaults
+Private progress, edits and cleanup use ephemeral interaction webhooks. An expired private delivery path must never become a public fallback. `/tasks` posts eligible public-task summaries in the channel by default; `ephemeral:true` includes private summaries for the requester. Task inspection and exports also default to the channel; use `ephemeral:true` for a private reply.
 
-- For small status summaries, use a primary container with:
-  - a short title
-  - one short explanatory sentence only when needed
-  - inline metrics such as `Messages saved: 40`
-  - one short section for related items such as channels
-- Use accent colors sparingly to communicate rough state, not branding decoration.
-- Prefer the language of the channel and the user when possible.
+Stop acts only on the authenticated owner's task. Details shows that task's current state. Steering arrives through `/steer` and is persisted before acknowledgement.
 
-## Artifacts (Model-Rendered Cards, Not Workflows)
+## Approvals
 
-Workflows save tool chains for reuse. Artifacts render one-off or TTL-bound interactive cards from evidence already gathered. The code seam is `src/discord/artifacts/`.
+Reads within a grant run without prompting. Ask mode shows concrete changes and their targets before execution. Auto-approve applies only within the authenticated user's granted action tier. Protected targets remain unavailable.
 
-- The model sends them through the `artifact_send` tool (deferred, found via `tool_search`). Spec: `title` (max 120), optional `summary` (max 400), `sections` (1 to 8, each `body` max 3000 plus optional `heading` used as the tab label and `thumbnail_url` corner image), `gallery` (image grid, max 10 direct image URLs), `files` (max 10 file cards, re-uploaded with the message), `accent_color` (hex integer), `spoiler`, `ttl_days` (0 keeps forever, max 365, default 0).
-- Media rules: image URLs must be direct links (.png/.jpg/.jpeg/.gif/.webp or known image CDNs like cdn.discordapp.com); pages are rejected by validation. Sources the model is taught to use: `get_member_profile` `avatarUrl`, attachment URLs in retrieval results, and direct links from web results.
-- Full interactive surface: `accessory_button` per section (thumbnail or button, one per section), `action_rows` (buttons and all select types: string/user/role/mentionable/channel), and `handlers` — sandboxed JS per customId (`node:vm`, 100ms, no require/process/network) with `state` persistence, ephemeral `reply`, up to 3 `send`s, and card re-render helpers (`setTitle`/`setSummary`/`setSection`/`setAccent`/`setSpoiler`). `game:` customIds mutate persisted `gameState`; `action:` customIds ack plainly when no handler exists. Script errors surface to the clicker ephemerally.
-- Interactivity: `navigation: {type: "select"}` renders a dropdown tab switcher, `{type: "pagination"}` renders prev/next buttons with a position indicator, `link_buttons` (max 5) render https link buttons. All controls use Components V2.
-- `validateArtifactSpec` gates every send (shape, char budget of 3900, https-only link URLs). `buildArtifactComponents` renders per view state; `ArtifactSession` owns the in-memory interaction session (15 min, controls render disabled afterwards).
-- `ttl_days` persists to the `artifacts` table and a boot-time sweep (`ArtifactStore.sweepExpired`) deletes expired cards. Interaction sessions do not survive a reboot; cards stay readable with controls disabled.
-- Cards persist by default (`ttl_days` 0). `artifact_edit` updates an existing card in place from the persisted spec (title, summary, sections, navigation, buttons, TTL); only the passed fields change.
-- Keep titles short, one idea per section, plain words over decoration.
-- Persistent cards suit digests the server rereads; a short TTL suits throwaway confirmations.
+Approval cards support accept, decline, correction and stop. Batches list their actual items and may support category selection. Changed arguments require a new decision. A timeout means that no decision arrived; it is distinct from a user declining. Destructive Ask-mode actions retain their confirmation step.
 
-## Approval Cards
+Only the requesting user can approve. Approval controls commit a decision to the task ledger before execution. Restarted or expired prompts cannot grant authority.
 
-Approval cards use discord.js Components V2 (ContainerBuilder, ButtonBuilder, StringSelectMenuBuilder, ModalBuilder).
+## Persistent cards
 
-### Single-Item Cards
+`artifact_send` creates a card. `artifact_edit` changes the stored card in place. Specs, view state, game state, creator IDs and Discord message IDs persist in `products.sqlite`. Controls are routed centrally and continue to work after restart.
 
-- Show tool name and short description
-- Side-effect badge: yellow for write, red for destructive
-- Buttons: **Aceitar** (Success green), **Recusar** (Danger red), **Recusar e corrigir** (Primary blue), **Parar execução** (Secondary gray)
-- Timeout indicator: auto-deny after configurable `approvalTimeoutMs`
-- Post-action status: ✅ approved, ❌ denied, ✏️ corrected, ⏳ timed out, 🛑 stopped
+The owner or an operator can change a card's structure. Cards without recorded ownership require an operator. Every click still checks current access. Per-card serialization prevents concurrent clicks and structural edits from overwriting each other.
+`artifact_read` exposes the current revision and exact historical revisions to the owner or an operator. `artifact_edit expected_revision` rejects an edit when the card changed since inspection. Specs and handler state are snapshotted together after structural changes and script interactions. Navigation alone does not create another content revision.
 
-### Batch Destructive Cards
+Navigation supports section selection and pagination. Specs may include galleries, files, link buttons and supported Discord selects. Validation enforces the current component and text limits before sending. Native polls use Discord's poll API.
 
-- Show count of pending actions
-- List each item with tool icon + description
-- Buttons: **Aprovar tudo**, **Recusar tudo**, **Recusar e corrigir**, **Parar execução**
-- Category select menu: shown when actions span 2+ Discord categories (parent channels)
-- "Recusar e corrigir" opens a modal asking "O que deve ser feito de diferente?"
-- Post-action status: Approved / Denied / Partial (by category) / Timeout / Stopped / Corrected
+Script handlers execute in the Docker workspace. The JavaScript VM inside the container is a language runtime, not the host isolation boundary. External actions proposed by a handler use ordinary authorization and approvals.
 
-### Confirmation Dialog
+Cards persist by default. A configured expiry removes the message; failed cleanup retains its record for a later retry. An unavailable card or handler returns a private error to the clicker.
 
-- Destructive actions show a confirmation after initial approval: "Esta ação é destrutiva. Tens a certeza?"
-- Buttons: **Confirmar** (Danger red), **Cancelar** (Secondary gray)
+Cards retain source links across revisions. Reading, editing and interacting with a card recheck those sources; a deleted or inaccessible source blocks redisplay. This does not retract already published Discord messages. Successful expiry cleanup removes the card's stored revisions, ownership and source metadata. If a card was sent but saving its state fails, the result preserves its message ID and reports the failure; the runtime pauses without sending a duplicate.
 
-## Activity Indicators
+## Settings and inspection
 
-### Message Replies (mentions, direct replies)
+`/settings` opens in the channel by default; `ephemeral:true` opens it privately. Operator checks still protect every control. The installation-wide costs view updates the same settings message. It separates model selection, voice, service switches, compaction and advanced runtime controls. Voice styles are balanced, casual and formal. Service switches pause memory consolidation, workspace execution or scheduling without deleting their data.
 
-- **Thinking**: Animated emoji reaction cycling every 2 seconds:
-  `🤨 → 🧐 → 🤓 → 😎 → 🤔 → 🫡 → 😴 → 😬 → [repeat]`
-- **Typing**: Discord typing indicator refreshed every 8 seconds
-- Graceful degradation if bot lacks reaction permissions
+Category resets preserve unrelated settings, access rules and storage paths. The default task call limit is zero, which disables the cap. Availability and approval grants are configured through `/access`, including explicit DM availability.
 
-### Interactions (/talk)
+`/skills` inspects owned skills. Operators can review quarantine entries and adopt one exact revision as a private draft. `/tasks` exports owned state, source-checked evidence, files and usage records. Diagnostic exports may contain stable IDs; ordinary confirmations use Discord mentions and links when available.
 
-- Discord native "thinking" state after `deferReply` — no custom indicator needed
+## Acceptance
 
-## Settings Panel
+`/memories` searches eligible facts. Operators can page through `quarantine:true` and adopt an exact legacy revision as private memory. `/access` includes a paginated grant list with principal IDs, scope, tier, mode and optional expiry. `/tasks forget:true task_id` deletes inactive resolved work; separate memories and published artifacts have their own controls.
 
-- Interactive panel with explicit tabs for model selection and runtime tuning
-- Model tab shows the supported profiles from the canonical model catalog, with friendly labels, context window, and OpenRouter pricing.
-- Runtime tab keeps parameter tuning separated from model selection
-- Toggle button for auto-approve writes
-- Reset to Defaults button
-- All labels and descriptions in Portuguese
+Check ordinary conversation, private progress, approval ownership, expired controls, concurrent card clicks and restart recovery. Verify wrapping, labels, navigation and tap targets on real desktop and mobile Discord clients before release. Synthetic component tests do not establish mobile usability.
 
-## Index Status
+Personality comes from the shared `system/personality` prompt. Balanced restores Sophia's relaxed default, casual is more informal and formal is more reserved. All modes use the same plain-writing rules and preserve exact source quotations and code.
 
-- `/index status` should expose storage footprint in human units (`KB`, `MB`, `GB`) alongside the DB paths
-
-## Avoid
-
-- Raw IDs, cursors, or internal storage terminology in normal command output
-- Decorative avatars in status cards
-- Separate metric blocks when one line communicates the same thing better
-- Debug-style copy such as "this panel shows the useful state"
-
-## Commands That Should Follow This
-
-- `/debug`
-- `/index status`
-- `/settings`
-- approval cards
-- future operator/status commands
-
-## If You Change UI Patterns
-
-Update these files together:
-
-- `docs/ui.md`
-- `AGENTS.md`
-- the affected command implementation
-- tests if command output contracts or doc references changed
+Settings navigation has one button per destination. Serialized custom IDs must be unique across the whole message, including nested containers; settingsFeatures.test.ts checks every tab.

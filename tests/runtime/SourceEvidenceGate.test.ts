@@ -1,0 +1,30 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
+import { ToolExecutor } from "@/runtime/ToolExecutor";
+import { knowledgeStore } from "@/memory/KnowledgeStore";
+import { readableToolRecords } from "@/runtime/sourceEvidence";
+
+afterEach(() => vi.restoreAllMocks());
+it("withholds message payloads after permission revocation or source deletion", async () => {
+    const capability = CapabilityRegistry.get("retrieve_messages");
+    const jumpLink = "https://discord.com/channels/guild/source/evidence-gate";
+    const run = vi.fn().mockResolvedValue({ tool: "retrieve_messages", summary: "SECRET_SOURCE", data: { historyMessages: [{ messageId: "evidence-gate", channelId: "source", authorId: "author", content: "SECRET_SOURCE", jumpLink, createdTimestamp: 1 }], semanticMatches: [] } });
+    vi.spyOn(CapabilityRegistry, "get").mockReturnValue({ ...capability, outputSchema: z.any(), run });
+    const has = vi.fn().mockReturnValue(false);
+    const guild = { id: "guild", members: { fetch: vi.fn().mockResolvedValue({}) }, channels: { fetch: vi.fn().mockResolvedValue({ isTextBased: () => true, permissionsFor: () => ({ has }) }) } };
+    const context = { guild: guild as never, actorId: "owner", question: "Read", authorize: async () => "allow" as const };
+    const denied = await ToolExecutor.execute("retrieve_messages", { query: "*" }, context);
+    expect(denied.record.blocked).toBe(true);
+    expect(JSON.stringify(denied)).not.toContain("SECRET_SOURCE");
+    has.mockReturnValue(true);
+    const allowed = await ToolExecutor.execute("retrieve_messages", { query: "*" }, context);
+    expect(allowed.resultPayload).toContain("SECRET_SOURCE");
+    has.mockReturnValue(false);
+    expect(JSON.stringify(await readableToolRecords([allowed.record], guild as never, "owner"))).not.toContain("SECRET_SOURCE");
+    has.mockReturnValue(true);
+    await knowledgeStore.invalidateSource(jumpLink);
+    const deleted = await ToolExecutor.execute("retrieve_messages", { query: "*" }, context);
+    expect(deleted.record.blocked).toBe(true);
+    expect(JSON.stringify(deleted)).not.toContain("SECRET_SOURCE");
+});

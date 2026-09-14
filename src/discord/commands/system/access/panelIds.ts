@@ -4,6 +4,7 @@ export const ACCESS_PANEL_PREFIX = "access";
 
 export const ACCESS_VIEW_BUTTONS = {
     overview: `${ACCESS_PANEL_PREFIX}:view:overview`,
+    grants: `${ACCESS_PANEL_PREFIX}:view:grants`,
     admins: `${ACCESS_PANEL_PREFIX}:view:admins`,
     moderators: `${ACCESS_PANEL_PREFIX}:view:moderators`,
     commands: `${ACCESS_PANEL_PREFIX}:view:commands`,

@@ -1,14 +1,17 @@
 import { z } from "zod";
+import { assertDerivedSources, assertPublicationAudience, captureDerivedSources } from "@/security/DerivedSources";
 import { T } from "@/shared/discordTools";
 import { applyArtifactEdit } from "@/discord/artifacts/ArtifactSession";
 import { artifactExpiryTimestamp, validateArtifactSpec } from "@/discord/artifacts/ArtifactBuilder";
 import { ArtifactStore } from "@/discord/artifacts/ArtifactStore";
 import type { ToolArguments } from "@/runtime/contracts";
 import type { ToolDefinition } from "./types";
+import { SecurityService } from "@/security/SecurityService";
 
 const parameters = {
     type: "object",
     properties: {
+        expected_revision: { type: "number", description: "Current revision returned by artifact_read. If supplied, reject an edit when the card has changed since it was read." },
         message_id: {
             type: "string",
             description: "Message ID of the artifact card to edit, from the artifact_send result.",
@@ -152,6 +155,7 @@ const EDITABLE_FIELDS = ["title", "summary", "sections", "navigation", "link_but
 
 export const artifactEditTool: ToolDefinition = {
     name: T.artifact_edit,
+    publicationTarget: async (_context, args) => (await ArtifactStore.get(String(args.message_id)))?.channelId ?? "unavailable",
 
     catalog: {
         effect: "write",
@@ -169,6 +173,7 @@ export const artifactEditTool: ToolDefinition = {
         description: "Edit an artifact card.",
         inputSchema: z.object({
             message_id: z.string(),
+            expected_revision: z.number().int().nonnegative().optional(),
             title: z.string().optional(),
             summary: z.string().optional(),
             // String forms are accepted and recovered by validateArtifactSpec.
@@ -201,12 +206,13 @@ export const artifactEditTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["the card was sent by this bot and exists in the artifacts store"],
         postconditions: ["card re-rendered with the merged spec"],
         async run(context, args) {
+            return ArtifactStore.locks.run(String(args.message_id), async () => {
             const provided = args as Record<string, unknown>;
             const rearm = Boolean(provided.rearm);
             const changed = EDITABLE_FIELDS.filter((field) => provided[field] !== undefined);
@@ -221,12 +227,23 @@ export const artifactEditTool: ToolDefinition = {
                 const error = `No artifact card found for message ${messageId}.`;
                 return { tool: T.artifact_edit, summary: error, data: { messageId, error }, errorMessage: error };
             }
+            if (provided.expected_revision !== undefined && provided.expected_revision !== stored.revision) throw new Error("The card changed after it was read. Use artifact_read and review the current revision before editing.");
+            await SecurityService.initialize();
+            const ownerId = await ArtifactStore.owner(messageId);
+            if (!context.actorId || (ownerId !== context.actorId && !SecurityService.isAdmin(context.actorId))) {
+                const error = "Only this card's owner or an operator can edit it. Legacy cards with no owner require an operator.";
+                return { tool: T.artifact_edit, summary: error, data: { messageId, error }, errorMessage: error };
+            }
             if (!context.guild || (stored.guildId && stored.guildId !== context.guild.id)) {
                 const error = "This card belongs to another server.";
                 return { tool: T.artifact_edit, summary: error, data: { messageId, error }, errorMessage: error };
             }
 
             let currentSpec: Record<string, unknown>;
+            const sources = [...await ArtifactStore.sources(messageId), ...await captureDerivedSources(context)];
+            await assertDerivedSources(context, sources);
+            await assertPublicationAudience(context, stored.channelId, sources);
+            await ArtifactStore.addSources(messageId, sources);
             try {
                 currentSpec = JSON.parse(stored.specJson || "{}") as Record<string, unknown>;
             } catch {
@@ -270,15 +287,17 @@ export const artifactEditTool: ToolDefinition = {
             const expiresAt = provided.ttl_days !== undefined
                 ? artifactExpiryTimestamp(validated.value.ttlDays)
                 : stored.expiresAt;
-            await ArtifactStore.updateSpec(messageId, JSON.stringify(validated.value), expiresAt);
+            await ArtifactStore.updateSpec(messageId, JSON.stringify(validated.value), expiresAt,
+                provided.game_state === undefined ? undefined : validated.value.gameState ?? {});
 
             const channelMention = `<#${sent.channelId}>`;
             return {
                 tool: T.artifact_edit,
                 summary: rearm
-                    ? `Artifact "${validated.value.title}" re-armed in ${channelMention}: controls re-rendered fresh, view reset to section 1.`
-                    : `Artifact "${validated.value.title}" updated in ${channelMention} (changed: ${changed.join(", ")}).`,
+                    ? `Artifact ${sent.messageId} "${validated.value.title}" re-armed in ${channelMention}: controls re-rendered fresh, view reset to section 1.`
+                    : `Artifact ${sent.messageId} "${validated.value.title}" updated in ${channelMention} (changed: ${changed.join(", ")}).`,
                 data: {
+                    revision: (await ArtifactStore.get(messageId))?.revision,
                     messageId: sent.messageId,
                     channelId: sent.channelId,
                     channelMention,
@@ -290,6 +309,7 @@ export const artifactEditTool: ToolDefinition = {
                     ttlDays: (validated.value as { ttlDays?: number }).ttlDays ?? 0,
                 },
             };
+            });
         },
     },
 

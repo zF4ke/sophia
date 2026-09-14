@@ -27,6 +27,8 @@ export const DIRECT_TOOLS = new Set<DiscordToolName>([
     "measure_text_length",
     "evaluate_math",
     // control + scratchpad (needed for long tasks)
+    "task_search",
+    "task_control",
     "start_long_task",
     "note_add",
     "note_list",

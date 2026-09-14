@@ -44,8 +44,7 @@ export function getAppConfig(): AppConfig {
             modelProfile,
             runtime: {
                 operationalDbPath: rt.operationalDbPath,
-                checkpointDbPath: rt.checkpointDbPath,
-                maxToolCalls: rt.maxToolCalls,
+                toolCallLimit: rt.toolCallLimit,
                 maxRepeatedCallSignature: rt.maxRepeatedCallSignature,
                 maxPriorTurns: rt.maxPriorTurns,
                 maxChannelMessages: rt.maxChannelMessages,
@@ -55,9 +54,7 @@ export function getAppConfig(): AppConfig {
                 retrievalHistoryLimit: rt.retrievalHistoryLimit,
                 retrievalContextWindow: rt.retrievalContextWindow,
                 longTask: {
-                    maxToolCalls: rt.longTask?.maxToolCalls ?? 200,
                     evidenceSliceFloor: rt.longTask?.evidenceSliceFloor ?? 128,
-                    retrievalInlineCrawlBatches: rt.longTask?.retrievalInlineCrawlBatches ?? 3,
                 },
             },
         };

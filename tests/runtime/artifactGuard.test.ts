@@ -4,11 +4,13 @@ import { ModelGateway, type ToolChatResult } from "@/ai/ModelGateway";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 import { SettingsService } from "@/app/SettingsService";
 import { Runtime } from "@/runtime/Runtime";
+import { taskStore } from "@/runtime/tasks/TaskStore";
 import type { TurnInput } from "@/runtime/contracts";
 
 function createInput(guild: unknown): TurnInput {
     return {
         question: "faz um artefacto com o dossiê",
+        authorize: async () => "allow",
         user: { id: "u-requester" } as any,
         requesterDisplayName: "Requester",
         guild: guild as any,
@@ -99,7 +101,6 @@ describe("artifact guard", () => {
         SettingsService.update({
             runtime: {
                 ...SettingsService.load().runtime,
-                autoApproveWrites: true,
                 operationalDbPath: path.join(
                     process.cwd(),
                     "storage",
@@ -116,12 +117,12 @@ describe("artifact guard", () => {
         vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
     });
 
-    it("rejects finish after a failed artifact_send and accepts once the card is fixed and sent", async () => {
+    it("rejects finish after invalid artifact arguments and accepts once the card is fixed and sent", async () => {
         const { guild, sentMessages } = makeGuildHarness();
         const recordSpy = vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
 
         vi.spyOn(ModelGateway, "generateWithTools")
-            .mockResolvedValueOnce(makeToolCallResult("artifact_send", { title: "", sections: [{ body: "x" }] }))
+            .mockResolvedValueOnce(makeToolCallResult("artifact_send", { title: 42, sections: [{ body: "x" }] }))
             .mockResolvedValueOnce(makeFinishResult("Pronto!"))
             .mockResolvedValueOnce(makeToolCallResult("artifact_send", {
                 title: "Dossiê",
@@ -146,9 +147,9 @@ describe("artifact guard", () => {
         const recordSpy = vi.spyOn(DiscordMemoryService, "recordRuntimeRun").mockResolvedValue(undefined);
 
         vi.spyOn(ModelGateway, "generateWithTools")
-            .mockResolvedValueOnce(makeToolCallResult("artifact_send", { title: "", sections: [{ body: "x" }] }))
+            .mockResolvedValueOnce(makeToolCallResult("artifact_send", { title: 42, sections: [{ body: "x" }] }))
             .mockResolvedValueOnce(makeFinishResult("Primeira tentativa de sair."))
-            .mockResolvedValueOnce(makeToolCallResult("artifact_send", { title: "Ainda vazio", sections: [] }))
+            .mockResolvedValueOnce(makeToolCallResult("artifact_send", { title: 42, sections: [] }))
             .mockResolvedValueOnce(makeFinishResult("Segunda tentativa de sair."))
             .mockResolvedValueOnce(makeFinishResult("O cartão falhou, não consegui enviar."));
 
@@ -158,5 +159,19 @@ describe("artifact guard", () => {
         const persisted = recordSpy.mock.calls.at(-1)?.[0] as { traceEvents: Array<{ label: string; detail: string }> };
         const guardEvents = persisted.traceEvents.filter((t) => t.label === "artifact_guard");
         expect(guardEvents).toHaveLength(2);
+    });
+
+    it("pauses without another model call when an artifact send has an unknown outcome", async () => {
+        const { guild, fakeChannel } = makeGuildHarness();
+        fakeChannel.send.mockRejectedValueOnce(new Error("Connection lost after sending"));
+        const model = vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeToolCallResult("artifact_send", { title: "Dossiê", sections: [{ body: "Evidence" }] }));
+        const result = await Runtime.answer(createInput(guild));
+        expect(result.outcome).toBe("paused");
+        expect(result.answer).toContain("não consegui confirmar");
+        expect(model).toHaveBeenCalledOnce();
+        expect(fakeChannel.send).toHaveBeenCalledOnce();
+        expect((await taskStore.snapshot(result.taskId!, "u-requester", "c1", "g1"))?.actions)
+            .toMatchObject([{ tool: "artifact_send", status: "unknown" }]);
     });
 });

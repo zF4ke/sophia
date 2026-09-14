@@ -31,7 +31,6 @@ describe("OperationalStore", () => {
             runtime: {
                 ...SettingsService.load().runtime,
                 operationalDbPath,
-                checkpointDbPath,
             },
         });
     });

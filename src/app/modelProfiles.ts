@@ -1,30 +1,30 @@
 import fs from "fs";
 import { AppPaths } from "@/app/AppPaths";
 import type { ModelProfile, ModelProfileConfig } from "@/shared/appTypes";
+import { z } from "zod";
 
-const EMERGENCY_MODEL_PROFILES: ModelProfileConfig = {
-    defaultProfile: "glm53flash",
-    profiles: {
-        glm53flash: {
-            label: "GLM 5.3 Flash",
-            chatModel: "z-ai/glm-5.3-flash",
-            embeddingModel: "openai/text-embedding-3-small",
-            temperature: 0.45,
-            maxOutputTokens: 24_000,
-            contextWindow: 1_310_720,
-            parallelToolCalls: true,
-        },
-    },
-};
+const profileSchema = z.object({
+    api: z.enum(["chat-completions", "responses"]).optional(),
+    reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).optional(),
+    label: z.string().optional(), chatModel: z.string().trim().min(1), embeddingModel: z.string().trim().min(1),
+    temperature: z.number().finite().min(0).max(2), maxOutputTokens: z.number().int().positive(),
+    contextWindow: z.number().int().positive(), parallelToolCalls: z.boolean().optional(),
+    inputModalities: z.array(z.enum(["text", "image", "video", "audio"])).min(1).optional(),
+    baseUrl: z.string().url().refine(value => {
+        const url = new URL(value);
+        return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+    }, "Use an HTTP(S) endpoint without embedded credentials").optional(),
+    apiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
+    provider: z.string().optional(), notes: z.string().optional(),
+    pricing: z.object({ inputPerMillionUsd: z.number().nonnegative().optional(), outputPerMillionUsd: z.number().nonnegative().optional(),
+        cacheReadPerMillionUsd: z.number().nonnegative().optional(), webSearchPerCallUsd: z.number().nonnegative().optional(),
+        source: z.string().optional(), updatedAt: z.string().optional() }).optional(),
+}).refine(profile => profile.maxOutputTokens < profile.contextWindow, "Output tokens must leave room for input");
 
-function isValidModelProfileConfig(value: unknown): value is ModelProfileConfig {
-    if (!value || typeof value !== "object") return false;
-
-    const candidate = value as Partial<ModelProfileConfig>;
-    if (!candidate.defaultProfile || typeof candidate.defaultProfile !== "string") return false;
-    if (!candidate.profiles || typeof candidate.profiles !== "object") return false;
-
-    return Boolean(candidate.profiles[candidate.defaultProfile]);
+export function parseModelProfiles(value: unknown): ModelProfileConfig {
+    const config = z.object({ defaultProfile: z.string().min(1), profiles: z.record(z.string(), profileSchema) }).parse(value);
+    if (!Object.prototype.hasOwnProperty.call(config.profiles, config.defaultProfile)) throw new Error("Default model profile does not exist.");
+    return config;
 }
 
 export function readModelProfiles(): ModelProfileConfig {
@@ -32,14 +32,10 @@ export function readModelProfiles(): ModelProfileConfig {
         const raw = fs.readFileSync(AppPaths.modelProfilesPath, "utf8");
         const parsed = JSON.parse(raw) as unknown;
 
-        if (isValidModelProfileConfig(parsed)) {
-            return parsed;
-        }
-    } catch {
-        // Fall back to the checked-in profile set if the file is missing or invalid.
+        return parseModelProfiles(parsed);
+    } catch (error) {
+        throw new Error(`Unable to load model profiles from ${AppPaths.modelProfilesPath}. Correct the configuration before starting: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    return EMERGENCY_MODEL_PROFILES;
 }
 
 export function resolveModelProfileName(

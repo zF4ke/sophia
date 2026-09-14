@@ -15,7 +15,7 @@ describe("AppConfig", () => {
         const { getAppConfig } = await import("@/app/AppConfig");
         const config = getAppConfig();
 
-        expect(config.runtime.maxToolCalls).toBeGreaterThanOrEqual(2);
+        expect(config.runtime.toolCallLimit).toBe(0);
     });
 
     it("reads runtime config from settings", async () => {

@@ -3,6 +3,7 @@ import { SettingsService } from "@/app/SettingsService";
 import { readModelProfiles } from "@/app/modelProfiles";
 import type { ModelProfile, ModelProfileConfig } from "@/shared/appTypes";
 import type { RuntimeTraceEvent } from "@/runtime/contracts";
+import { PromptRegistry } from "./PromptRegistry";
 
 /**
  * Tier-2 compaction: summarize the bulk of the conversation when
@@ -76,6 +77,14 @@ export function resolveCompactionProfile(): ModelProfile | null {
 /**
  * Extract the compactable region and build the summarisation prompt.
  */
+function compactionBoundary(messages: ToolChatMessage[]) {
+    const firstKept = Math.max(2, messages.findIndex(message => message.role === "user") + 1);
+    let lastKeptStart = Math.max(firstKept, messages.length - PRESERVE_TAIL);
+    // Keep the assistant call with all of its results, even when that grows the tail.
+    while (lastKeptStart > firstKept && messages[lastKeptStart]?.role === "tool") lastKeptStart--;
+    return { firstKept, lastKeptStart };
+}
+
 function buildSummaryPrompt(messages: ToolChatMessage[]): {
     /** Messages to be summarised (the "middle" block). */
     middleBlock: ToolChatMessage[];
@@ -83,8 +92,7 @@ function buildSummaryPrompt(messages: ToolChatMessage[]): {
     preservedCallSummaries: string[];
 } {
     // [0] = system prompt, [1] = first user message → always kept.
-    const firstKept = 2;
-    const lastKeptStart = Math.max(firstKept, messages.length - PRESERVE_TAIL);
+    const { firstKept, lastKeptStart } = compactionBoundary(messages);
 
     const middleBlock = messages.slice(firstKept, lastKeptStart);
     const preservedCallSummaries: string[] = [];
@@ -158,21 +166,13 @@ export async function compactMessages(
         ? `\n\nPreserved scratchpad calls (include verbatim in your summary):\n${preservedCallSummaries.join("\n")}`
         : "";
 
-    const summarySystemPrompt = [
-        "You are a conversation summariser for a Discord bot runtime.",
-        "Summarise the following transcript of tool calls and results into a concise narrative.",
-        "Preserve: user intent, key findings, tool names called, decisions made, any jumpLinks or message IDs mentioned, and all scratchpad (note/plan) entries.",
-        "Do NOT invent jumpLinks or IDs that are not in the transcript.",
-        "Output only the summary, no preamble.",
-        `Max length: ~${SUMMARY_MAX_TOKENS} tokens.`,
-        preservedSection,
-    ].join("\n");
+    const summarySystemPrompt = PromptRegistry.render("runtime/compaction", { max_tokens: SUMMARY_MAX_TOKENS });
 
     try {
         const summaryText = await ModelGateway.generateText(
             [
                 { role: "system", content: summarySystemPrompt },
-                { role: "user", content: transcript },
+                { role: "user", content: transcript + preservedSection },
             ],
             {
                 profile,
@@ -187,12 +187,11 @@ export async function compactMessages(
         );
 
         // Splice: remove middle block, insert summary message.
-        const firstKept = 2;
-        const lastKeptStart = Math.max(firstKept, messages.length - PRESERVE_TAIL);
+        const { firstKept, lastKeptStart } = compactionBoundary(messages);
         const removedCount = lastKeptStart - firstKept;
 
         const summaryMessage: ToolChatMessage = {
-            role: "system",
+            role: "assistant",
             content: `<compaction_summary>\n${summaryText}\n</compaction_summary>`,
         };
 

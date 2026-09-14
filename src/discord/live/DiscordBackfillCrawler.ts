@@ -601,7 +601,7 @@ export class DiscordBackfillCrawler {
 
         while (ingested < maxMessages) {
             const batchSize = Math.min(100, maxMessages - ingested);
-            const result = await fetchAndIngestBatch(channel, before ?? null, batchSize);
+            const result = await fetchAndIngestBatch(channel, before ?? null, batchSize, "refresh");
             ingested += result.ingested;
             if (result.reachedEnd && result.ingested === 0) break;
             if (result.ingested === 0) break;

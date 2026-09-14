@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { T } from "@/shared/discordTools";
-import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { getWorkingState } from "@/runtime/tasks/workingState";
 import { SettingsService } from "@/app/SettingsService";
 import type { ToolDefinition, CapabilityContext } from "./types";
 
@@ -59,16 +59,16 @@ export const goalOpenTool: ToolDefinition = {
     catalog: {
         effect: "read",
         description:
-            "Open a persistent goal for the current request thread. Goals survive across turns; the runtime chains new turns until every goal is done, blocked, or cancelled.",
+            "Open a persistent goal for the current task. Goals survive across turns; the runtime chains new turns until every goal is done, blocked, or cancelled.",
         evidenceRole: "discovery_only",
     },
     schema: {
         description:
-            "Open a goal describing the task you are starting. Goals persist for the whole thread and the runtime keeps chaining turns until each goal is done, blocked, or cancelled. Open one goal per distinct user-facing task, never per turn or per step.",
+            "Open a goal describing the task you are starting. Goals persist for the whole task and the runtime keeps chaining turns until each goal is done, blocked, or cancelled. Open one goal per distinct user-facing task, never per turn or per step.",
         parameters: openParameters,
     },
     capability: {
-        description: "Open a persistent goal for the request thread.",
+        description: "Open a persistent goal for the current task.",
         inputSchema: z.object({
             body: z.string(),
             label: z.string().optional(),
@@ -79,8 +79,9 @@ export const goalOpenTool: ToolDefinition = {
         costClass: "cheap",
         latencyClass: "fast",
         preconditions: [],
-        postconditions: ["one row appended to request_goals"],
+        postconditions: ["one goal saved in the active working state"],
         async run(context, args) {
+            const state = await getWorkingState(context);
             const ids = requireIds(context);
             if ("error" in ids) {
                 return { tool: T.goal_open, summary: ids.error, data: null, errorMessage: ids.error };
@@ -92,12 +93,12 @@ export const goalOpenTool: ToolDefinition = {
             const label = args.label == null ? null : String(args.label).slice(0, MAX_LABEL_CHARS).trim() || null;
 
             const cap = settingMaxGoals();
-            const goals = await DiscordMemoryService.listRequestGoals({
+            const goals = await state.listRequestGoals({
                 requestId: ids.requestId,
                 threadId: ids.threadId,
                 includeThreadHistory: true,
             });
-            if (goals.filter((goal) => goal.status !== "done" && goal.status !== "cancelled").length >= cap) {
+            if (!context.taskId && goals.filter((goal) => goal.status !== "done" && goal.status !== "cancelled").length >= cap) {
                 return {
                     tool: T.goal_open,
                     summary: `Goal limit reached (${cap}). Mark obsolete goals done or cancelled before opening new ones.`,
@@ -114,6 +115,7 @@ export const goalOpenTool: ToolDefinition = {
             const candidateWords = new Set(normalized.split(" ").filter((word) => word.length > 2));
             const twin = goals.find((goal) => {
                 if (goal.status !== "open" && goal.status !== "in_progress") return false;
+                if (context.taskId) return goal.body.trim() === body;
                 if (normalizeGoalBody(goal.body) === normalized) return true;
                 const kept = new Set(normalizeGoalBody(goal.body).split(" ").filter((word) => word.length > 2));
                 let intersection = 0;
@@ -130,7 +132,7 @@ export const goalOpenTool: ToolDefinition = {
                 };
             }
 
-            const { seq } = await DiscordMemoryService.addRequestGoal({
+            const { seq } = await state.addRequestGoal({
                 requestId: ids.requestId,
                 threadId: ids.threadId,
                 label,
@@ -195,6 +197,7 @@ export const goalUpdateTool: ToolDefinition = {
         preconditions: [],
         postconditions: ["goal row updated when it existed"],
         async run(context, args) {
+            const state = await getWorkingState(context);
             const ids = requireIds(context);
             if ("error" in ids) {
                 return { tool: T.goal_update, summary: ids.error, data: null, errorMessage: ids.error };
@@ -204,18 +207,18 @@ export const goalUpdateTool: ToolDefinition = {
                 return { tool: T.goal_update, summary: "Invalid goal seq.", data: null, errorMessage: "invalid_seq" };
             }
 
-            const goals = await DiscordMemoryService.listRequestGoals({
+            const goals = await state.listRequestGoals({
                 requestId: ids.requestId,
                 threadId: ids.threadId,
                 includeThreadHistory: true,
             });
             const target = goals.find((goal) => goal.seq === seq);
             if (!target) {
-                return { tool: T.goal_update, summary: `Goal #${seq} not found in this thread.`, data: { error: "not_found", seq }, errorMessage: "not_found" };
+                return { tool: T.goal_update, summary: `Goal #${seq} not found in this task.`, data: { error: "not_found", seq }, errorMessage: "not_found" };
             }
             const status = String(args.status) as GoalStatus;
             const body = args.body == null ? undefined : String(args.body).slice(0, MAX_BODY_CHARS).trim() || undefined;
-            await DiscordMemoryService.updateRequestGoal({
+            await state.updateRequestGoal({
                 requestId: target.requestId,
                 seq,
                 status,
@@ -275,6 +278,7 @@ export const goalDoneTool: ToolDefinition = {
         preconditions: [],
         postconditions: ["goal row marked done when it existed"],
         async run(context, args) {
+            const state = await getWorkingState(context);
             const ids = requireIds(context);
             if ("error" in ids) {
                 return { tool: T.goal_done, summary: ids.error, data: null, errorMessage: ids.error };
@@ -283,17 +287,17 @@ export const goalDoneTool: ToolDefinition = {
             if (!Number.isFinite(seq) || seq <= 0) {
                 return { tool: T.goal_done, summary: "Invalid goal seq.", data: null, errorMessage: "invalid_seq" };
             }
-            const goals = await DiscordMemoryService.listRequestGoals({
+            const goals = await state.listRequestGoals({
                 requestId: ids.requestId,
                 threadId: ids.threadId,
                 includeThreadHistory: true,
             });
             const target = goals.find((goal) => goal.seq === seq);
             if (!target) {
-                return { tool: T.goal_done, summary: `Goal #${seq} not found in this thread.`, data: { error: "not_found", seq }, errorMessage: "not_found" };
+                return { tool: T.goal_done, summary: `Goal #${seq} not found in this task.`, data: { error: "not_found", seq }, errorMessage: "not_found" };
             }
             const note = args.note == null ? null : String(args.note).slice(0, MAX_BODY_CHARS).trim() || null;
-            await DiscordMemoryService.updateRequestGoal({
+            await state.updateRequestGoal({
                 requestId: target.requestId,
                 seq,
                 status: "done",

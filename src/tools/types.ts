@@ -1,3 +1,5 @@
+import type { AuthorizeAction } from "@/security/AccessPolicy";
+import type { ExecutionControl } from "@/runtime/ExecutionControl";
 import type { z } from "zod";
 import type { Guild } from "discord.js";
 import type {
@@ -17,6 +19,14 @@ import type { DiscordToolEvidenceRole } from "@/shared/discordTools";
 // ── Shared context passed to every capability run() ─────────────────
 
 export type CapabilityContext = {
+    modelProfileName?: string;
+    client?: import("discord.js").Client;
+    inputModalities?: import("@/shared/appTypes").ModelProfile["inputModalities"];
+    privateResponse?: boolean;
+    attachments?: import("@/runtime/contracts").TurnInput["attachments"];
+    taskId?: string;
+    authorize?: AuthorizeAction;
+    execution?: ExecutionControl;
     guild: Guild | null;
     question: string;
     currentChannelId?: string | null;
@@ -38,6 +48,8 @@ export type ToolEffect = "read" | "write" | "destructive";
 export interface ToolDefinition {
     /** Unique tool name (should match a DiscordToolName literal). */
     name: string;
+    /** Public Discord destination, resolved before any action is dispatched. */
+    publicationTarget?: (context: CapabilityContext, args: ToolArguments) => string | Promise<string>;
 
     /** Catalog metadata: classification, description, evidence role. */
     catalog: {

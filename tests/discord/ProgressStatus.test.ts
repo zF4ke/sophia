@@ -12,13 +12,13 @@ function createMockChannel() {
         setEditThrows(v: boolean) { editThrows = v; },
         setDeleteThrows(v: boolean) { deleteThrows = v; },
         channel: {
-            send: vi.fn(async (content: string) => {
+            send: vi.fn(async (payload: { content: string }) => {
                 const msg = {
                     id: `msg-${++messageId}`,
-                    content,
-                    edit: vi.fn(async (newContent: string) => {
-                        if (editThrows) throw new Error("Unknown message");
-                        msg.content = newContent;
+                    content: payload.content,
+                    edit: vi.fn(async (next: { content: string }) => {
+                        if (editThrows) throw Object.assign(new Error("Unknown message"), { code: 10008 });
+                        msg.content = next.content;
                     }),
                     delete: vi.fn(async () => {
                         if (deleteThrows) throw new Error("Already deleted");
@@ -32,6 +32,19 @@ function createMockChannel() {
 }
 
 describe("ProgressStatusService", () => {
+    it("keeps private progress and cleanup on the interaction webhook", async () => {
+        const send = vi.fn();
+        const followUp = vi.fn().mockResolvedValue({ id: "private-progress" });
+        const editMessage = vi.fn().mockResolvedValue(undefined);
+        const deleteMessage = vi.fn().mockResolvedValue(undefined);
+        const status = ProgressStatusService.startForInteraction({ channel: { send }, followUp, webhook: { editMessage, deleteMessage } } as never);
+        status.bindTask("1234-abcd");
+        await status.notify("Working");
+        await status.finalize();
+        expect(followUp).toHaveBeenCalledWith(expect.objectContaining({ flags: 64, allowedMentions: { parse: [] } }));
+        expect(deleteMessage).toHaveBeenCalledWith("private-progress");
+        expect(send).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         vi.useFakeTimers();
     });
@@ -46,7 +59,7 @@ describe("ProgressStatusService", () => {
 
         await ps.notify("Searching…");
 
-        expect(mock.channel.send).toHaveBeenCalledWith("-# ⏳ Searching…");
+        expect(mock.channel.send).toHaveBeenCalledWith({ content: "-# Searching…", allowedMentions: { parse: [] } });
     });
 
     it("throttles rapid edits", async () => {
@@ -69,13 +82,11 @@ describe("ProgressStatusService", () => {
         await ps.notify("Step 3"); // Coalesced, replaces Step 2
 
         // Advance past throttle
-        vi.advanceTimersByTime(1600);
-
-        await ps.notify("Step 3 (flush)");
+        await vi.advanceTimersByTimeAsync(1600);
 
         // The second call to send/edit should use the latest coalesced summary
         const sentMsg = mock.sent[0];
-        expect(sentMsg.edit).toHaveBeenCalledWith("-# ⏳ Step 3");
+        expect(sentMsg.edit).toHaveBeenCalledWith({ content: "-# Step 3", allowedMentions: { parse: [] } });
     });
 
     it("finalize deletes the status message", async () => {
@@ -117,17 +128,32 @@ describe("ProgressStatusService", () => {
         expect(mock.channel.send).toHaveBeenCalledTimes(2);
     });
 
-    it("adds a repeat counter for consecutive identical summaries", async () => {
+    it("renders controls for the bound task without triggering mentions", async () => {
+        const mock = createMockChannel();
+        const status = ProgressStatusService.startForChannel(mock.channel);
+        status.bindTask("1234-abcd");
+        await status.notify("Reading @everyone");
+        const payload = mock.channel.send.mock.calls[0][0];
+        const controls = payload.components[0].toJSON().components;
+        expect(controls.map((button: { custom_id: string }) => button.custom_id)).toEqual(["task:stop:1234-abcd", "task:details:1234-abcd"]);
+        expect(payload.allowedMentions).toEqual({ parse: [] });
+        await status.finalize();
+    });
+
+    it("coalesces concurrent updates without duplicate messages or invented progress counts", async () => {
         const mock = createMockChannel();
         const ps = ProgressStatusService.startForChannel(mock.channel);
 
-        await ps.notify("Running search_messages…");
-        await ps.notify("Running search_messages…");
+        await Promise.all([ps.notify("Searching @everyone"), ps.notify("Searching @everyone")]);
 
-        vi.advanceTimersByTime(1600);
-        await ps.notify("Running search_messages…");
+        await vi.advanceTimersByTimeAsync(1600);
+        await ps.notify("Searching @everyone");
 
         const sentMsg = mock.sent[0];
-        expect(sentMsg.edit).toHaveBeenCalledWith("-# ⏳ Running search_messages… (x3)");
+        expect(mock.channel.send).toHaveBeenCalledOnce();
+        expect(sentMsg.edit).not.toHaveBeenCalled();
+        await ps.finalize();
+        await ps.notify("Late result");
+        expect(mock.channel.send).toHaveBeenCalledOnce();
     });
 });

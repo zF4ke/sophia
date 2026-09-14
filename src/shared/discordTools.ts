@@ -49,6 +49,8 @@ const TOOL_NAMES = [
     "edit_channel",
     "edit_role",
     // ── Control ──
+    "task_search",
+    "task_control",
     "start_long_task",
     // ── Scratchpad ──
     "note_add",
@@ -65,6 +67,29 @@ const TOOL_NAMES = [
     // ── Long-term memory ──
     "memory_search",
     "memory_remember",
+    "memory_update",
+    "memory_forget",
+    "sandbox_run",
+    "sandbox_import",
+    "sandbox_publish",
+    "sandbox_inspect",
+    "sandbox_transcribe",
+    "inspect_runtime",
+    "verify_action",
+    "task_forget",
+    "corpus_create",
+    "corpus_collect",
+    "corpus_read",
+    "skill_search",
+    "skill_load",
+    "skill_save",
+    "skill_evaluate",
+    "skill_delete",
+    "source_read",
+    "schedule_create",
+    "schedule_update",
+    "schedule_list",
+    "schedule_cancel",
     // ── Workflows ──
     "workflow_create",
     "workflow_list",
@@ -80,6 +105,7 @@ const TOOL_NAMES = [
     // ── Artifacts ──
     "artifact_send",
     "artifact_edit",
+    "artifact_read",
 ] as const;
 
 // ── Derived types and arrays ──
@@ -91,4 +117,3 @@ export const DISCORD_TOOL_NAMES = [...TOOL_NAMES] as DiscordToolName[];
 export const T = Object.fromEntries(
     DISCORD_TOOL_NAMES.map((n) => [n, n]),
 ) as { readonly [K in DiscordToolName]: K };
-

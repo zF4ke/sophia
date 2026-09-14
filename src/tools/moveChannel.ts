@@ -33,21 +33,21 @@ export const moveChannelTool: ToolDefinition = {
     name: T.move_channel,
 
     catalog: {
-        effect: "write",
+        effect: "destructive",
         description:
-            "Move a channel to a new position or category. Write — requires admin approval.",
+            "Move a channel to a new position or category. Access-sensitive change; follows the requester action tier and approval mode.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Move a channel to a different position or category. This is a WRITE action that requires admin approval. Can be used to reorder channels or move them into/out of categories.",
+            "Move a channel to a different position or category. This is a access-sensitive action requiring the destructive tier that follows the requester action tier and approval mode. Can be used to reorder channels or move them into/out of categories.",
         parameters,
     },
 
     capability: {
         description:
-            "Move a channel to a different position or category. Write — requires admin approval.",
+            "Move a channel to a different position or category. Access-sensitive change; follows the requester action tier and approval mode.",
         inputSchema: z.object({
             channel_id: z.string().describe("Channel ID to move."),
             category_id: z
@@ -61,8 +61,8 @@ export const moveChannelTool: ToolDefinition = {
                 .describe("Sync permissions with category. Default: true."),
         }),
         outputSchema: z.any(),
-        sideEffectLevel: "write",
-        authRequirements: ["admin"],
+        sideEffectLevel: "destructive",
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist"],

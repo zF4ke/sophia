@@ -1,10 +1,16 @@
-name: Deploy landing to Pages
+name: Build and deploy Sophia handbook
 
 on:
   push:
     branches: [master]
     paths:
-      - 'landing/**'
+      - 'website/**'
+      - 'assets/**'
+      - 'docs/**'
+      - 'src/**'
+      - 'scripts/docs-reference.ts'
+      - 'resources/**'
+      - 'package*.json'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -25,11 +31,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            website/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: website
+      - id: pages
+        uses: actions/configure-pages@v5
         with:
           enablement: true
+      - run: npm run docs:build && npm run docs:check
+        env:
+          DOCS_SITE: ${{ steps.pages.outputs.origin }}
+          DOCS_BASE: ${{ steps.pages.outputs.base_path }}
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: landing
+          path: website/dist
       - id: deployment
         uses: actions/deploy-pages@v4

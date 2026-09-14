@@ -33,6 +33,8 @@ import {
 } from "@/discord/approval/ApprovalGate";
 import { getToolDisplay } from "@/tools/registry";
 import { SecurityService } from "@/security/SecurityService";
+import { DISCORD_TOOL_NAMES, type DiscordToolName } from "@/shared/discordTools";
+import { AccessPolicy } from "@/security/AccessPolicy";
 import type { ApprovalRequest, BatchApprovalRequest, BatchItemDecision } from "@/runtime/contracts";
 
 export const APPROVAL_CONFIRM_APPROVE_PREFIX = "approval:confirm_approve:";
@@ -41,6 +43,16 @@ export const APPROVAL_MODAL_PREFIX = "approval:modal:";
 
 export const BATCH_CONFIRM_APPROVE_PREFIX = "batch:confirm_approve:";
 export const BATCH_CONFIRM_CANCEL_PREFIX = "batch:confirm_cancel:";
+
+async function canDecide(interaction: Interaction, request?: ApprovalRequest | BatchApprovalRequest): Promise<boolean> {
+    await SecurityService.initialize();
+    if (!request || request.requesterId !== interaction.user.id) return false;
+    if ("items" in request) {
+        for (const item of request.items) if (!DISCORD_TOOL_NAMES.includes(item.toolName as DiscordToolName) || await AccessPolicy.decide(interaction.user.id, interaction.guild, "destructive", item.toolName as DiscordToolName) === "deny") return false;
+        return true;
+    }
+    return DISCORD_TOOL_NAMES.includes(request.toolName as DiscordToolName) && await AccessPolicy.decide(interaction.user.id, interaction.guild, request.sideEffectLevel, request.toolName as DiscordToolName) !== "deny";
+}
 
 function buildBatchDecisions(
     request: BatchApprovalRequest,
@@ -68,6 +80,16 @@ export async function handleApprovalInteraction(
     // ── Modal submission path (single + batch) ──
     if (interaction.isModalSubmit()) {
         const { customId } = interaction;
+
+        if (customId.startsWith(BATCH_MODAL_PREFIX) || customId.startsWith(APPROVAL_MODAL_PREFIX)) {
+            const request = customId.startsWith(BATCH_MODAL_PREFIX)
+                ? getPendingBatchApproval(customId.slice(BATCH_MODAL_PREFIX.length))?.request
+                : getPendingApproval(customId.slice(APPROVAL_MODAL_PREFIX.length))?.request;
+            if (!await canDecide(interaction, request)) {
+                await safeModalReply(interaction, "Não tens permissão para alterar esta aprovação.");
+                return true;
+            }
+        }
 
         if (customId.startsWith(BATCH_MODAL_PREFIX)) {
             return handleBatchModalSubmit(interaction);
@@ -158,8 +180,8 @@ export async function handleApprovalInteraction(
     }
 
     await SecurityService.initialize();
-    if (!SecurityService.isAdmin(interaction.user.id)) {
-        await safeReply(interaction, "❌ Apenas administradores podem aceitar ou recusar ações.");
+    if (!await canDecide(interaction, pending.request)) {
+        await safeReply(interaction, "Não tens permissão para decidir esta aprovação.");
         return true;
     }
 
@@ -398,8 +420,8 @@ async function handleBatchButton(interaction: ButtonInteraction): Promise<boolea
     }
 
     await SecurityService.initialize();
-    if (!SecurityService.isAdmin(interaction.user.id)) {
-        await safeReply(interaction, "❌ Apenas administradores podem aceitar ou recusar ações.");
+    if (!await canDecide(interaction, pending.request)) {
+        await safeReply(interaction, "Não tens permissão para decidir esta aprovação.");
         return true;
     }
 
@@ -521,9 +543,9 @@ async function handleBatchCategorySelect(interaction: StringSelectMenuInteractio
     }
 
     await SecurityService.initialize();
-    if (!SecurityService.isAdmin(interaction.user.id)) {
+    if (!await canDecide(interaction, pending.request)) {
         try {
-            await interaction.reply({ content: "❌ Apenas administradores podem aceitar ou recusar ações.", flags: MessageFlags.Ephemeral });
+            await interaction.reply({ content: "Não tens permissão para decidir esta aprovação.", flags: MessageFlags.Ephemeral });
         } catch (error) {
             if (!isUnknownInteractionError(error)) throw error;
         }

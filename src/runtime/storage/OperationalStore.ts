@@ -5,6 +5,8 @@ import type { Client, InArgs } from "@libsql/client";
 import { getAppConfig } from "@/app/AppConfig";
 import { FileSystemService } from "@/shared/storage/FileSystemService";
 import { OPERATIONAL_SCHEMA_VERSION } from "@/runtime/storage/schema";
+import { knowledgeStore } from "@/memory/KnowledgeStore";
+import { ProductStore } from "./ProductStore";
 
 async function wait(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -57,7 +59,10 @@ export class OperationalStore {
 
     public static async initialize(): Promise<void> {
         if (!this.initPromise) {
-            this.initPromise = this.initializeInternal();
+            this.initPromise = Promise.all([
+                knowledgeStore.migrateLegacy(getAppConfig().runtime.operationalDbPath),
+                ProductStore.migrateLegacy(getAppConfig().runtime.operationalDbPath),
+            ]).then(() => this.initializeInternal());
         }
 
         await this.initPromise;
@@ -82,6 +87,16 @@ export class OperationalStore {
             this.client = null;
         }
         this.initPromise = null;
+    }
+
+    public static async clearRetrievalData(): Promise<void> {
+        await this.initialize();
+        // Preserve schemas and open handles. SQLite serializes this transaction
+        // with crawlers; Windows does not need to unlink a mapped database file.
+        await this.getClient().batch([
+            "message_chunks", "messages", "channels", "index_state", "channel_crawl_state", "crawl_queue",
+            "tool_runs", "runtime_runs", "trace_events", "conversation_messages",
+        ].map(table => `DELETE FROM ${table}`), "write");
     }
 
     private static async initializeInternal(): Promise<void> {

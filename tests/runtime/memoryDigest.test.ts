@@ -1,86 +1,22 @@
-import path from "path";
-import { beforeEach, describe, expect, it } from "vitest";
-import { SettingsService } from "@/app/SettingsService";
-import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildMemoryDigest } from "@/runtime/memoryDigest";
-import { memoryRememberTool } from "@/tools/longTermMemory";
-import type { CapabilityContext } from "@/tools/types";
-
-function context(guildId: string | null, actorId: string | null): CapabilityContext {
-    return {
-        guild: guildId ? ({ id: guildId } as any) : null,
-        question: "digest test",
-        actorId,
-    } as CapabilityContext;
-}
-
-async function remember(
-    guildId: string | null,
-    actorId: string | null,
-    args: { key: string; value: string; scope?: string },
-) {
-    return memoryRememberTool.capability.run(context(guildId, actorId), args as any);
-}
-
-describe("buildMemoryDigest", () => {
-    beforeEach(async () => {
-        const operationalDbPath = path.join(
-            process.cwd(),
-            "storage",
-            "test-memory",
-            `digest-${Date.now()}-${Math.random()}.sqlite`,
-        );
-        const checkpointDbPath = path.join(
-            process.cwd(),
-            "storage",
-            "test-memory",
-            `digest-checkpoint-${Date.now()}-${Math.random()}.sqlite`,
-        );
-        process.env.DISCORD_TOKEN = "test-token";
-        process.env.OPENROUTER_API_KEY = "test-key";
-        SettingsService.update({
-            runtime: {
-                ...SettingsService.load().runtime,
-                operationalDbPath,
-                checkpointDbPath,
-            },
-        });
-        await DiscordMemoryService.resetForTests();
+import { knowledgeStore } from "@/memory/KnowledgeStore";
+afterEach(() => vi.restoreAllMocks());
+describe("memory discovery hint", () => {
+    it("passes the complete audience and includes labels without embedding private fact values", async () => {
+        vi.spyOn(knowledgeStore, "identity").mockResolvedValue({ id: "one-sophia", name: "Sophia" });
+        const search = vi.spyOn(knowledgeStore, "search").mockResolvedValue([{ key: "Deployment", value: "private-fact" }] as never);
+        const hint = await buildMemoryDigest("g1", "u1", "c1");
+        expect(search).toHaveBeenCalledWith({ guildId: "g1", actorId: "u1", channelId: "c1" }, "", 5);
+        expect(hint).toContain("Deployment");
+        expect(hint).toContain("one-sophia");
+        expect(hint).not.toContain("private-fact");
     });
-
-    it("returns an empty-state hint when nothing is saved", async () => {
-        const digest = await buildMemoryDigest("g1", "u1");
-        expect(digest).toContain("No long-term memories saved yet");
-        expect(digest).toContain("memory_remember");
-    });
-
-    it("summarizes counts and recent keys without leaking other users' memories", async () => {
-        await remember("g1", null, { key: "deploy-checklist", value: "run pnpm build then deploy" });
-        await remember("g1", null, { key: "owner-prefs", value: "prefers respostas curtas" });
-        await remember("g1", null, { key: "server-rule", value: "sem politica no geral" });
-        await remember("g1", "u1", { key: "alice-pref", value: "alice likes night mode", scope: "user" });
-        await remember("g1", "u2", { key: "bob-pref", value: "bob likes light mode", scope: "user" });
-
-        const digest = await buildMemoryDigest("g1", "u1");
-        expect(digest).toContain("3 shared, 1 from this user");
-        expect(digest).toContain("deploy-checklist");
-        expect(digest).toContain("alice-pref");
-        expect(digest).not.toContain("bob-pref");
-    });
-
-    it("caps the preview length", async () => {
-        await remember("g1", null, {
-            key: "long-memory-key-that-keeps-going-and-going-and-going",
-            value: "x".repeat(300),
-        });
-
-        const digest = await buildMemoryDigest("g1", "u1");
-        expect(digest.length).toBeLessThan(600);
-        expect(digest).toContain("long-memory-key-that-keeps-going-and-going-and-going".slice(0, 40));
-    });
-
-    it("is not available in DMs", async () => {
-        const digest = await buildMemoryDigest(null, "u1");
-        expect(digest).toContain("Not available in DMs.");
+    it("supports authenticated DMs and reports unavailable storage honestly", async () => {
+        vi.spyOn(knowledgeStore, "identity").mockResolvedValue({ id: "one-sophia", name: "Sophia" });
+        vi.spyOn(knowledgeStore, "search").mockResolvedValue([]);
+        expect(await buildMemoryDigest(null, "u1", "dm")).toContain("memory_remember");
+        vi.spyOn(knowledgeStore, "search").mockRejectedValue(new Error("Disk unavailable"));
+        expect(await buildMemoryDigest(null, "u1", "dm")).toBe("Memory status: unavailable.");
     });
 });

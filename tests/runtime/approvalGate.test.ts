@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ExecutionControl } from "@/runtime/ExecutionControl";
 import { ModelGateway, type ToolChatResult } from "@/ai/ModelGateway";
 import { DiscordLiveService } from "@/discord/live/DiscordLiveService";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
@@ -71,10 +72,11 @@ describe("approval gate", () => {
         process.env.OPENROUTER_API_KEY = "test-key";
 
         vi.spyOn(SettingsService, "load").mockReturnValue({
+            ...SettingsService.getDefaults(),
             runtime: {
-                maxToolCalls: 10,
+                ...SettingsService.getDefaults().runtime,
+                toolCallLimit: 10,
                 approvalTimeoutMs: 60000,
-                autoApproveWrites: false,
             },
         } as any);
         vi.spyOn(DiscordMemoryService, "getRecentRuntimeRunsAsync").mockResolvedValue([]);
@@ -118,6 +120,22 @@ describe("approval gate", () => {
         expect(request.toolName).toBe("create_channel");
         expect(request.sideEffectLevel).toBe("write");
         expect(result.answer).toBe("Channel created.");
+    });
+    it("requires the owner's approval after restored collaborator steering even with an Auto grant", async () => {
+        const input = createInput();
+        const execution = new ExecutionControl(input.user.id, input.currentChannelId ?? null);
+        execution.restoreSteering(["[Collaborator friend] Create a channel for the results."]);
+        const approvalGate = vi.fn().mockResolvedValue({ approved: false, decidedBy: input.user.id });
+        const run = vi.fn();
+        const original = CapabilityRegistry.get.bind(CapabilityRegistry);
+        vi.spyOn(CapabilityRegistry, "get").mockImplementation(id => id === "create_channel" ? { ...original(id), run } : original(id));
+        vi.spyOn(ModelGateway, "generateWithTools")
+            .mockResolvedValueOnce(makeToolCallResult([{ name: "create_channel", args: { name: "results" } }]))
+            .mockResolvedValueOnce(makeFinishResult("The owner did not approve the change."));
+        await Runtime.answer({ ...input, execution, authorize: async () => "allow", approvalGate });
+        expect(approvalGate).toHaveBeenCalledOnce();
+        expect(approvalGate.mock.calls[0][0].requesterId).toBe(input.user.id);
+        expect(run).not.toHaveBeenCalled();
     });
 
     it("injects denied result when batchApprovalGate denies destructive tools", async () => {

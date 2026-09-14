@@ -1,0 +1,70 @@
+import { expect, it } from "vitest";
+import { knowledgeStore } from "@/memory/KnowledgeStore";
+import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { OperationalStore } from "@/runtime/storage/OperationalStore";
+import type { StoredMessage } from "@/memory/types";
+import { taskStore } from "@/runtime/tasks/TaskStore";
+import { ExecutionControl } from "@/runtime/ExecutionControl";
+it("invalidates remembered facts and an in-flight dream when its source is deleted", async () => {
+    const audience = { actorId: "owner", guildId: "g", channelId: "c" };
+    const source = "https://discord.com/channels/g/c/deleted";
+    await knowledgeStore.remember(audience, { key: "Decision", value: "Use blue", scope: "channel", sources: [source] });
+    await knowledgeStore.enqueueDream("delete-in-flight", { audience, question: "Use blue", answer: "Okay", sources: [source] });
+    expect(await knowledgeStore.nextDream()).not.toBeNull();
+    await knowledgeStore.invalidateSource(source);
+    await knowledgeStore.finishDream("delete-in-flight", [{ key: "Different label", value: "Use blue" }]);
+    expect(await knowledgeStore.search(audience)).toEqual([]);
+    await expect(knowledgeStore.remember(audience, { key: "Paraphrase", value: "Use blue", scope: "channel", sources: [source] })).rejects.toThrow("source was deleted");
+    await knowledgeStore.enqueueDream("retry-source", { audience, question: "Use blue", answer: "Okay", sources: [source] });
+    expect(await knowledgeStore.nextDream()).toBeNull();
+});
+it("does not re-index a deleted message from a stale in-flight crawl", async () => {
+    process.env.DISCORD_TOKEN = "test";
+    process.env.OPENROUTER_API_KEY = "test";
+    await DiscordMemoryService.deleteMessage("gone", "channel", "guild");
+    await DiscordMemoryService.ingestStoredMessage({ id: "gone", channelId: "channel", guildId: "guild", jumpLink: "https://discord.com/channels/guild/channel/gone" } as StoredMessage);
+    expect((await OperationalStore.getClient().execute("SELECT id FROM messages WHERE id='gone'")).rows).toEqual([]);
+});
+it("replaces edited evidence, blocks stale crawls and late writes, and permits a fresh revision including a reversion", async () => {
+    const original: StoredMessage = { id: "edited-source", guildId: "g", channelId: "c", channelName: "Channel", authorId: "owner", authorName: "Owner",
+        content: "Use blue", attachmentsJson: "[]", referenceMessageId: null, createdTimestamp: 1, jumpLink: "https://discord.com/channels/g/c/edited-source", isBot: 0 };
+    await DiscordMemoryService.ingestStoredMessage(original);
+    const audience = { actorId: "owner", guildId: "g", channelId: "c" };
+    const taskId = await taskStore.create({ ...audience, conversationId: "edit", objective: "Describe the chosen color" });
+    await taskStore.recordEvidenceSources({ ...audience, taskId, requestId: "before-edit" }, [{ messageId: original.id, channelId: "c", guildId: "g", sourceUrl: original.jumpLink }]);
+    const workspace = await taskStore.workspace(taskId, "owner", "c", "g");
+    const corpora = await taskStore.corpus(taskId, "owner", "c", "g");
+    const corpus = await corpora.create({ channelIds: ["c"] });
+    await knowledgeStore.remember(audience, { key: "Original color", value: "Blue", scope: "channel", sources: [original.jumpLink] });
+    const execution = new ExecutionControl("owner", "c");
+    execution.watchSources([original.id]);
+    const release = execution.register();
+    try {
+        await DiscordMemoryService.ingestStoredMessage({ ...original, content: "Use red", editedTimestamp: 100 });
+        expect(execution.sourceInvalidated).toBe(true);
+        expect(await taskStore.requestSources("before-edit")).toBeNull();
+        expect(await knowledgeStore.search(audience)).toEqual([]);
+        await expect(workspace.addRequestNote({ requestId: "before-edit", threadId: "edit", kind: "note", label: null, body: "Use blue" })).rejects.toThrow();
+        await expect(taskStore.replaceFiles(taskId, "owner", "c", "g", [{ path: "late.txt", data: Buffer.from("blue").toString("base64"), sourceMessageIds: [original.id] }], "before-edit")).rejects.toThrow();
+        await DiscordMemoryService.ingestStoredMessage(original);
+        const row = (await OperationalStore.getClient().execute("SELECT content,jump_link FROM messages WHERE id='edited-source'")).rows[0];
+        expect(row.content).toBe("Use red");
+        const redSource = String(row.jump_link);
+        expect(redSource).toContain("#sophia-revision=100-");
+        await expect(corpora.append(corpus.id, 0, { messages: [{ ...original, messageId: original.id }], cursor: null, coverage: null })).rejects.toThrow();
+        expect((await corpora.status(corpus.id)).revision).toBe(0);
+        await corpora.append(corpus.id, 0, { messages: [{ ...original, content: "Use red", jumpLink: redSource, messageId: original.id }], cursor: null, coverage: null });
+        await knowledgeStore.remember(audience, { key: "Current color", value: "Red", scope: "channel", sources: [redSource] });
+        await DiscordMemoryService.ingestStoredMessage({ ...original, editedTimestamp: 200 });
+        await DiscordMemoryService.ingestStoredMessage({ ...original, content: "An unseen older edit", editedTimestamp: 150 });
+        const reverted = (await OperationalStore.getClient().execute("SELECT content,jump_link FROM messages WHERE id='edited-source'")).rows[0];
+        expect(reverted.content).toBe("Use blue");
+        expect(await knowledgeStore.isSourceInvalid(redSource)).toBe(true);
+        expect(await knowledgeStore.isSourceInvalid(String(reverted.jump_link))).toBe(false);
+        await knowledgeStore.remember(audience, { key: "Reverted color", value: "Blue", scope: "channel", sources: [String(reverted.jump_link)] });
+        await DiscordMemoryService.deleteMessage(original.id, "c", "g");
+        expect(await knowledgeStore.search(audience)).toEqual([]);
+        expect(await knowledgeStore.isSourceInvalid(String(reverted.jump_link).replace("discord.com", "canary.discord.com"))).toBe(true);
+        await expect(knowledgeStore.remember(audience, { key: "Late paraphrase", value: "Blue", scope: "channel", sources: [String(reverted.jump_link)] })).rejects.toThrow();
+    } finally { release(); }
+});

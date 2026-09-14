@@ -30,19 +30,19 @@ export const clearMessagesTool: ToolDefinition = {
     catalog: {
         effect: "destructive",
         description:
-            "Delete messages from a Discord channel. Destructive — requires admin approval with confirmation modal.",
+            "Delete messages from a Discord channel. Destructive — follows the requester action tier and approval mode with confirmation modal.",
         evidenceRole: "discovery_only",
     },
 
     schema: {
         description:
-            "Delete messages from a channel. This is a DESTRUCTIVE action that requires admin approval before execution. Use only when explicitly asked to delete messages.",
+            "Delete messages from a channel. This is a DESTRUCTIVE action that follows the requester action tier and approval mode before execution. Use only when explicitly asked to delete messages.",
         parameters,
     },
 
     capability: {
         description:
-            "Delete messages from a Discord channel. Destructive — requires admin approval with confirmation modal.",
+            "Delete messages from a Discord channel. Destructive — follows the requester action tier and approval mode with confirmation modal.",
         inputSchema: z.object({
             channel_id: z.string().describe("Channel ID to delete messages from."),
             count: z
@@ -58,7 +58,7 @@ export const clearMessagesTool: ToolDefinition = {
         }),
         outputSchema: z.any(),
         sideEffectLevel: "destructive",
-        authRequirements: ["admin"],
+        authRequirements: ["actor_grant"],
         costClass: "normal",
         latencyClass: "medium",
         preconditions: ["guild context should exist", "channel must be accessible"],
@@ -93,6 +93,7 @@ export const clearMessagesTool: ToolDefinition = {
                     data: { deletedCount: 0 },
                 };
             }
+            context.execution?.expectSourceDeletion([...messages.keys()]);
             const deleted = await (
                 channel as import("discord.js").TextChannel
             ).bulkDelete(messages, true);

@@ -15,7 +15,8 @@ import { SecurityService } from "@/security/SecurityService";
 import type { BotClient } from "@/shared/appTypes";
 
 export type RuntimeSettingKey =
-    | "maxToolCalls"
+    | "toolCallLimit"
+    | "modelConcurrency"
     | "maxRepeatedCallSignature"
     | "maxPriorTurns"
     | "maxChannelMessages"
@@ -25,14 +26,10 @@ export type RuntimeSettingKey =
     | "retrievalHistoryLimit"
     | "retrievalContextWindow"
     | "approvalTimeoutMs"
-    | "longTaskMaxToolCalls"
-    | "longTaskEvidenceSliceFloor"
-    | "longTaskRetrievalInlineCrawlBatches";
+    | "longTaskEvidenceSliceFloor";
 
 const LONG_TASK_KEYS: RuntimeSettingKey[] = [
-    "longTaskMaxToolCalls",
     "longTaskEvidenceSliceFloor",
-    "longTaskRetrievalInlineCrawlBatches",
 ];
 
 function isLongTaskKey(key: RuntimeSettingKey): boolean {
@@ -44,12 +41,8 @@ export function getRuntimeSettingValue(
     key: RuntimeSettingKey,
 ): number {
     switch (key) {
-        case "longTaskMaxToolCalls":
-            return settings.runtime.longTask.maxToolCalls;
         case "longTaskEvidenceSliceFloor":
             return settings.runtime.longTask.evidenceSliceFloor;
-        case "longTaskRetrievalInlineCrawlBatches":
-            return settings.runtime.longTask.retrievalInlineCrawlBatches;
         default:
             return settings.runtime[key] as number;
     }
@@ -63,14 +56,8 @@ export function buildRuntimeSettingPatch(
     if (isLongTaskKey(key)) {
         const longTask = { ...current.runtime.longTask };
         switch (key) {
-            case "longTaskMaxToolCalls":
-                longTask.maxToolCalls = value;
-                break;
             case "longTaskEvidenceSliceFloor":
                 longTask.evidenceSliceFloor = value;
-                break;
-            case "longTaskRetrievalInlineCrawlBatches":
-                longTask.retrievalInlineCrawlBatches = value;
                 break;
         }
         return { runtime: { ...current.runtime, longTask } };
@@ -78,29 +65,29 @@ export function buildRuntimeSettingPatch(
     return { runtime: { ...current.runtime, [key]: value } };
 }
 
-export type SettingsTab = "model" | "runtime" | "compaction" | "longTask" | "personality";
+export type SettingsTab = "model" | "runtime" | "compaction" | "longTask" | "voice" | "features";
 
-type PersonalityMode = BotSettings["personality"];
+type VoiceMode = BotSettings["voice"];
 
-const PERSONALITY_OPTIONS: Array<{
-    value: PersonalityMode;
+const VOICE_OPTIONS: Array<{
+    value: VoiceMode;
     label: string;
     description: string;
 }> = [
     {
-        value: "default",
-        label: "Default",
+        value: "balanced",
+        label: "Equilibrada",
         description: "Calorosa e direta. A voz base.",
     },
     {
-        value: "mixed",
-        label: "Mixed (recomendado)",
+        value: "casual",
+        label: "Descontraída",
         description: "Confiante, curiosa e com humor seco. Afiada sem ser fria.",
     },
     {
-        value: "classic",
-        label: "Classic",
-        description: "Dominante e assertiva. Séria, sem emoji, sem filler. A personalidade original da Sophia.",
+        value: "formal",
+        label: "Formal",
+        description: "Mais formal, com explicações diretas e completas.",
     },
 ];
 type SettingsPanelOptions = {
@@ -151,11 +138,17 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
         longDescription: "Quantidade de mensagens vizinhas carregadas ao usar aroundMessageId.",
         presets: [8, 15, 25, 40],
     },
-    maxToolCalls: {
-        label: "🛠️ Máx. de ferramentas",
-        shortDescription: "Limite de ferramentas por turno.",
-        longDescription: "Limite rígido de execuções de ferramentas por turno.",
-        presets: [2, 4, 6, 8, 10, 12, 15, 20, 25, 30],
+    toolCallLimit: {
+        label: "Limite opcional de ferramentas",
+        shortDescription: "0 permite continuar sem limite de chamadas.",
+        longDescription: "Limite explícito por execução, incluindo continuações. 0 desativa. Ao atingir o limite, a tarefa fica incompleta.",
+        presets: [0, 100, 500, 1000],
+    },
+    modelConcurrency: {
+        label: "Pedidos simultâneos ao modelo",
+        shortDescription: "Capacidade partilhada entre utilizadores.",
+        longDescription: "Até este número de pedidos em simultâneo, com um por utilizador. Conversas têm prioridade sobre sonhos em espera. Não limita o trabalho total de uma tarefa.",
+        presets: [1, 2, 4, 8],
     },
     maxRepeatedCallSignature: {
         label: "🔁 Limite de repetição",
@@ -171,27 +164,15 @@ const RUNTIME_SETTING_META: Record<RuntimeSettingKey, RuntimeSettingMeta> = {
     },
     approvalTimeoutMs: {
         label: "✅ Tempo de aprovação",
-        shortDescription: "Tempo máximo à espera de admin.",
+        shortDescription: "Tempo máximo à espera de aprovação.",
         longDescription: "Tempo máximo de espera por aprovação de ações write/destructive antes de auto-recusa.",
         presets: [30000, 60000, 120000, 300000],
-    },
-    longTaskMaxToolCalls: {
-        label: "🛠️ Long task: máx. ferramentas",
-        shortDescription: "Cap de ferramentas em long-task.",
-        longDescription: "Quando o modelo chama start_long_task, ou quando o runtime eleva o orçamento automaticamente (corpus explícito grande ou paginação longa), o limite de chamadas passa para este valor.",
-        presets: [50, 100, 150, 200, 300, 500, 750, 1000],
     },
     longTaskEvidenceSliceFloor: {
         label: "📚 Long task: floor de evidência",
         shortDescription: "Piso da fatia de evidência em long-task.",
         longDescription: "Valor mínimo para maxEvidenceSlice ao iniciar long-task, garantindo que retrievals grandes não sejam cortados.",
         presets: [64, 96, 128, 192, 256],
-    },
-    longTaskRetrievalInlineCrawlBatches: {
-        label: "🌊 Long task: crawl inline por retrieve",
-        shortDescription: "Batches síncronos quando histórico é parcial.",
-        longDescription: "Quantos batches de 100 mensagens são buscados síncronamente por retrieve_messages quando o canal ainda não está totalmente indexado.",
-        presets: [0, 1, 3, 5, 10],
     },
 };
 
@@ -285,10 +266,10 @@ function buildTabsRow(tab: SettingsTab, idPrefix: string) {
             .setStyle(tab === "longTask" ? ButtonStyle.Primary : ButtonStyle.Secondary)
             .setDisabled(tab === "longTask"),
         new ButtonBuilder()
-            .setCustomId(`${idPrefix}:tab:personality`)
-            .setLabel(padTabLabel("Personalidade"))
-            .setStyle(tab === "personality" ? ButtonStyle.Primary : ButtonStyle.Secondary)
-            .setDisabled(tab === "personality")
+            .setCustomId(`${idPrefix}:tab:voice`)
+            .setLabel(padTabLabel("Voz"))
+            .setStyle(tab === "voice" ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(tab === "voice")
     );
 }
 
@@ -375,12 +356,8 @@ export function buildSettingsPanel(
                 .addActionRowComponents(
                     new ActionRowBuilder<ButtonBuilder>().addComponents(
                         new ButtonBuilder()
-                            .setCustomId(`${idPrefix}:auto-approve-writes:toggle`)
-                            .setLabel(settings.runtime.autoApproveWrites ? "Desativar autoaprovação" : "Ativar autoaprovação")
-                            .setStyle(settings.runtime.autoApproveWrites ? ButtonStyle.Secondary : ButtonStyle.Success),
-                        new ButtonBuilder()
                             .setCustomId(`${idPrefix}:reset`)
-                            .setLabel("Repor padrões")
+                            .setLabel("Repor ajustes de execução")
                             .setStyle(ButtonStyle.Danger)
                     )
                 )
@@ -430,9 +407,9 @@ export function buildSettingsPanel(
         );
     }
 
-    if (tab === "personality") {
-        const current = settings.personality;
-        const descriptionLines = PERSONALITY_OPTIONS.map((opt) => {
+    if (tab === "voice") {
+        const current = settings.voice;
+        const descriptionLines = VOICE_OPTIONS.map((opt) => {
             const mark = opt.value === current ? "☑️" : "▫️";
             return `${mark} **${opt.label}** — ${opt.description}`;
         });
@@ -441,7 +418,7 @@ export function buildSettingsPanel(
             new ContainerBuilder()
                 .setAccentColor(SETTINGS_CONTAINER_ACCENT)
                 .addTextDisplayComponents(
-                    new TextDisplayBuilder().setContent("## Configurações — Personalidade"),
+                    new TextDisplayBuilder().setContent("## Configurações — Voz"),
                 )
                 .addTextDisplayComponents(
                     new TextDisplayBuilder().setContent(
@@ -454,10 +431,10 @@ export function buildSettingsPanel(
                 .addActionRowComponents(
                     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
                         new StringSelectMenuBuilder()
-                            .setCustomId(`${idPrefix}:personality:select`)
-                            .setPlaceholder("Escolher personalidade")
+                            .setCustomId(`${idPrefix}:voice:select`)
+                            .setPlaceholder("Escolher estilo")
                             .addOptions(
-                                PERSONALITY_OPTIONS.map((opt) => ({
+                                VOICE_OPTIONS.map((opt) => ({
                                     label: opt.label.slice(0, 100),
                                     value: opt.value,
                                     description: opt.description.slice(0, 100),
@@ -482,7 +459,7 @@ export function buildSettingsPanel(
                 )
                 .addTextDisplayComponents(
                     new TextDisplayBuilder().setContent(
-                        "Valores aplicados quando o modelo chama `start_long_task` ou quando o runtime eleva o orçamento automaticamente (corpus explícito grande ou paginação longa). Estimativas do modelo são ignoradas."
+                        "Contexto e recuperação de mensagens para investigações maiores. Estes ajustes não limitam a duração do pedido nem exigem estimativas do modelo."
                     )
                 )
                 .addTextDisplayComponents(
@@ -508,7 +485,20 @@ export function buildSettingsPanel(
         );
     }
 
+    if (tab === "features") {
+        const entries = [
+            { key: "dreaming", label: "Memória automática", enabled: settings.memory.dreamingEnabled, description: "Consolida conversas entregues e propõe procedimentos privados durante períodos livres." },
+            { key: "sandbox", label: "Ficheiros e execução", enabled: settings.sandbox.enabled, description: "Permite trabalhar em ficheiros num contentor isolado. Requer Docker e a imagem local." },
+            { key: "scheduling", label: "Agendamentos", enabled: settings.scheduling.enabled, description: "Executa os acompanhamentos guardados. Pausar este serviço preserva os agendamentos." },
+        ];
+        const container = new ContainerBuilder().setAccentColor(SETTINGS_CONTAINER_ACCENT)
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent("## Memória, ficheiros e agendamentos"));
+        for (const entry of entries) container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`**${entry.label}: ${entry.enabled ? "ativo" : "pausado"}**\n${entry.description}`))
+            .addActionRowComponents(new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId(`${idPrefix}:${entry.key}:toggle`).setLabel(`${entry.enabled ? "Pausar" : "Ativar"} ${entry.label.toLowerCase()}`).setStyle(ButtonStyle.Secondary)));
+        components.push(container);
+    }
     components.push(buildTabsRow(tab, idPrefix));
+    components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId(`${idPrefix}:tab:features`).setLabel("Memória e ferramentas").setStyle(tab === "features" ? ButtonStyle.Primary : ButtonStyle.Secondary).setDisabled(tab === "features"), new ButtonBuilder().setCustomId(`${idPrefix}:tab:costs`).setLabel("Custos").setStyle(ButtonStyle.Secondary)));
 
     return {
         components,
@@ -571,7 +561,8 @@ export default {
         .setDescription("Configurar modelo e runtime da Sophia")
         .setContexts(0, 1, 2)
         .setIntegrationTypes(0)
-        .setDMPermission(false),
+        .setDMPermission(false)
+        .addBooleanOption(option => option.setName("ephemeral").setDescription("Mostrar este painel só para ti (por padrão aparece no canal)")),
     async execute(interaction: ChatInputCommandInteraction, _client: BotClient) {
         await SecurityService.initialize();
 
@@ -584,7 +575,7 @@ export default {
         }
 
         const settings = SettingsService.load();
-        await interaction.reply(buildSettingsPanel(settings, "model"));
+        await interaction.reply({ ...buildSettingsPanel(settings, "model"), flags: MessageFlags.IsComponentsV2 | (interaction.options.getBoolean("ephemeral") ? MessageFlags.Ephemeral : 0) });
     },
 };
 
@@ -594,27 +585,33 @@ export function handleSettingsInteraction(customId: string): {
         | "tab_runtime"
         | "tab_compaction"
         | "tab_long_task"
-        | "tab_personality"
+        | "tab_voice"
         | "model_select"
         | "compaction_model_select"
         | "runtime_pick"
         | "runtime_set"
-        | "personality_select"
-        | "auto_approve_writes_toggle"
+        | "voice_select"
+        | "dreaming_toggle"
+        | "tab_features"
+        | "sandbox_toggle"
+        | "scheduling_toggle"
         | "reset"
         | null;
     key?: RuntimeSettingKey;
 } {
+    if (customId === "settings:tab:features") return { type: "tab_features" };
+    if (customId === "settings:sandbox:toggle") return { type: "sandbox_toggle" };
+    if (customId === "settings:scheduling:toggle") return { type: "scheduling_toggle" };
     if (customId === "settings:tab:model") return { type: "tab_model" };
     if (customId === "settings:tab:runtime") return { type: "tab_runtime" };
     if (customId === "settings:tab:compaction") return { type: "tab_compaction" };
     if (customId === "settings:tab:longTask") return { type: "tab_long_task" };
-    if (customId === "settings:tab:personality") return { type: "tab_personality" };
-    if (customId === "settings:personality:select") return { type: "personality_select" };
+    if (customId === "settings:tab:voice") return { type: "tab_voice" };
+    if (customId === "settings:voice:select") return { type: "voice_select" };
     if (customId === "settings:model:select") return { type: "model_select" };
     if (customId === "settings:compaction:model") return { type: "compaction_model_select" };
     if (customId === "settings:runtime") return { type: "runtime_pick" };
-    if (customId === "settings:auto-approve-writes:toggle") return { type: "auto_approve_writes_toggle" };
+    if (customId === "settings:dreaming:toggle") return { type: "dreaming_toggle" };
     if (customId === "settings:reset") return { type: "reset" };
     if (customId.startsWith("settings:runtime:set:")) {
         return {
@@ -634,27 +631,33 @@ export function parseSettingsInteraction(
         | "tab_runtime"
         | "tab_compaction"
         | "tab_long_task"
-        | "tab_personality"
+        | "tab_voice"
         | "model_select"
         | "compaction_model_select"
         | "runtime_pick"
         | "runtime_set"
-        | "personality_select"
-        | "auto_approve_writes_toggle"
+        | "voice_select"
+        | "dreaming_toggle"
+        | "tab_features"
+        | "sandbox_toggle"
+        | "scheduling_toggle"
         | "reset"
         | null;
     key?: RuntimeSettingKey;
 } {
+    if (customId === `${idPrefix}:tab:features`) return { type: "tab_features" };
+    if (customId === `${idPrefix}:sandbox:toggle`) return { type: "sandbox_toggle" };
+    if (customId === `${idPrefix}:scheduling:toggle`) return { type: "scheduling_toggle" };
     if (customId === `${idPrefix}:tab:model`) return { type: "tab_model" };
     if (customId === `${idPrefix}:tab:runtime`) return { type: "tab_runtime" };
     if (customId === `${idPrefix}:tab:compaction`) return { type: "tab_compaction" };
     if (customId === `${idPrefix}:tab:longTask`) return { type: "tab_long_task" };
-    if (customId === `${idPrefix}:tab:personality`) return { type: "tab_personality" };
-    if (customId === `${idPrefix}:personality:select`) return { type: "personality_select" };
+    if (customId === `${idPrefix}:tab:voice`) return { type: "tab_voice" };
+    if (customId === `${idPrefix}:voice:select`) return { type: "voice_select" };
     if (customId === `${idPrefix}:model:select`) return { type: "model_select" };
     if (customId === `${idPrefix}:compaction:model`) return { type: "compaction_model_select" };
     if (customId === `${idPrefix}:runtime`) return { type: "runtime_pick" };
-    if (customId === `${idPrefix}:auto-approve-writes:toggle`) return { type: "auto_approve_writes_toggle" };
+    if (customId === `${idPrefix}:dreaming:toggle`) return { type: "dreaming_toggle" };
     if (customId === `${idPrefix}:reset`) return { type: "reset" };
     if (customId.startsWith(`${idPrefix}:runtime:set:`)) {
         return {

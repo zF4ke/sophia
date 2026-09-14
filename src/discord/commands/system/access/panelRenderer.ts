@@ -26,6 +26,7 @@ import { ACCESS_POLICY_TARGET_DESCRIPTIONS, type AccessPolicyTarget } from "@/se
 import { SecurityService } from "@/security/SecurityService";
 import type { BotClient } from "@/shared/appTypes";
 import type { CommandConfig } from "@/security/types";
+import { SettingsService } from "@/app/SettingsService";
 
 type AccessRow = ActionRowBuilder<
     ButtonBuilder | StringSelectMenuBuilder | UserSelectMenuBuilder
@@ -38,6 +39,11 @@ function buildViewButtonsRow(currentView: AccessPanelView): ActionRowBuilder<But
             .setLabel("Visão geral")
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(currentView === "overview"),
+        new ButtonBuilder()
+            .setCustomId(ACCESS_VIEW_BUTTONS.grants)
+            .setLabel("Autorizações")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(currentView === "grants"),
         new ButtonBuilder()
             .setCustomId(ACCESS_VIEW_BUTTONS.admins)
             .setLabel("Admins")
@@ -87,6 +93,10 @@ async function buildOverviewBody(
     );
 
     return [
+        `**Servidores ativos:** ${SettingsService.load().guildAllowlist.length}`,
+        `**Mensagens diretas:** ${SettingsService.load().access.directMessages ? "ativas para utilizadores autorizados" : "desativadas"}`,
+        `**Autorizações:** ${SettingsService.load().access.users.length} de utilizadores · ${SettingsService.load().access.roles.length} de cargos`,
+        "Usa `/access user:... level:... mode:...` para gerir autorizações. `enable_here` controla este servidor; `enable_dms` controla mensagens diretas. Leituras não pedem confirmação. Alterações respeitam o nível e o modo de cada autorização.",
         `**Administradores:** ${panelData.admins.length}`,
         `**Moderadores:** ${panelData.moderators.length}`,
         `**Comandos públicos:** ${publicCommands}/${panelData.commandNames.length}`,
@@ -252,9 +262,32 @@ export async function buildAccessPanel(
         admins: "## Administradores",
         moderators: "## Moderadores",
         commands: "## Comandos",
+        grants: "## Autorizações",
     };
     const rows: AccessRow[] = [buildViewButtonsRow(state.view)];
     let body = "";
+
+    if (state.view === "grants") {
+        const access = SettingsService.load().access;
+        const grants = [
+            ...access.users.map(g => ({ ...g, target: `Utilizador ${g.userId}` })),
+            ...access.roles.map(g => ({ ...g, target: `Cargo ${g.roleId}` })),
+        ];
+        const levels = { read: "leitura", write: "alterações", destructive: "destrutivas" };
+        const entries = grants.map(g => {
+            const expiry = g.expiresAt ? `${Date.parse(g.expiresAt) <= Date.now() ? "expirada" : "expira"} <t:${Math.floor(Date.parse(g.expiresAt) / 1000)}:f>` : "sem validade";
+            return `${g.target} · ${g.guildId ? `servidor ${g.guildId}` : "global"}\n${levels[g.level]} · ${g.mode === "ask" ? "pedir permissão" : "autoaprovar"} · ${expiry}`;
+        });
+        entries.push(...(access.rules ?? []).map(r => `Regra · ${r.subject === "user" ? "Utilizador" : "Cargo"} ${r.subjectId} · ${r.guildId ?? "global"}\n${r.tool ?? "todas as ferramentas"} · ${r.tier ?? "todos os níveis"} · ${r.decision}`));
+        const pages = Math.max(1, Math.ceil(entries.length / 10));
+        const page = Math.min(pages - 1, Math.max(0, Math.floor(state.page ?? 0)));
+        body = entries.slice(page * 10, page * 10 + 10).join("\n\n") || "Nenhuma autorização configurada.";
+        body += `\n\nPágina ${page + 1}/${pages}. Usa /access para alterar ou remover uma autorização. Administradores e moderadores têm também os acessos descritos nas respetivas secções.`;
+        if (pages > 1) rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`access:view:grants:${page - 1}`).setLabel("Anterior").setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+            new ButtonBuilder().setCustomId(`access:view:grants:${page + 1}`).setLabel("Seguinte").setStyle(ButtonStyle.Secondary).setDisabled(page === pages - 1),
+        ));
+    }
 
     if (state.view === "overview") {
         body = await buildOverviewBody(client, panelData);
@@ -308,8 +341,6 @@ export async function buildAccessPanel(
     }
 
     const container = new ContainerBuilder()
-        // .setAccentColor(0x9aa7ff)
-        // change to a red
         .setAccentColor(0xff6961)
         .addTextDisplayComponents(
             new TextDisplayBuilder().setContent(titleByView[state.view]),

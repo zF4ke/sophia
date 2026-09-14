@@ -9,6 +9,8 @@ import {
     TextDisplayBuilder,
 } from "discord.js";
 import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
+import { assertReadableChannels } from "@/security/SourceAccess";
+import { taskStore } from "@/runtime/tasks/TaskStore";
 
 function formatMessageBody(content: string): string {
     const trimmed = content.trim();
@@ -58,6 +60,9 @@ export = {
             flags: ephemeral ? MessageFlags.Ephemeral : undefined,
         });
 
+        const audience = { client: interaction.client, privateResponse: ephemeral, destinationChannelId: interaction.channelId };
+        try { await assertReadableChannels(interaction.guild, interaction.user.id, [channel.id], audience); }
+        catch { await interaction.editReply({ content: "Não posso mostrar o histórico desse canal aqui. Verifica o teu acesso ou usa ephemeral:true." }); return; }
         const stored = await DiscordMemoryService.getNthHistoricalMessageAsync(channel.id, number);
         if (!stored) {
             await interaction.editReply({
@@ -76,6 +81,10 @@ export = {
             return;
         }
 
+        try {
+            await assertReadableChannels(interaction.guild, interaction.user.id, [channel.id], audience);
+            if (await taskStore.hasDeletedSources([stored.id])) throw new Error("Source deleted");
+        } catch { await interaction.editReply({ content: "Essa mensagem deixou de estar disponível." }); return; }
         await interaction.editReply({
             components: [
                 new ContainerBuilder()

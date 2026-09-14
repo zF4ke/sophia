@@ -8,7 +8,8 @@ import {
     SeparatorSpacingSize,
     StringSelectMenuBuilder,
     TextDisplayBuilder,
-    type SendableChannels,
+    type MessageCreateOptions,
+    type MessageEditOptions,
 } from "discord.js";
 import type {
     ApprovalRequest,
@@ -19,6 +20,8 @@ import type {
 } from "@/runtime/contracts";
 import { SettingsService } from "@/app/SettingsService";
 import { getToolDisplay } from "@/tools/registry";
+
+export interface ApprovalTransport { send(options: MessageCreateOptions): Promise<{ edit(options: MessageEditOptions): Promise<unknown> }> }
 
 // ── Single-item prefixes ──
 export const APPROVAL_APPROVE_PREFIX = "approval:approve:";
@@ -87,7 +90,7 @@ export function buildResolvedContainer(
                 : "`✏️ Recusado com correção`";
             break;
         case "timeout":
-            statusLine = `\`⏳ Recusado automaticamente após ${timeoutSec}s\``;
+            statusLine = `\`⏳ Sem decisão após ${timeoutSec}s\``;
             accentColor = 0x95a5a6;
             statusIcon = "⏳";
             break;
@@ -114,7 +117,7 @@ export function buildResolvedContainer(
         .addTextDisplayComponents(new TextDisplayBuilder().setContent(statusLine));
 }
 
-export function createProtectedBlockNotifier(channel: SendableChannels) {
+export function createProtectedBlockNotifier(channel: ApprovalTransport) {
     return async (request: ApprovalRequest): Promise<void> => {
         const container = buildResolvedContainer(request, "protected");
         try {
@@ -126,8 +129,9 @@ export function createProtectedBlockNotifier(channel: SendableChannels) {
     };
 }
 
-export function createApprovalGate(channel: SendableChannels) {
-    return async (request: ApprovalRequest): Promise<ApprovalResult> => {
+export function createApprovalGate(channel: ApprovalTransport) {
+    return async (request: ApprovalRequest, signal?: AbortSignal): Promise<ApprovalResult> => {
+        signal?.throwIfAborted();
         const settings = SettingsService.load();
         const timeoutMs = settings.runtime.approvalTimeoutMs;
         const tool = getToolDisplay(request.toolName);
@@ -167,8 +171,7 @@ export function createApprovalGate(channel: SendableChannels) {
 
         return new Promise<ApprovalResult>((resolve) => {
             const timer = setTimeout(async () => {
-                pendingApprovals.delete(request.requestId);
-                resolve({ approved: false, decidedBy: "timeout", decidedAt: Date.now() });
+                resolvePendingApproval(request.requestId, { approved: false, decidedBy: "timeout", decidedAt: Date.now() });
 
                 const timeoutSec = Math.round(timeoutMs / 1000);
                 try {
@@ -178,7 +181,14 @@ export function createApprovalGate(channel: SendableChannels) {
                 } catch { /* message may have been deleted */ }
             }, timeoutMs);
 
-            pendingApprovals.set(request.requestId, { request, resolve, timer });
+            const onAbort = () => {
+                resolvePendingApproval(request.requestId, { approved: false, decidedBy: request.requesterId, decidedAt: Date.now(), haltExecution: true });
+                void sentMessage.edit({ components: [buildResolvedContainer(request, "stopped")] }).catch(() => {});
+            };
+            const settle = (result: ApprovalResult) => { signal?.removeEventListener("abort", onAbort); resolve(result); };
+            pendingApprovals.set(request.requestId, { request, resolve: settle, timer });
+            signal?.addEventListener("abort", onAbort, { once: true });
+            if (signal?.aborted) onAbort();
         });
     };
 }
@@ -250,7 +260,7 @@ export function buildResolvedBatchContainer(
         case "timeout":
             accentColor = 0x95a5a6;
             statusIcon = "⏳";
-            statusLine = `\`⏳ Recusado automaticamente após ${options?.timeoutSec ?? "?"}s\``;
+            statusLine = `\`⏳ Sem decisão após ${options?.timeoutSec ?? "?"}s\``;
             break;
         case "stopped":
             accentColor = 0x95a5a6;
@@ -269,8 +279,9 @@ export function buildResolvedBatchContainer(
         .addTextDisplayComponents(new TextDisplayBuilder().setContent(statusLine));
 }
 
-export function createBatchApprovalGate(channel: SendableChannels) {
-    return async (request: BatchApprovalRequest): Promise<BatchApprovalResult> => {
+export function createBatchApprovalGate(channel: ApprovalTransport) {
+    return async (request: BatchApprovalRequest, signal?: AbortSignal): Promise<BatchApprovalResult> => {
+        signal?.throwIfAborted();
         const settings = SettingsService.load();
         const timeoutMs = settings.runtime.approvalTimeoutMs;
 
@@ -337,8 +348,7 @@ export function createBatchApprovalGate(channel: SendableChannels) {
             }
 
             const timer = setTimeout(async () => {
-                pendingBatchApprovals.delete(request.batchId);
-                resolve({
+                resolvePendingBatchApproval(request.batchId, {
                     decisions: allDenied,
                     decidedBy: "timeout",
                     decidedAt: Date.now(),
@@ -351,7 +361,14 @@ export function createBatchApprovalGate(channel: SendableChannels) {
                 } catch { /* message may have been deleted */ }
             }, timeoutMs);
 
-            pendingBatchApprovals.set(request.batchId, { request, resolve, timer });
+            const onAbort = () => {
+                resolvePendingBatchApproval(request.batchId, { decisions: allDenied, decidedBy: request.requesterId, decidedAt: Date.now(), haltExecution: true });
+                void sentMessage.edit({ components: [buildResolvedBatchContainer(request, "stopped")] }).catch(() => {});
+            };
+            const settle = (result: BatchApprovalResult) => { signal?.removeEventListener("abort", onAbort); resolve(result); };
+            pendingBatchApprovals.set(request.batchId, { request, resolve: settle, timer });
+            signal?.addEventListener("abort", onAbort, { once: true });
+            if (signal?.aborted) onAbort();
         });
     };
 }

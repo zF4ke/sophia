@@ -1,3 +1,4 @@
+import { taskSearchTool, taskControlTool } from "./taskControl";
 import type { DiscordToolName } from "@/shared/discordTools";
 import type {
     CapabilityManifest,
@@ -48,8 +49,8 @@ import { deleteRoleTool } from "./deleteRole";
 import { startLongTaskTool } from "./startLongTask";
 import { noteAddTool, noteListTool, noteClearTool, planUpdateTool } from "./notes";
 import { goalOpenTool, goalUpdateTool, goalDoneTool } from "./goals";
-import { webSearchTool, fetchUrlTool } from "./webSearch";
-import { memoryRememberTool, memorySearchTool } from "./longTermMemory";
+import { webSearchTool, fetchUrlTool, sourceReadTool } from "./webSearch";
+import { memoryRememberTool, memorySearchTool, memoryUpdateTool, memoryForgetTool } from "./longTermMemory";
 import { workflowCreateTool, workflowListTool, workflowRunTool, workflowDeleteTool } from "./workflows";
 import { toolSearchTool } from "./toolSearch";
 import { createPollTool } from "./createPoll";
@@ -57,11 +58,31 @@ import { getPollResultsTool } from "./getPollResults";
 import { indexChannelTool } from "./indexChannel";
 import { artifactSendTool } from "./artifactSend";
 import { artifactEditTool } from "./artifactEdit";
+import { artifactReadTool } from "./artifactRead";
 import { getToolExposure, isDirectTool } from "./toolExposure";
+import { sandboxRunTool, sandboxImportTool, sandboxPublishTool, sandboxInspectTool } from "./sandbox";
+import { transcribeAudioTool } from "./transcribeAudio";
+import { inspectRuntimeTool } from "./inspectRuntime";
+import { skillEvaluateTool } from "./skillEvaluate";
+import { verifyActionTool } from "./verifyAction";
+import { taskForgetTool } from "./taskForget";
+import { corpusCreateTool, corpusCollectTool, corpusReadTool } from "./corpus";
+import { skillSearchTool, skillLoadTool, skillSaveTool, skillDeleteTool } from "./skills";
+import { scheduleCreateTool, scheduleUpdateTool, scheduleListTool, scheduleCancelTool } from "./schedules";
 
 // ── Aggregated tool list ────────────────────────────────────────────
 
 export const ALL_TOOLS: readonly ToolDefinition[] = [
+    corpusCreateTool, corpusCollectTool, corpusReadTool,
+    scheduleCreateTool, scheduleUpdateTool, scheduleListTool, scheduleCancelTool,
+    sourceReadTool,
+    skillSearchTool, skillLoadTool, skillSaveTool, skillDeleteTool,
+    sandboxRunTool, sandboxImportTool, sandboxPublishTool, sandboxInspectTool,
+    transcribeAudioTool,
+    inspectRuntimeTool,
+    skillEvaluateTool,
+    verifyActionTool,
+    taskForgetTool, taskSearchTool, taskControlTool,
     // ── Retrieval ──
     retrieveMessagesTool,
     searchMessagesTool,
@@ -87,13 +108,13 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     createChannelTool,
     createCategoryTool,
     createThreadTool,
-    moveChannelTool,
     moveCategoryTool,
-    manageMemberRolesTool,
     sendMessageTool,
     editMessageTool,
     createRoleTool,
     // ── Destructive ──
+    moveChannelTool,
+    manageMemberRolesTool,
     clearMessagesTool,
     deleteMessagesTool,
     deleteChannelTool,
@@ -116,6 +137,8 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     fetchUrlTool,
     // ── Long-term memory ──
     memoryRememberTool,
+    memoryUpdateTool,
+    memoryForgetTool,
     memorySearchTool,
     // ── Workflows ──
     workflowCreateTool,
@@ -132,6 +155,7 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
     // ── Artifacts ──
     artifactSendTool,
     artifactEditTool,
+    artifactReadTool,
 ];
 
 const TOOL_MAP = new Map<string, ToolDefinition>(
@@ -181,6 +205,10 @@ export function isMutatingTool(name: string): boolean {
 
 export function getToolEffect(name: string): ToolEffect | undefined {
     return TOOL_MAP.get(name)?.catalog.effect;
+}
+
+export async function getPublicationTarget(name: string, context: CapabilityContext, args: ToolArguments): Promise<string | undefined> {
+    return TOOL_MAP.get(name)?.publicationTarget?.(context, args);
 }
 
 // ── Display helpers ─────────────────────────────────────────────────
