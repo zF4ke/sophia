@@ -2,7 +2,7 @@
 
 Sophia stores files in the owning task's durable ledger. Another actor or channel cannot read that workspace. File changes on the same task run serially, and invalid container exports leave the previous files intact.
 
-`sandbox_import` accepts an attachment ID supplied by the Discord adapter. It downloads only from Discord's HTTPS media hosts, rejects redirects, validates the destination path, and stops on cancellation or an oversized transfer. It does not fetch arbitrary URLs.
+`sandbox_import` accepts current-turn or historical Discord attachment IDs. Historical imports use the original message link or the local attachment index to fetch a fresh URL. It downloads only from Discord's HTTPS media hosts, rejects redirects, validates the destination path, and stops on cancellation or an oversized transfer. It does not fetch arbitrary URLs.
 
 `sandbox_run` starts a fresh Docker container with the task's files supplied through standard input. There are no host mounts, Docker socket mounts, network access, or inherited proxy values. The container runs as an unprivileged user with a read-only root, dropped capabilities, process and memory limits, and temporary writable directories. Python includes pandas, matplotlib, Pillow, pypdf and openpyxl. Node and ffmpeg are available. Files written under `/workspace` return to the task after validation.
 
@@ -21,3 +21,7 @@ Message attachments and `/talk attachment` can also supply images directly. Supp
 Card scripts use this same container backend. The inner JavaScript VM supplies card helpers; it is not the host isolation boundary. The host validates returned state and messages. External sends still require the clicking user's authority and normal approval.
 
 Deterministic tests cover isolation arguments, path rejection, file ownership, concurrent updates, malformed exports and source-labelled previews. The Linux Docker engine and image build are now verified on this machine. Real execution, isolation and card-script checks passed; see [live acceptance](live-acceptance.md) for exact scenarios and remaining limits.
+
+## Historical Discord attachments
+
+`sandbox_import` accepts `message_url` alongside `attachment_id` and `path`. It checks source-channel access, fetches the original message through DiscordHistoryReader to renew its signed attachment URL, and preserves message/channel provenance on the downloaded file. When omitted, the original message can be found by attachment ID in the local index. Use `sandbox_inspect` to see imported images/video. CDN URL expiry is not evidence of deletion. A missing original message, removed attachment or permission failure is reported separately. The documented Discord message API renews signed URLs; no undocumented URL-refresh endpoint is required.

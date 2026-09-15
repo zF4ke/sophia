@@ -22,7 +22,7 @@ describe("execution control", () => {
             expect(await ExecutionControl.steerForReply("owner", "channel", "progress", "late")).toBe("not_found");
         } finally { releases.forEach(release => release()); }
     });
-    it("pauses readers of deleted sources while allowing the execution deleting them to confirm its action", () => {
+    it("notifies readers of deleted sources while allowing the execution deleting them to confirm its action", () => {
         const deleting = new ExecutionControl("owner", "channel");
         const reading = new ExecutionControl("other", "channel");
         const unrelated = new ExecutionControl("third", "channel");
@@ -35,8 +35,8 @@ describe("execution control", () => {
             ExecutionControl.invalidateSource("message");
             expect(() => deleting.checkpoint()).not.toThrow();
             expect(() => unrelated.checkpoint()).not.toThrow();
-            expect(reading.sourceInvalidated).toBe(true);
-            expect(() => reading.checkpoint()).toThrow("A source used by this execution changed or was deleted.");
+            expect(reading.pendingSourceChanges).toHaveLength(1);
+            expect(() => reading.checkpoint()).not.toThrow();
         } finally { releases.forEach(release => release()); }
     });
     it("routes steering only to a unique active execution owned by this actor in this channel", async () => {

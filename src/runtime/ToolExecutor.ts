@@ -124,6 +124,7 @@ export class ToolExecutor {
                 if (capability.sideEffectLevel === "destructive" && typeof validatedArgs.channel_id === "string" && SettingsService.load().protectedChannelIds.includes(validatedArgs.channel_id)) throw new Error("This channel is protected from destructive or access-sensitive changes.");
             };
             assertProtectedTarget();
+            if (isMutatingTool(toolName) && context.execution?.pendingSourceChanges.length) throw new Error("A source changed before dispatch. Refresh the evidence and reconsider this action; it was not sent.");
             if (options.steeringRevision !== undefined && context.execution?.steeringRevision !== options.steeringRevision) {
                 throw new Error("Skipped: a user correction superseded this unstarted action. Reconsider it using the new instruction.");
             }
@@ -135,19 +136,20 @@ export class ToolExecutor {
                 // Recording can yield to steering or revocation. Recheck at dispatch.
                 const latest = context.authorize ? await context.authorize(capability.sideEffectLevel, toolName) : null;
                 if (latest === "deny" || (latest === "ask" && !options.approved)) throw new Error("Action authority changed before dispatch.");
-                if (context.execution?.signal.aborted) throw new ExecutionStopped(context.execution.sourceInvalidated ? "source_changed" : "cancelled");
+                if (context.execution?.signal.aborted) throw new ExecutionStopped("cancelled");
                 if (options.steeringRevision !== undefined && context.execution?.steeringRevision !== options.steeringRevision) {
                     throw new Error("Skipped: requester correction arrived before dispatch.");
                 }
             }
             const publicationTarget = await getPublicationTarget(toolName, context, validatedArgs);
             if (publicationTarget !== undefined) await assertPublicationAudience(context, publicationTarget);
-            if (context.execution?.signal.aborted) throw new ExecutionStopped(context.execution.sourceInvalidated ? "source_changed" : "cancelled");
+            if (context.execution?.signal.aborted) throw new ExecutionStopped("cancelled");
             if (options.steeringRevision !== undefined && context.execution?.steeringRevision !== options.steeringRevision) throw new Error("Skipped: requester correction arrived before dispatch.");
             const dispatchDecision = context.authorize ? await context.authorize(capability.sideEffectLevel, toolName) : null;
             if (dispatchDecision === "deny" || (dispatchDecision === "ask" && !options.approved)) throw new Error("Action authority changed before dispatch.");
             assertProtectedTarget();
-            if (context.execution?.signal.aborted) throw new ExecutionStopped(context.execution.sourceInvalidated ? "source_changed" : "cancelled");
+            if (isMutatingTool(toolName) && context.execution?.pendingSourceChanges.length) throw new Error("A source changed before dispatch. Refresh evidence before deciding this action; it was not sent.");
+            if (context.execution?.signal.aborted) throw new ExecutionStopped("cancelled");
             if (options.steeringRevision !== undefined && context.execution?.steeringRevision !== options.steeringRevision) throw new Error("Skipped: requester correction arrived before dispatch.");
             dispatched = true;
             const run = capability.run(context, validatedArgs);

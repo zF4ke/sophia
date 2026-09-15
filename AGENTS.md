@@ -323,3 +323,7 @@ Runtime chronology: the prompt includes the current UTC date and time. Channel c
 Cancellation propagates to active chat-completions/Responses HTTP requests and single/batch approval waits. Approval signals are runtime-owned, separate from serialized requests. Cancelling removes pending controls and settles the approval record without dispatch; an already submitted external action still needs its receipt or verification.
 
 The Discord client subscribes to GuildMessages and DirectMessages. Thread replies require SendMessagesInThreads, while ordinary channel replies require SendMessages. Authorized accounts can inspect skills and memories without legacy command visibility; adoption remains operator-only.
+
+Message edits queue evidence refresh without aborting the execution. Runtime re-reads affected messages through DiscordHistoryReader, replaces stale model context, and retains valid tool results and action receipts. Deleted/inaccessible sources become explicit gaps. Pending edits block unstarted mutations until refreshed; normal grants and approvals then apply. Transient task status messages never enter research evidence.
+
+Historical attachment imports accept an original message_url or resolve the source from the local attachment index. Always fetch the original message to renew CDN signatures, check the source audience, and retain file provenance. URL expiry alone never establishes deletion.

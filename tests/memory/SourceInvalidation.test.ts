@@ -41,7 +41,11 @@ it("replaces edited evidence, blocks stale crawls and late writes, and permits a
     const release = execution.register();
     try {
         await DiscordMemoryService.ingestStoredMessage({ ...original, content: "Use red", editedTimestamp: 100 });
-        expect(execution.sourceInvalidated).toBe(true);
+        expect(execution.signal.aborted).toBe(false);
+        expect(execution.pendingSourceChanges).toMatchObject([{ messageId: original.id, kind: "edited" }]);
+        execution.acknowledgeSourceChanges(execution.pendingSourceChanges);
+        await DiscordMemoryService.ingestStoredMessage({ ...original, content: "Use red", editedTimestamp: 100 });
+        expect(execution.pendingSourceChanges).toEqual([]);
         expect(await taskStore.requestSources("before-edit")).toBeNull();
         expect(await knowledgeStore.search(audience)).toEqual([]);
         await expect(workspace.addRequestNote({ requestId: "before-edit", threadId: "edit", kind: "note", label: null, body: "Use blue" })).rejects.toThrow();
@@ -59,6 +63,9 @@ it("replaces edited evidence, blocks stale crawls and late writes, and permits a
         await DiscordMemoryService.ingestStoredMessage({ ...original, content: "An unseen older edit", editedTimestamp: 150 });
         const reverted = (await OperationalStore.getClient().execute("SELECT content,jump_link FROM messages WHERE id='edited-source'")).rows[0];
         expect(reverted.content).toBe("Use blue");
+        const updatedCorpus = await corpora.status(corpus.id);
+        expect(updatedCorpus.count).toBe(1);
+        expect((await corpora.read(corpus.id, updatedCorpus.revision, 0, 10)).messages[0]).toMatchObject({ content: "Use blue", jumpLink: reverted.jump_link });
         expect(await knowledgeStore.isSourceInvalid(redSource)).toBe(true);
         expect(await knowledgeStore.isSourceInvalid(String(reverted.jump_link))).toBe(false);
         await knowledgeStore.remember(audience, { key: "Reverted color", value: "Blue", scope: "channel", sources: [String(reverted.jump_link)] });

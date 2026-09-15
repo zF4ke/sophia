@@ -1,4 +1,5 @@
 import { revisedMessageSource } from "@/shared/sourceReference";
+import { isRuntimeStatus } from "@/shared/runtimeStatus";
 import type { InArgs } from "@libsql/client";
 import { knowledgeStore } from "./KnowledgeStore";
 import { taskStore } from "@/runtime/tasks/TaskStore";
@@ -180,11 +181,24 @@ export class DiscordMemoryService {
         await OperationalStore.getClient().batch(["runtime_runs", "trace_events", "tool_runs", "conversation_messages"].map(table => ({ sql: `DELETE FROM ${table} WHERE request_id IN(SELECT value FROM json_each(?))`, args: [JSON.stringify(requestIds)] })), "write");
     }
     private static readonly messageLocks = new KeyedLock();
+    public static async findAttachmentMessageAsync(attachmentId: string): Promise<string | null> {
+        await this.ensureInitialized();
+        const row = (await OperationalStore.getClient().execute({ sql: "SELECT jump_link FROM messages, json_each(messages.attachments_json) attachment WHERE json_extract(attachment.value,'$.id')=? LIMIT 1", args: [attachmentId] })).rows[0];
+        return row ? String(row.jump_link).split("#")[0] : null;
+    }
+    public static async getStoredMessageAsync(messageId: string): Promise<StoredMessage | null> {
+        return this.messageLocks.run(messageId, async () => {
+            if (await taskStore.hasDeletedSources([messageId])) return null;
+            await this.ensureInitialized();
+            const row = (await OperationalStore.getClient().execute({ sql: "SELECT * FROM messages WHERE id=?", args: [messageId] })).rows[0];
+            return row ? mapStoredMessage(row) : null;
+        });
+    }
     public static async deleteMessage(messageId: string, channelId: string, guildId: string | null): Promise<void> {
         const source = `https://discord.com/channels/${guildId ?? "@me"}/${channelId}/${messageId}`;
         await knowledgeStore.invalidateSource(source);
         await taskStore.invalidateCorpusMessage(messageId);
-        ExecutionControl.invalidateSource(messageId);
+        ExecutionControl.invalidateSource(messageId, { kind: "deleted", url: source });
         await this.messageLocks.run(messageId, async () => {
             await this.ensureInitialized();
             await OperationalStore.getClient().batch([
@@ -312,6 +326,7 @@ export class DiscordMemoryService {
     }
 
     public static async ingestMessage(message: Message): Promise<void> {
+        if (isRuntimeStatus(message)) return;
         if (!this.isEligibleMessage(message)) {
             return;
         }
@@ -349,11 +364,16 @@ export class DiscordMemoryService {
             else if (old) stored = { ...stored, jumpLink: old.jumpLink };
             if (await knowledgeStore.isSourceInvalid(stored.jumpLink)) return;
             if (changed || (!old && stored.editedTimestamp)) {
-                ExecutionControl.invalidateSource(stored.id);
                 for (const source of new Set([base, ...old ? [old.jumpLink, revisedMessageSource(old)] : []])) await knowledgeStore.invalidateSource(source, false);
-                await taskStore.invalidateCorpusMessage(stored.id, false, stored.jumpLink);
+                await taskStore.invalidateCorpusMessage(stored.id, false, stored.jumpLink, {
+                    messageId: stored.id, channelId: stored.channelId, guildId: stored.guildId, channelName: stored.channelName,
+                    authorId: stored.authorId, authorName: stored.authorName, content: stored.content, jumpLink: stored.jumpLink,
+                    createdTimestamp: stored.createdTimestamp, referenceMessageId: stored.referenceMessageId,
+                    attachments: JSON.parse(stored.attachmentsJson),
+                });
             }
             await this.ingestStoredMessageInternal(stored);
+            if (changed || (!old && stored.editedTimestamp)) ExecutionControl.invalidateSource(stored.id, { kind: "edited", url: base });
         });
     }
     private static async ingestStoredMessageInternal(stored: StoredMessage): Promise<void> {

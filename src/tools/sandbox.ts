@@ -28,10 +28,10 @@ export const sandboxRunTool: ToolDefinition = {
         } }, strategy: { extractEvidence: () => [] }, display: { icon: "🔧", labelPt: "Executar código" },
 };
 export const sandboxImportTool: ToolDefinition = {
-    name: T.sandbox_import, catalog: { effect: "read", description: "Import a supplied attachment into the isolated task workspace.", evidenceRole: "discovery_only" },
-    schema: { description: "Download an attachment supplied in this turn, by its authenticated attachment ID, to a relative workspace path. Other URLs and host files are unavailable.", parameters: { type: "object", properties: { attachment_id: { type: "string" }, path: { type: "string" } }, required: ["attachment_id", "path"] } },
-    capability: { ...common, description: "Import attachment.", sideEffectLevel: "none", inputSchema: z.object({ attachment_id: z.string(), path: z.string().max(240) }),
-        async run(context, args) { const output = await TaskSandbox.importAttachment(context, String(args.attachment_id), String(args.path)); return { tool: T.sandbox_import, summary: `Imported ${output.path} (${output.bytes} bytes).`, data: output }; } },
+    name: T.sandbox_import, catalog: { effect: "read", description: "Import current or historical Discord attachments, refreshing expired CDN URLs, into the isolated task workspace.", evidenceRole: "discovery_only" },
+    schema: { description: "Import a Discord attachment into the workspace. For a historical attachment, provide its attachment_id and original message_url. The original message is fetched to renew expired CDN URLs; no reupload is needed while the message and attachment remain accessible. Then use sandbox_inspect for images or video. If the attachment is indexed locally, its message can be found automatically.", parameters: { type: "object", properties: { attachment_id: { type: "string" }, message_url: { type: "string", description: "Original Discord message link for a historical attachment, not a CDN URL." }, path: { type: "string" } }, required: ["attachment_id", "path"] } },
+    capability: { ...common, description: "Import attachment.", sideEffectLevel: "none", inputSchema: z.object({ attachment_id: z.string(), message_url: z.string().url().optional(), path: z.string().max(240) }),
+        async run(context, args) { const output = await TaskSandbox.importAttachment(context, String(args.attachment_id), String(args.path), args.message_url as string | undefined); return { tool: T.sandbox_import, summary: `Imported ${output.path} (${output.bytes} bytes).`, data: output }; } },
     strategy: { extractEvidence: () => [] }, display: { icon: "📎", labelPt: "Importar ficheiro" },
 };
 export const sandboxPublishTool: ToolDefinition = {

@@ -307,7 +307,7 @@ export class DiscordChannelCrawlService {
             });
             const batch = page.messages;
 
-            if (!batch.size) {
+            if (page.exhausted) {
                 exhausted = true;
                 break;
             }
@@ -317,8 +317,8 @@ export class DiscordChannelCrawlService {
             );
             fetchedMessages.push(...messages);
 
-            fetched += batch.size;
-            before = messages[0]?.id;
+            fetched += page.scanned;
+            before = page.before ?? undefined;
             stored = fetchedMessages.length;
             await onProgress?.(
                 "crawl_channel_messages",
@@ -400,7 +400,7 @@ export class DiscordChannelCrawlService {
             });
             const batch = page.messages;
 
-            if (!batch.size) {
+            if (page.exhausted) {
                 exhausted = true;
                 break;
             }
@@ -410,8 +410,8 @@ export class DiscordChannelCrawlService {
             );
             fetchedMessages.push(...messages);
 
-            fetched += batch.size;
-            before = messages[0]?.id;
+            fetched += page.scanned;
+            before = page.before ?? undefined;
             await onProgress?.(
                 "crawl_channel_messages_at_time",
                 `coletadas ${fetched}/${limit} mensagens de ${channel.name} (targeted)`

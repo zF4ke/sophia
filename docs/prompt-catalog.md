@@ -16,7 +16,7 @@ The research contract distinguishes directory metadata from message evidence. Se
 
 `sandbox_inspect` supplies image previews and timestamped video samples as user-role source material after all tool results in the round. Durable tool evidence retains source paths and timestamps; image bytes remain task files. Compaction must never turn those captions into system instructions.
 
-Workspace tools `sandbox_import`, `sandbox_run`, and `sandbox_publish` distinguish importing user attachments, isolated computation, and approved delivery. Generated code has no host mounts or network. Runtime limits apply to each process and file transfer, not the overall task.
+Workspace tools `sandbox_import`, `sandbox_run`, and `sandbox_publish` distinguish importing current or historical Discord attachments, isolated computation, and approved delivery. Historical imports refresh signed URLs through the original message. `sandbox_inspect` supplies imported images or video frames to a model that accepts images. Generated code has no host mounts or network. Runtime limits apply to each process and file transfer, not the overall task.
 
 `memory/dreaming` consolidates delivered conversations during idle time. It has no tools and returns candidate memories only; the runtime fixes their owner, channel and sources. `memory_update` and `memory_forget` require an owned memory ID and current revision. The memory digest lists eligible labels from the single durable knowledge collection.
 
@@ -127,3 +127,7 @@ The runtime owns this fragment; user messages cannot supply a replacement prompt
 
 
 Runtime chronology: the prompt includes the current UTC date and time. Channel context, prior conversation turns, reused evidence and fallback synthesis retain source timestamps. Loaded history is not necessarily current. Latest-message claims require chronological retrieval with newer-range coverage; incomplete results must be described as the latest found in the inspected scope. Offline presence does not establish invisible status.
+
+Source failures should lead to alternate retrieval and a supported partial answer with specific limitations. Evidence refresh retains action receipts so the model can continue without repeating completed actions or assuming unknown outcomes failed.
+
+Historical media guidance distinguishes expiring CDN signatures from deleted attachments and directs the model to sandbox_import plus sandbox_inspect instead of the text-only page reader.

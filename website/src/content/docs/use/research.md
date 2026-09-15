@@ -37,3 +37,15 @@ Sophia can search the web, open a URL, and read more of a saved source. Search s
 > **Sophia**: The first adds export support. The second fixes an export bug; it does not add a new format. [Announcement A] [Announcement B]
 
 Web pages and quoted Discord messages are evidence, not instructions that can grant permissions. Editing or deleting a Discord source invalidates dependent saved evidence. See [privacy and approvals](../permissions/).
+
+## If a message changes while Sophia is reading
+
+Sophia reads the updated message and continues the same request. If a message was deleted or its channel is no longer accessible, she should explain that specific gap and answer the parts supported by other sources. Her changing progress message is not research evidence. Completed actions remain recorded so refreshing evidence does not repeat them.
+
+Old screenshots do not need to be reuploaded just because their download links expired. Sophia can fetch the original Discord message for a fresh link, import its attachments and inspect them. She needs access to that message, and the attachment must still exist.
+
+> **You**: Read the screenshots in this message and compare them with the replies below it. [Original message]
+>
+> **Sophia**: The first screenshot claims the result was independent. The reply points out that people helped with the setup. That distinction changes what the result demonstrates.
+
+This is a simulated example. Replace the placeholder with a Discord message link. Sophia should inspect the actual images before making claims about them. If a screenshot was removed, she should identify which one is missing and continue with the available images and replies.

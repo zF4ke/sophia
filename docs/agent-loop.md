@@ -34,6 +34,8 @@ Mutation receipts record exact validated arguments, dispatch intent and returned
 
 Compaction keeps the original request and whole tool-call/result groups. The summarizer receives source excerpts as user data; summaries remain assistant working context. Voice changes presentation only. Prompt interpolation is single-pass.
 
+Source edits queue a refresh inside the same execution. Before accepting an answer or dispatching changes, the runtime replaces affected evidence with the current readable message and discards stale model decisions. Deleted or inaccessible sources become specific gaps the model can explain in a partial answer. Refreshing preserves task state, cancellation, steering, call counts and action receipts. Mutations wait for current evidence and their normal approval checks; completed actions are not replayed. Temporary task progress messages are excluded from research evidence, and history pagination still advances past them.
+
 ## Delivery
 
 Normal conversation uses text. Cards and files use their dedicated delivery paths. Private interaction approvals remain ephemeral. Scheduling requires a saved schedule receipt; an ordinary finish cannot promise future execution. Conditional scheduled checks may suppress an unchanged completed result while preserving its findings. Failure and blocked-tool outcomes remain reportable.

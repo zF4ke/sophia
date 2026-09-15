@@ -37,8 +37,8 @@ export async function runAutoContinue(
 
     for (let leg = 1; leg <= maxLegs; leg++) {
         if (input.execution?.signal.aborted) return {
-            answer: { ...answer, ...(input.execution.sourceInvalidated ? { citations: [], toolRuns: [] } : {}), outcome: input.execution.sourceInvalidated ? "paused" : "cancelled", answer: input.execution.sourceInvalidated ? "Uma fonte foi apagada. O pedido ficou pausado para rever as fontes antes de continuar." : "Execução interrompida. As ações já concluídas mantêm-se." },
-            legs, stoppedBecause: input.execution.sourceInvalidated ? "blocked" : "cancelled",
+            answer: { ...answer, outcome: "cancelled", answer: "Execução interrompida. As ações já concluídas mantêm-se." },
+            legs, stoppedBecause: "cancelled",
         };
         if (answer.outcome && answer.outcome !== "completed") return { answer, legs, stoppedBecause: answer.outcome === "failed" ? "error" : "blocked" };
         const openGoals = await listOpenGoals(input, firstAnswer.threadId);

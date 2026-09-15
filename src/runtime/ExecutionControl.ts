@@ -1,6 +1,7 @@
+export interface SourceChange { messageId?: string; url?: string; kind: "edited" | "deleted" | "unavailable" }
 export class ExecutionStopped extends Error {
-    constructor(public readonly reason: "cancelled" | "limit_reached" | "stalled" | "uncertain_action" | "persistence_failed" | "context_full" | "source_changed") {
-        super(reason === "source_changed" ? "A source used by this execution changed or was deleted." : reason === "context_full" ? "Required context exceeds model capacity." : reason === "cancelled" ? "Execution cancelled." : reason === "stalled" ? "Repeated tool failures." : reason === "uncertain_action" ? "External action outcome is unknown." : reason === "persistence_failed" ? "Could not preserve task evidence." : "Explicit tool-call limit reached.");
+    constructor(public readonly reason: "cancelled" | "limit_reached" | "stalled" | "uncertain_action" | "persistence_failed" | "context_full") {
+        super(reason === "context_full" ? "Required context exceeds model capacity." : reason === "cancelled" ? "Execution cancelled." : reason === "stalled" ? "Repeated tool failures." : reason === "uncertain_action" ? "External action outcome is unknown." : reason === "persistence_failed" ? "Could not preserve task evidence." : "Explicit tool-call limit reached.");
     }
 }
 
@@ -36,11 +37,18 @@ export class ExecutionControl {
     watchSources(messageIds: string[]): void { for (const id of messageIds) this.sources.add(id); }
     expectSourceDeletion(messageIds: string[]): void { for (const id of messageIds) this.expectedDeletions.add(id); }
     isExpectedDeletion(messageId: string): boolean { return this.expectedDeletions.has(messageId); }
-    get sourceInvalidated(): boolean { return this.signal.reason === "source_changed"; }
-    static invalidateSource(messageId: string): void {
+    private readonly changedSources = new Map<string, SourceChange>();
+    get pendingSourceChanges(): SourceChange[] { return [...this.changedSources.values()]; }
+    acknowledgeSourceChanges(changes: SourceChange[]): void {
+        for (const change of changes) if (change.messageId && this.changedSources.get(change.messageId) === change) this.changedSources.delete(change.messageId);
+    }
+    clearSourceWatches(): void { this.sources.clear(); }
+    static invalidateSource(messageId: string, detail?: Omit<SourceChange, "messageId">): void {
         for (const execution of this.active) {
             if (execution.expectedDeletions.has(messageId)) continue;
-            if (execution.sources.has(messageId) && !execution.signal.aborted) execution.controller.abort("source_changed");
+            if (execution.sources.has(messageId) && !execution.signal.aborted) {
+                execution.changedSources.set(messageId, { messageId, kind: "unavailable", ...detail });
+            }
         }
     }
 
@@ -113,7 +121,7 @@ export class ExecutionControl {
 
     checkpoint(): void {
         if (this.steeringFailure) throw new ExecutionStopped("persistence_failed");
-        if (this.signal.aborted) throw new ExecutionStopped(this.sourceInvalidated ? "source_changed" : "cancelled");
+        if (this.signal.aborted) throw new ExecutionStopped("cancelled");
         if (this.toolCallLimit > 0 && this.calls >= this.toolCallLimit) {
             throw new ExecutionStopped("limit_reached");
         }

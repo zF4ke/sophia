@@ -91,3 +91,7 @@ Edited message links retain the Discord URL and add a `sophia-revision` fragment
 ## Local-first research
 
 Ordinary research does not require a user-issued indexing command. Retrieval uses persisted messages, returns cursors and partial-index metadata, and queues missing older history when it reaches the indexed boundary. A queued crawl is not a completed crawl. The runtime prompt distinguishes the age of a message from proof that indexing is stale, so quiet channels do not trigger unnecessary refreshes merely because their newest message is old.
+
+## Message edits and task status
+
+Task status controls are transient bot UI and are excluded from ingestion and history results. History pagination still advances across these messages; a page containing only controls is not the end of history. Edited messages update existing research collection rows while preserving collection cursors and counts. Deleted messages are removed. In-flight tasks refresh affected evidence without cancelling provider requests or losing valid action receipts.

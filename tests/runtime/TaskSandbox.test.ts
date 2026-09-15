@@ -5,6 +5,7 @@ import { ContainerSandbox } from "@/runtime/sandbox/ContainerSandbox";
 import { inspectTaskMedia } from "@/runtime/sandbox/MediaInspection";
 import type { CapabilityContext } from "@/tools/types";
 import { sandboxInspectTool, sandboxPublishTool } from "@/tools/sandbox";
+import { DiscordMemoryService } from "@/memory/DiscordMemoryService";
 
 afterEach(() => vi.restoreAllMocks());
 it("inherits source provenance through generated files and rechecks revoked channel access", async () => {
@@ -60,6 +61,7 @@ it("preserves existing files when a container returns an invalid export", async 
 });
 it("rejects foreign attachment IDs and paths before any download", async () => {
     const c = await context();
+    vi.spyOn(DiscordMemoryService, "findAttachmentMessageAsync").mockResolvedValue(null);
     const download = vi.spyOn(globalThis, "fetch");
     await expect(TaskSandbox.importAttachment(c, "not-supplied", "file.png")).rejects.toThrow("not available");
     await expect(TaskSandbox.importAttachment(c, "any", "../file.png")).rejects.toThrow("Invalid workspace path");

@@ -596,15 +596,16 @@ export class DiscordBackfillCrawler {
         const lastIndexedTimestamp = indexStates[0]?.lastIndexedTimestamp ?? null;
 
         let ingested = 0;
+        let scanned = 0;
         let before: string | null | undefined = undefined; // newest first
         let hitKnown = false;
 
-        while (ingested < maxMessages) {
-            const batchSize = Math.min(100, maxMessages - ingested);
+        while (scanned < maxMessages) {
+            const batchSize = Math.min(100, maxMessages - scanned);
             const result = await fetchAndIngestBatch(channel, before ?? null, batchSize, "refresh");
             ingested += result.ingested;
-            if (result.reachedEnd && result.ingested === 0) break;
-            if (result.ingested === 0) break;
+            scanned += result.scanned ?? result.ingested;
+            if (result.reachedEnd) break;
             if (
                 lastIndexedTimestamp != null &&
                 result.oldestTimestampInBatch != null &&

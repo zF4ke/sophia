@@ -458,7 +458,7 @@ export class TaskStore {
         return new TaskCorpus(this.client!, id);
     }
 
-    async invalidateCorpusMessage(messageId: string, deleted = true, sourceUrl?: string): Promise<void> {
+    async invalidateCorpusMessage(messageId: string, deleted = true, sourceUrl?: string, replacement?: Record<string, unknown>): Promise<void> {
         await this.initialize();
         await this.client!.batch([
             ...(deleted ? [{ sql: "INSERT OR IGNORE INTO deleted_corpus_messages VALUES(?)", args: [messageId] }] : []),
@@ -471,7 +471,7 @@ export class TaskStore {
             { sql: "DELETE FROM task_files WHERE EXISTS(SELECT 1 FROM task_file_provenance p,json_each(p.messages_json) s WHERE p.task_id=task_files.task_id AND p.path=task_files.path AND s.value=?)", args: [messageId] },
             { sql: "DELETE FROM task_file_provenance WHERE EXISTS(SELECT 1 FROM json_each(messages_json) WHERE value=?)", args: [messageId] },
             { sql: "UPDATE task_corpora SET revision=revision+1 WHERE id IN(SELECT corpus_id FROM corpus_messages WHERE message_id=?)", args: [messageId] },
-            { sql: "DELETE FROM corpus_messages WHERE message_id=?", args: [messageId] },
+            ...(!deleted && replacement ? [{ sql: "UPDATE corpus_messages SET message_json=? WHERE message_id=?", args: [JSON.stringify(replacement), messageId] }] : [{ sql: "DELETE FROM corpus_messages WHERE message_id=?", args: [messageId] }]),
         ], "write");
     }
     async hasDeletedSources(ids: string[]): Promise<boolean> {

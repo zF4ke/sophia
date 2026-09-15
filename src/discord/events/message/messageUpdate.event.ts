@@ -7,10 +7,12 @@ export = {
     name: "messageUpdate",
     async execute(_previous: Message | PartialMessage, updated: Message | PartialMessage) {
         if (!isGuildAllowed(updated.guildId)) return;
-        if (updated.partial) ExecutionControl.invalidateSource(updated.id);
         try {
             const message = updated.partial ? await updated.fetch() : updated;
             await DiscordMemoryService.ingestMessage(message);
-        } catch (error) { console.error("[messageUpdate] Could not refresh edited source", error); }
+        } catch (error) {
+            ExecutionControl.invalidateSource(updated.id, { kind: "unavailable", url: updated.url });
+            console.error("[messageUpdate] Could not refresh edited source", error);
+        }
     },
 };

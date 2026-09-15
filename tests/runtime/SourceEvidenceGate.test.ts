@@ -4,8 +4,27 @@ import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 import { ToolExecutor } from "@/runtime/ToolExecutor";
 import { knowledgeStore } from "@/memory/KnowledgeStore";
 import { readableToolRecords } from "@/runtime/sourceEvidence";
+import { ExecutionControl } from "@/runtime/ExecutionControl";
 
 afterEach(() => vi.restoreAllMocks());
+it("does not dispatch a write decided before a pending evidence update", async () => {
+    const capability = CapabilityRegistry.get("send_message");
+    const run = vi.fn();
+    vi.spyOn(CapabilityRegistry, "get").mockReturnValue({ ...capability, run });
+    const execution = new ExecutionControl("owner", "channel");
+    const release = execution.register();
+    try {
+        execution.watchSources(["edited"]);
+        ExecutionControl.invalidateSource("edited", { kind: "edited" });
+        const result = await ToolExecutor.execute("send_message", { channel_id: "channel", content: "Old decision" }, {
+            guild: { id: "guild" } as never, actorId: "owner", currentChannelId: "channel", question: "Send it", execution, authorize: async () => "allow",
+        });
+        expect(result.record.blocked).toBe(true);
+        expect(result.resultPayload).toContain("source changed");
+        expect(run).not.toHaveBeenCalled();
+        expect(execution.signal.aborted).toBe(false);
+    } finally { release(); }
+});
 it("withholds message payloads after permission revocation or source deletion", async () => {
     const capability = CapabilityRegistry.get("retrieve_messages");
     const jumpLink = "https://discord.com/channels/guild/source/evidence-gate";

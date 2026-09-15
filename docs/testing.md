@@ -207,4 +207,8 @@ The task-control suite covers owner/location isolation, private-task filtering, 
 
 ## Release regressions
 
+Source refresh tests cover an edit during model generation, rejection of the stale answer, and saving a note before finishing the same task. They also cover pending edits blocking undispatched mutations, partial message-update events, updated collection rows and pagination through pages containing only temporary progress messages.
+
+Attachment tests cover renewing an expired URL through the original message, importing historical bytes with source provenance, permission checks before fetching, removed attachments and rejection of CDN URLs used as message links. On 2026-09-15, `storage/attachment-refresh-check.log` recorded TypeScript validation and 536 passing tests across 124 files. The documentation build and link checks passed for 134 pages. A read-only Discord API check also confirmed that fetching an existing historical message returned an attachment URL with HTTP 200; this did not test a full model-driven conversation.
+
 The client intent test verifies DM subscription. Message-event tests cover SendMessagesInThreads separately from parent-channel sending. Access admission covers ordinary skill and memory inspection. Cancellation tests use the real single/batch approval transports and verify removal of pending controls, settled records and subsequent task resumability. Provider tests verify that active HTTP calls receive the execution's AbortSignal. Settings tests serialize every tab and reject duplicate custom IDs.

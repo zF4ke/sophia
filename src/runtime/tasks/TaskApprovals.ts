@@ -21,9 +21,9 @@ export function durableApproval<TRequest extends { requesterId: string }, TResul
         catch { throw new ExecutionStopped("persistence_failed"); }
         let result: TResult;
         try {
-            if (context.signal?.aborted) throw new ExecutionStopped(context.signal.reason === "source_changed" ? "source_changed" : "cancelled");
+            if (context.signal?.aborted) throw new ExecutionStopped("cancelled");
             result = await original(structuredClone(request), context.signal);
-            if (context.signal?.aborted) throw new ExecutionStopped(context.signal.reason === "source_changed" ? "source_changed" : "cancelled");
+            if (context.signal?.aborted) throw new ExecutionStopped("cancelled");
         }
         catch (error) {
             await taskStore.settleApproval(id, context.actorId, { error: error instanceof Error ? error.message : String(error) }, "failed").catch(() => {});

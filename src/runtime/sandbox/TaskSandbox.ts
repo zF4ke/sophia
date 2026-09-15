@@ -3,6 +3,7 @@ import { taskStore } from "../tasks/TaskStore";
 import type { CapabilityContext } from "@/tools/types";
 import { assertReadableChannels } from "@/security/SourceAccess";
 import { ExecutionStopped } from "../ExecutionControl";
+import { resolveDiscordAttachment } from "@/discord/live/DiscordAttachmentReader";
 
 export class TaskSandbox {
     private static readonly locks = new Map<string, Promise<unknown>>();
@@ -15,7 +16,7 @@ export class TaskSandbox {
         const files = await taskStore.files(id, context.actorId!, context.currentChannelId ?? "", context.guild?.id ?? null);
         const sources = files.flatMap(file => file.sourceMessageIds ?? []);
         context.execution?.watchSources(sources);
-        if (await taskStore.hasDeletedSources(sources)) throw new ExecutionStopped("source_changed");
+        if (await taskStore.hasDeletedSources(sources)) throw new Error("A message used by this file was deleted. Rebuild the file from current sources.");
         await assertReadableChannels(context.guild, context.actorId, files.flatMap(file => file.sourceChannelIds ?? []), { client: context.client, privateResponse: context.privateResponse, destinationChannelId: context.currentChannelId });
         return files;
     }
@@ -25,7 +26,7 @@ export class TaskSandbox {
         const work = previous.catch(() => {}).then(async () => {
             const current = await this.files(context);
             const output = await operation(current);
-            if (context.execution?.signal.aborted) throw new ExecutionStopped(context.execution.sourceInvalidated ? "source_changed" : "cancelled");
+            if (context.execution?.signal.aborted) throw new ExecutionStopped("cancelled");
             const sourceMessageIds = [...new Set(current.flatMap(file => file.sourceMessageIds ?? []))];
             const sourceChannelIds = [...new Set(current.flatMap(file => file.sourceChannelIds ?? []))];
             // Generated outputs may depend on any input; preserve that audience
@@ -36,7 +37,7 @@ export class TaskSandbox {
             });
             await assertReadableChannels(context.guild, context.actorId, output.files.flatMap(file => file.sourceChannelIds ?? []), { client: context.client, privateResponse: context.privateResponse, destinationChannelId: context.currentChannelId });
             validateFiles(output.files);
-            if (context.execution?.signal.aborted) throw new ExecutionStopped(context.execution.sourceInvalidated ? "source_changed" : "cancelled");
+            if (context.execution?.signal.aborted) throw new ExecutionStopped("cancelled");
             await taskStore.replaceFiles(id, context.actorId!, context.currentChannelId ?? "", context.guild?.id ?? null, output.files, context.requestId ?? undefined);
             return output.result;
         });
@@ -50,10 +51,10 @@ export class TaskSandbox {
                 files: result.files.map(file => ({ path: file.path, bytes: Buffer.byteLength(file.data, "base64") })) } };
         });
     }
-    static async importAttachment(context: CapabilityContext, attachmentId: string, destination: string) {
+    static async importAttachment(context: CapabilityContext, attachmentId: string, destination: string, messageUrl?: string) {
         if (!safeWorkspacePath(destination)) throw new Error("Invalid workspace path.");
-        const attachment = context.attachments?.find(file => file.id === attachmentId);
-        if (!attachment) throw new Error("Attachment is not available in this turn.");
+        await this.owned(context);
+        const { attachment, sourceMessageIds, sourceChannelIds } = await resolveDiscordAttachment(context, attachmentId, messageUrl);
         const url = new URL(attachment.url);
         if (url.protocol !== "https:" || !["cdn.discordapp.com", "media.discordapp.net"].includes(url.hostname) || attachment.size > MAX_WORKSPACE_BYTES) throw new Error("Unsupported attachment URL or size.");
         return this.change(context, async files => {
@@ -67,7 +68,7 @@ export class TaskSandbox {
                 if (size > MAX_WORKSPACE_BYTES) throw new Error("Attachment exceeds the workspace transfer limit.");
                 chunks.push(chunk);
             }
-            const next = [...files.filter(file => file.path !== destination), { path: destination, data: Buffer.concat(chunks).toString("base64") }];
+            const next = [...files.filter(file => file.path !== destination), { path: destination, data: Buffer.concat(chunks).toString("base64"), sourceMessageIds, sourceChannelIds }];
             return { files: next, result: { path: destination, bytes: size } };
         });
     }

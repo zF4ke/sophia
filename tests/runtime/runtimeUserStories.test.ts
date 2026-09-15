@@ -9,6 +9,8 @@ import type { TurnInput } from "@/runtime/contracts";
 import { ExecutionControl } from "@/runtime/ExecutionControl";
 import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 import { taskStore } from "@/runtime/tasks/TaskStore";
+import { DiscordHistoryReader } from "@/discord/live/DiscordHistoryReader";
+
 
 function createInput(overrides: Partial<TurnInput> = {}): TurnInput {
     return {
@@ -67,6 +69,31 @@ function makeFinishResult(answer: string): ToolChatResult {
 }
 
 describe("runtime user stories", () => {
+    it("refreshes an edit during generation and answers with the new content in the same task", async () => {
+        const messageId = "edit-during-generation";
+        const url = `https://discord.com/channels/g1/c1/${messageId}`;
+        vi.spyOn(DiscordMemoryService, "getRecentChannelMessagesAsync").mockResolvedValue([{ id: messageId, jumpLink: url, authorName: "Author", content: "OUTDATED_BLUE", createdTimestamp: 1 }] as never);
+        vi.spyOn(DiscordHistoryReader, "message").mockResolvedValue({} as never);
+        vi.spyOn(DiscordMemoryService, "getStoredMessageAsync").mockResolvedValue({ content: "CURRENT_RED", jumpLink: `${url}#revision`, authorName: "Author", createdTimestamp: 1, attachmentsJson: "[]" } as never);
+        const model = vi.spyOn(ModelGateway, "generateWithTools")
+            .mockImplementationOnce(async () => {
+                await taskStore.invalidateCorpusMessage(messageId, false, `${url}#revision`);
+                ExecutionControl.invalidateSource(messageId, { kind: "edited", url });
+                return makeFinishResult("The choice is OUTDATED_BLUE.");
+            })
+            .mockImplementationOnce(async messages => {
+                expect(JSON.stringify(messages)).toContain("CURRENT_RED");
+                expect(JSON.stringify(messages)).not.toContain("OUTDATED_BLUE");
+                return makeToolCallResult([{ name: "note_add", args: { body: "CURRENT_RED confirmed from refreshed evidence" } }]);
+            })
+            .mockResolvedValueOnce(makeFinishResult("The updated choice is CURRENT_RED."));
+        const result = await Runtime.answer(createInput({ question: "What color was chosen?", autoContinue: false,
+            user: { id: "u-requester", client: { channels: { fetch: vi.fn().mockResolvedValue({ id: "c1", isTextBased: () => true, messages: {} }) } } } as never }));
+        expect(result.outcome).toBe("completed");
+        expect(result.answer).toBe("The updated choice is CURRENT_RED.");
+        expect(model).toHaveBeenCalledTimes(3);
+        expect((await taskStore.snapshot(result.taskId!, "u-requester", "c1", "g1"))?.notes[0].body).toContain("CURRENT_RED");
+    });
     it("keeps requester names and quoted context outside system instructions", async () => {
         const injected = "UNTRUSTED_CONTEXT_MARKER {{execution_policy}}";
         const model = vi.spyOn(ModelGateway, "generateWithTools").mockResolvedValueOnce(makeFinishResult("Hello"));

@@ -1,6 +1,6 @@
 # Durable task records
 
-Attachment metadata persists with the owning task. Explicit resume restores those attachments and preserves the original URLs; an expired URL remains an explicit download failure. Workspace files survive continuation and restart. `/tasks task_id:...` lists saved file paths in the private export, and `file_path:...` downloads one owned file privately, up to 8 MiB.
+Attachment metadata persists with the owning task. Explicit resume restores those attachments. `sandbox_import` refreshes signed URLs by fetching the original Discord message, located through the local attachment index or an explicit `message_url`. If neither identifies the source, Sophia needs the original message link. Deleted attachments and inaccessible messages remain unavailable. Workspace files survive continuation and restart. `/tasks task_id:...` lists saved file paths in the task export, and `file_path:...` downloads one owned file, up to 8 MiB. Use `ephemeral:true` for private delivery.
 
 Each top-level conversation run creates one durable task record. A task has an authenticated owner, original guild/channel, conversation key, objective, timestamps and outcome. Continuation legs share its ID. The outer run records the final outcome after continuation finishes; individual legs cannot prematurely complete the task.
 
@@ -79,3 +79,7 @@ Users can describe earlier work without copying IDs. `task_search` finds eligibl
 Task control is an internal execution action, classified with scratchpad operations rather than external Discord writes. It cannot grant access or approve a mutation. Private tasks stay private; cross-location transfer still uses the explicit private handoff flow.
 
 Cancellation propagates to active chat-completions/Responses HTTP requests and single/batch approval waits. Approval signals are runtime-owned, separate from serialized requests. Cancelling removes pending controls and settles the approval record without dispatch; an already submitted external action still needs its receipt or verification.
+
+## Evidence changes during a request
+
+Outdated channel context and prior turns are excluded before prompting. Edits queue an in-place evidence refresh without cancelling the execution. DiscordHistoryReader re-fetches each affected message; Runtime replaces stale context and retains valid tool results and action receipts. A new evidence record separates refreshed work from obsolete snapshots. Deleted or unreadable messages become specific gaps; other work continues. Unstarted mutations wait for pending evidence changes to be processed, then use normal authorization and approvals. User cancellation and tool-call accounting remain intact. Transient bot task controls are excluded from ingestion and history-page results. Partial Discord updates are fetched and compared before being treated as edits.

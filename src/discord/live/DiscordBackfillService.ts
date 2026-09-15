@@ -15,6 +15,7 @@ export interface FetchAndIngestBatchResult {
     ingested: number;
     nextBeforeId: string | null;
     reachedEnd: boolean;
+    scanned?: number;
     oldestTimestampInBatch: number | null;
 }
 
@@ -44,7 +45,8 @@ export async function fetchAndIngestBatch(
         return {
             ingested: 0,
             nextBeforeId: page.before,
-            reachedEnd: true,
+            reachedEnd: page.exhausted,
+            scanned: page.scanned,
             oldestTimestampInBatch: null,
         };
     }
@@ -54,12 +56,13 @@ export async function fetchAndIngestBatch(
     );
 
     const oldestInBatch = messages[0];
-    const nextBeforeId = oldestInBatch?.id ?? null;
+    const nextBeforeId = page.before;
 
     return {
         ingested: messages.length,
         nextBeforeId,
         reachedEnd: page.exhausted,
+        scanned: page.scanned,
         oldestTimestampInBatch: oldestInBatch?.createdTimestamp ?? null,
     };
 }
@@ -88,15 +91,17 @@ export class DiscordBackfillService {
         limit = 1000
     ): Promise<number> {
         let fetched = 0;
+        let scanned = 0;
         let before: string | null = await resumeBeforeId(channel.id);
 
-        while (fetched < limit) {
-            const remaining = limit - fetched;
+        while (scanned < limit) {
+            const remaining = limit - scanned;
             const batchSize = Math.min(100, remaining);
 
             const result = await fetchAndIngestBatch(channel, before, batchSize);
 
             fetched += result.ingested;
+            scanned += result.scanned ?? result.ingested;
             before = result.nextBeforeId;
 
             if (result.reachedEnd && result.ingested === 0) {
@@ -112,7 +117,7 @@ export class DiscordBackfillService {
                 );
             }
 
-            if (result.ingested === 0) {
+            if (result.reachedEnd) {
                 break;
             }
         }

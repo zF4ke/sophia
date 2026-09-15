@@ -5,6 +5,18 @@ import { DiscordHistoryReader } from "@/discord/live/DiscordHistoryReader";
 
 afterEach(() => vi.restoreAllMocks());
 describe("shared history page ownership", () => {
+    it("advances past a status-only page without declaring history exhausted", async () => {
+        vi.spyOn(DiscordMemoryService, "getChannelCrawlStateAsync").mockResolvedValue([]);
+        vi.spyOn(DiscordMemoryService, "ingestMessage").mockResolvedValue();
+        vi.spyOn(DiscordMemoryService, "updateChannelCrawlState").mockResolvedValue();
+        const status = { id: "status", createdTimestamp: 1, client: { user: { id: "bot" } }, author: { id: "bot" }, components: [{ components: [{ customId: "task:stop:t" }, { customId: "task:details:t" }] }] };
+        const channel = { id: "status-page", messages: { fetch: vi.fn().mockResolvedValue(new Collection([[status.id, status]])) } };
+        const page = await DiscordHistoryReader.page(channel, { limit: 100, mode: "backfill" });
+        expect(page.messages.size).toBe(0);
+        expect(page.before).toBe("status");
+        expect(page.exhausted).toBe(false);
+        expect(page.scanned).toBe(1);
+    });
     it("serializes backfills and commits ingestion before advancing the next reader's cursor", async () => {
         let oldest: string | null = null;
         const order: string[] = [];
