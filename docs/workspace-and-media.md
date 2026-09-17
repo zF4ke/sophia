@@ -24,4 +24,6 @@ Deterministic tests cover isolation arguments, path rejection, file ownership, c
 
 ## Historical Discord attachments
 
+History pages, around-message retrieval, live previews and indexed text search preserve structured attachment metadata, including IDs, names, URLs and content types. Use the attachment ID and message link directly with `sandbox_import`; exporting a corpus and executing code is unnecessary for finding these fields. URLs in indexed results may be expired, so importing refreshes them through the original message. Image inspection currently requires the Docker sandbox to be available.
+
 `sandbox_import` accepts `message_url` alongside `attachment_id` and `path`. It checks source-channel access, fetches the original message through DiscordHistoryReader to renew its signed attachment URL, and preserves message/channel provenance on the downloaded file. When omitted, the original message can be found by attachment ID in the local index. Use `sandbox_inspect` to see imported images/video. CDN URL expiry is not evidence of deletion. A missing original message, removed attachment or permission failure is reported separately. The documented Discord message API renews signed URLs; no undocumented URL-refresh endpoint is required.

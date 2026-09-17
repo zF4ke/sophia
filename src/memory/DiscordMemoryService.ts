@@ -635,6 +635,7 @@ export class DiscordMemoryService {
                         m.author_nickname,
                         mc.content,
                         mc.created_timestamp,
+                        m.attachments_json,
                         m.jump_link
                     FROM message_chunks_fts fts
                     INNER JOIN message_chunks mc ON mc.rowid = fts.rowid
@@ -658,6 +659,7 @@ export class DiscordMemoryService {
                 const recencyScore = Number(row.created_timestamp || 0) / 1_000_000_000_000;
                 return {
                     messageId: String(row.message_id),
+                    attachments: JSON.parse(String(row.attachments_json || "[]")),
                     channelId: String(row.channel_id),
                     channelName: String(row.channel_name || ""),
                     guildId: row.guild_id == null ? null : String(row.guild_id),

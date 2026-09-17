@@ -327,3 +327,5 @@ The Discord client subscribes to GuildMessages and DirectMessages. Thread replie
 Message edits queue evidence refresh without aborting the execution. Runtime re-reads affected messages through DiscordHistoryReader, replaces stale model context, and retains valid tool results and action receipts. Deleted/inaccessible sources become explicit gaps. Pending edits block unstarted mutations until refreshed; normal grants and approvals then apply. Transient task status messages never enter research evidence.
 
 Historical attachment imports accept an original message_url or resolve the source from the local attachment index. Always fetch the original message to renew CDN signatures, check the source audience, and retain file provenance. URL expiry alone never establishes deletion.
+
+Retrieval results preserve structured attachment metadata through history, around-message reads, live previews and indexed search. Do not require corpus exports or sandbox code to discover attachment IDs. Fallback synthesis retains concrete tool failures and partial findings rather than treating failed operations as missing content.

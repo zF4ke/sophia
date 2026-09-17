@@ -104,6 +104,7 @@ function buildHistoryPreviewResults(
         crawls.flatMap((crawl) =>
             (crawl.previewMessages || []).map<RetrievedChunk>((message) => ({
                 messageId: message.messageId,
+                attachments: message.attachments ?? [],
                 channelId: crawl.channelId,
                 channelName: crawl.channelName,
                 guildId,
@@ -301,6 +302,7 @@ export class UnifiedMessageRetrieval {
             const guildId = options.guild?.id || null;
             const historyMessages: RetrievedChunk[] = contextMessages.map((message) => ({
                 messageId: message.id,
+                attachments: JSON.parse(message.attachmentsJson || "[]"),
                 channelId: message.channelId,
                 channelName: message.channelName,
                 guildId,
@@ -408,6 +410,7 @@ export class UnifiedMessageRetrieval {
         }): Promise<RetrievedChunk[]> {
             return (await DiscordMemoryService.getChannelHistoryPageAsync(fetchOpts)).map<RetrievedChunk>((message) => ({
                 messageId: message.id,
+                attachments: JSON.parse(message.attachmentsJson || "[]"),
                 channelId: message.channelId,
                 channelName: message.channelName,
                 guildId: message.guildId,

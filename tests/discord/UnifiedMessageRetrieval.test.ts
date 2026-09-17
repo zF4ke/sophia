@@ -12,6 +12,7 @@ async function ingestMessage(options: {
     channelName: string;
     content: string;
     createdTimestamp: number;
+    attachmentsJson?: string;
 }) {
     await DiscordMemoryService.ingestStoredMessage({
         id: options.id,
@@ -21,7 +22,7 @@ async function ingestMessage(options: {
         authorId: "u1",
         authorName: "alice",
         content: options.content,
-        attachmentsJson: "[]",
+        attachmentsJson: options.attachmentsJson ?? "[]",
         referenceMessageId: null,
         createdTimestamp: options.createdTimestamp,
         jumpLink: `https://discord.com/channels/g1/${options.channelId}/${options.id}`,
@@ -53,6 +54,16 @@ describe("UnifiedMessageRetrieval", () => {
             },
         });
         await DiscordMemoryService.resetForTests();
+    });
+
+    it("preserves historical attachment IDs and URLs in history and around-message retrieval", async () => {
+        const attachments = [{ id: "attachment-1", name: "shot.png", url: "https://cdn.discordapp.com/attachments/1/2/shot.png", contentType: "image/png" }];
+        await ingestMessage({ id: "image-message", channelId: "media", channelName: "media", content: "screenshot", createdTimestamp: 1700000000000, attachmentsJson: JSON.stringify(attachments) });
+        expect((await DiscordMemoryService.searchMessagesAsync("screenshot"))[0]?.attachments).toEqual(attachments);
+        for (const aroundMessageId of [undefined, "image-message"]) {
+            const result = await UnifiedMessageRetrieval.retrieve({ guild: { id: "g1" } as any, question: "read the screenshot", mode: "history", channelIds: ["media"], limit: 5, aroundMessageId });
+            expect(result.historyMessages.find(message => message.messageId === "image-message")?.attachments).toEqual(attachments);
+        }
     });
 
     it("keeps live refresh scoped to resolved channel ids and uses crawl previews when the cache has no lexical hits", async () => {

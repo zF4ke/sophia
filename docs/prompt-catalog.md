@@ -131,3 +131,5 @@ Runtime chronology: the prompt includes the current UTC date and time. Channel c
 Source failures should lead to alternate retrieval and a supported partial answer with specific limitations. Evidence refresh retains action receipts so the model can continue without repeating completed actions or assuming unknown outcomes failed.
 
 Historical media guidance distinguishes expiring CDN signatures from deleted attachments and directs the model to sandbox_import plus sandbox_inspect instead of the text-only page reader.
+
+Fallback synthesis includes concrete tool errors alongside findings. It should answer in the requester's language and distinguish failed operations from evidence that content does not exist. It must not compress an unfinished investigation into a generic not-found sentence.

@@ -496,6 +496,7 @@ function buildPreviewMessages(
         const authorIdentity = resolveMessageAuthorIdentity(message);
         return {
         messageId: String(message.id),
+        attachments: message.attachments?.map((attachment: import("discord.js").Attachment) => ({ id: attachment.id, name: attachment.name, url: attachment.url, contentType: attachment.contentType })) ?? [],
         authorId: String(message.author?.id || ""),
         authorName: authorIdentity.authorName,
         authorUsername: authorIdentity.authorUsername,

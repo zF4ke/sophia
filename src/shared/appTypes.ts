@@ -102,6 +102,7 @@ export type BotClient = Client & {
 };
 
 export interface RetrievedChunk {
+    attachments?: Array<{ id: string; name: string; url: string; contentType?: string | null }>;
     messageId: string;
     channelId: string;
     channelName: string;
@@ -306,6 +307,7 @@ export interface ChannelCrawlResult {
     queryHint: string | null;
     backgroundIngestQueued?: boolean;
     previewMessages?: Array<{
+        attachments?: RetrievedChunk["attachments"];
         messageId: string;
         authorId: string;
         authorName: string;

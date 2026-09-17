@@ -187,6 +187,7 @@ function toRetrievalSession(
 // ── Shared zod schemas ──────────────────────────────────────────────
 
 const chunkResultSchema = z.object({
+    attachments: z.array(z.object({ id: z.string(), name: z.string(), url: z.string(), contentType: z.string().nullable().optional() })).optional(),
     messageId: z.string(),
     channelId: z.string(),
     channelName: z.string(),

@@ -241,7 +241,7 @@ async function synthesizeAnswer(
 ): Promise<string> {
     const findingLines = toolHistory
         .filter((r) => !r.blocked && r.summary)
-        .map((r) => `${r.tool}: ${r.summary}`)
+        .map((r) => `${r.tool}: ${r.summary}${r.output.errorMessage ? `\nFailure: ${r.output.errorMessage}` : ""}`)
         .join("\n");
 
     const evidenceLines = evidence
@@ -263,7 +263,7 @@ async function synthesizeAnswer(
             : []),
         {
             role: "user" as const,
-            content: "Based on that research, answer the original question as concisely as possible. If you truly could not find it, say so in one sentence — do not ask for clarification or more details.",
+            content: "Answer the original request in the user's language using the available findings. If unfinished, give the useful partial answer and describe the specific operation that failed and what remains unresolved. A tool or environment failure does not establish that the requested content is absent. Do not replace concrete failures with a generic not-found answer.",
         },
     ];
 
@@ -1856,7 +1856,7 @@ export class Runtime {
                                 { role: "system" as const, content: systemPrompt },
                                 { role: "user" as const, content: input.question },
                                 { role: "assistant" as const, content: `Here is what I found during my research:\n${contextBlock}` },
-                                { role: "user" as const, content: "Based on that research, answer the original question as concisely as possible. Cite jumpLinks where available. If you truly could not find it, say so in one sentence." },
+                                { role: "user" as const, content: "Answer the request in the user's language. Cite jumpLinks where available. For unfinished work, explain the useful findings and specific unresolved parts without claiming missing content merely because a tool failed." },
                             ];
                             const synthResult = await ModelGateway.generateText(synthMessages, {
                                 traceContext: { traceLabel: "long_task_synthesis", questionPreview: input.question, traceEvents: [...traceEvents] },
